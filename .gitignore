@@ -1,0 +1,17 @@
+node_modules/
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# runtime data
+pgdata/
+uploads/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
