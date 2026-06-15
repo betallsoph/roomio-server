@@ -12,11 +12,7 @@ import {
 	contracts
 } from '$lib/server/db/schema';
 import { and, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
-import crypto from 'crypto';
-
-function hashPassword(password: string) {
-	return crypto.createHash('sha256').update(password).digest('hex');
-}
+import { hashPassword } from '$lib/server/password';
 
 export const GET: RequestHandler = async ({ url }) => {
 	try {
@@ -91,13 +87,15 @@ export const POST: RequestHandler = async ({ request }) => {
 			where: or(eq(users.email, email), eq(users.phone, phone))
 		});
 
+		const newUserHash = existingUser ? null : await hashPassword(password);
+
 		const tenant = await db.transaction(async (tx) => {
 			const user =
 				existingUser ??
 				(
 					await tx
 						.insert(users)
-						.values({ email, phone, passwordHash: hashPassword(password), name, role: 'TENANT' })
+						.values({ email, phone, passwordHash: newUserHash!, name, role: 'TENANT' })
 						.returning()
 				)[0];
 

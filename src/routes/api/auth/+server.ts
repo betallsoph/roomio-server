@@ -4,13 +4,8 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { users, landlordProfiles, tenantProfiles, services } from '$lib/server/db/schema';
 import { eq, or } from 'drizzle-orm';
-import crypto from 'crypto';
 import { createSession, destroySession } from '$lib/server/session';
-
-// Helper to hash password using SHA-256
-function hashPassword(password: string) {
-	return crypto.createHash('sha256').update(password).digest('hex');
-}
+import { hashPassword, verifyPassword } from '$lib/server/password';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	try {
@@ -31,7 +26,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: 'Email hoặc số điện thoại đã được đăng ký' }, { status: 400 });
 			}
 
-			const passwordHash = hashPassword(password);
+			const passwordHash = await hashPassword(password);
 			const userRole = role || 'LANDLORD'; // Default to LANDLORD
 
 			const user = await db.transaction(async (tx) => {
@@ -136,13 +131,21 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: 'Tài khoản không tồn tại' }, { status: 401 });
 			}
 
-			const inputHash = hashPassword(password);
-			if (user.passwordHash !== inputHash) {
+			const { valid, needsRehash } = await verifyPassword(password, user.passwordHash);
+			if (!valid) {
 				return json({ error: 'Mật khẩu không chính xác' }, { status: 401 });
 			}
 
 			if (!user.isActive) {
 				return json({ error: 'Tài khoản đã bị tạm khóa' }, { status: 403 });
+			}
+
+			// Nâng cấp mượt: tài khoản còn hash SHA-256 cũ thì băm lại sang bcrypt sau khi đăng nhập đúng
+			if (needsRehash) {
+				await db
+					.update(users)
+					.set({ passwordHash: await hashPassword(password) })
+					.where(eq(users.id, user.id));
 			}
 
 			createSession(cookies, {

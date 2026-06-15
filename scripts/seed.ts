@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { db } from '../src/lib/server/db';
 import {
 	users,
@@ -22,11 +21,7 @@ import {
 	expenses
 } from '../src/lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-
-// Helper to hash password using SHA-256
-function hashPassword(password: string) {
-	return crypto.createHash('sha256').update(password).digest('hex');
-}
+import { hashPassword } from '../src/lib/server/password';
 
 // Vietnamese names for mock data
 const vietnameseFirstNames = [
@@ -215,6 +210,14 @@ const propertiesData = [
 ];
 
 async function main() {
+	// Băm trước các mật khẩu cố định một lần (bcrypt chậm, tránh băm lại cho từng khách thuê)
+	const PW = {
+		admin: await hashPassword('admin'),
+		password: await hashPassword('password'),
+		staff: await hashPassword('staff'),
+		tenant: await hashPassword('123456')
+	};
+
 	await db.transaction(async (tx) => {
 		console.log('Bắt đầu dọn dẹp database...');
 		await tx.delete(expenses);
@@ -241,7 +244,7 @@ async function main() {
 		await tx.insert(users).values({
 			email: 'superadmin@ngochau.com',
 			phone: '0999999999',
-			passwordHash: hashPassword('admin'),
+			passwordHash: PW.admin,
 			name: 'Super Admin',
 			role: 'SUPER_ADMIN'
 		});
@@ -253,7 +256,7 @@ async function main() {
 				.values({
 					email: 'ngochau@gmail.com',
 					phone: '0901234567',
-					passwordHash: hashPassword('password'),
+					passwordHash: PW.password,
 					name: 'Nguyễn Văn Hậu',
 					role: 'LANDLORD'
 				})
@@ -283,7 +286,7 @@ async function main() {
 				.values({
 					email: 'nhanvien@nhatro.com',
 					phone: '0987654321',
-					passwordHash: hashPassword('staff'),
+					passwordHash: PW.staff,
 					name: 'Trần Thị B',
 					role: 'STAFF'
 				})
@@ -395,7 +398,7 @@ async function main() {
 							.values({
 								email: `tenant_${phone}@ngochau.com`,
 								phone: phone,
-								passwordHash: hashPassword('123456'), // Mật khẩu mặc định của khách
+								passwordHash: PW.tenant, // Mật khẩu mặc định của khách
 								name: generateVietnameseName(),
 								role: 'TENANT'
 							})

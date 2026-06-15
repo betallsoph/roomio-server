@@ -21,7 +21,8 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.5.2",
     "drizzle-orm": "^0.45.2",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -40,6 +41,7 @@
     "tsx": "^4.22.4",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1",
-    "vite": "^8.0.7"
+    "vite": "^8.0.7",
+    "@types/bcryptjs": "^2.4.6"
   }
 }
