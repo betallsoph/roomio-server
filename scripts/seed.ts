@@ -548,7 +548,7 @@ async function main() {
 					}
 
 					// Một số phòng demo chỉ số khách tự gửi đang chờ chủ chốt
-					if (Math.random() < 0.1) {
+					if (Math.random() < 0.5) {
 						const elecSvc = serviceList.find((s) => s.name === 'Điện')!;
 						const pendingUsage = Math.floor(Math.random() * 180) + 30;
 						await tx.insert(meterReadings).values({

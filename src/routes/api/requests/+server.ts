@@ -9,6 +9,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	try {
 		const landlordId = url.searchParams.get('landlordId');
 		const tenantId = url.searchParams.get('tenantId');
+		const staffId = url.searchParams.get('staffId');
 
 		const conditions = [];
 
@@ -26,6 +27,11 @@ export const GET: RequestHandler = async ({ url }) => {
 			);
 		} else if (tenantId) {
 			conditions.push(eq(maintenanceRequests.tenantId, tenantId));
+		}
+
+		// Lọc theo nhân viên được giao — dùng cho cổng /staff
+		if (staffId) {
+			conditions.push(eq(maintenanceRequests.assignedToId, staffId));
 		}
 
 		const requests = await db.query.maintenanceRequests.findMany({
@@ -86,7 +92,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const PUT: RequestHandler = async ({ request }) => {
+export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
 		const body = await request.json();
 		const { id, status, response, assignedToId } = body;
@@ -95,10 +101,23 @@ export const PUT: RequestHandler = async ({ request }) => {
 			return json({ error: 'Missing maintenance request ID' }, { status: 400 });
 		}
 
+		// Nhân viên chỉ được cập nhật sự cố đã giao cho mình
+		if (locals.session?.role === 'STAFF') {
+			const existing = await db.query.maintenanceRequests.findFirst({
+				where: eq(maintenanceRequests.id, id)
+			});
+			if (!existing || existing.assignedToId !== locals.session.staffProfileId) {
+				return json({ error: 'Bạn chỉ được cập nhật sự cố được giao cho mình' }, { status: 403 });
+			}
+		}
+
 		const updateData: Record<string, unknown> = {};
 		if (status !== undefined) updateData.status = status;
 		if (response !== undefined) updateData.response = response;
-		if (assignedToId !== undefined) updateData.assignedToId = assignedToId;
+		// Chỉ chủ trọ được đổi người phụ trách; nhân viên không tự giao việc cho mình
+		if (assignedToId !== undefined && locals.session?.role !== 'STAFF') {
+			updateData.assignedToId = assignedToId;
+		}
 
 		if (Object.keys(updateData).length === 0) {
 			return json({ error: 'No fields to update' }, { status: 400 });

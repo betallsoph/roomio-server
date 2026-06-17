@@ -25,12 +25,18 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const body = await request.json();
-		const { landlordId, name, type, defaultRate, isActive } = body;
+		// landlordId lấy từ phiên đăng nhập, không tin giá trị do client gửi
+		const landlordId = locals.session?.landlordProfileId;
+		if (locals.session?.role !== 'LANDLORD' || !landlordId) {
+			return json({ error: 'Chỉ chủ trọ được quản lý dịch vụ' }, { status: 403 });
+		}
 
-		if (!landlordId || !name || !type || defaultRate === undefined) {
+		const body = await request.json();
+		const { name, type, defaultRate, isActive } = body;
+
+		if (!name || !type || defaultRate === undefined) {
 			return json({ error: 'Missing required service fields' }, { status: 400 });
 		}
 
@@ -74,13 +80,21 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const PUT: RequestHandler = async ({ request }) => {
+export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
 		const body = await request.json();
 		const { id, name, defaultRate, isActive } = body;
 
 		if (!id) {
 			return json({ error: 'Missing service ID' }, { status: 400 });
+		}
+
+		const existing = await db.query.services.findFirst({ where: eq(services.id, id) });
+		if (!existing) {
+			return json({ error: 'Không tìm thấy dịch vụ' }, { status: 404 });
+		}
+		if (locals.session?.role !== 'LANDLORD' || existing.landlordId !== locals.session.landlordProfileId) {
+			return json({ error: 'Không có quyền sửa dịch vụ này' }, { status: 403 });
 		}
 
 		const updateData: Record<string, unknown> = {};
@@ -104,12 +118,20 @@ export const PUT: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ url }) => {
+export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
 		const id = url.searchParams.get('id');
 
 		if (!id) {
 			return json({ error: 'Missing service ID' }, { status: 400 });
+		}
+
+		const existing = await db.query.services.findFirst({ where: eq(services.id, id) });
+		if (!existing) {
+			return json({ error: 'Không tìm thấy dịch vụ' }, { status: 404 });
+		}
+		if (locals.session?.role !== 'LANDLORD' || existing.landlordId !== locals.session.landlordProfileId) {
+			return json({ error: 'Không có quyền xóa dịch vụ này' }, { status: 403 });
 		}
 
 		await db.delete(services).where(eq(services.id, id));

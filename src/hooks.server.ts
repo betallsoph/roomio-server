@@ -1,8 +1,20 @@
 import { json, type Handle } from '@sveltejs/kit';
-import { readSession } from '$lib/server/session';
+import { readSession, destroySession } from '$lib/server/session';
+import { db } from '$lib/server/db';
+import { users } from '$lib/server/db/schema';
+import { eq } from 'drizzle-orm';
 
 // Các API không cần đăng nhập
 const PUBLIC_API = ['/api/auth', '/api/payment-webhook'];
+
+// Nhân viên (STAFF) chỉ được dùng đúng các API phục vụ "vận hành cơ bản" — mặc định chặn, chỉ mở những path/method dưới đây
+const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
+	{ prefix: '/api/requests', methods: ['GET', 'PUT'] }, // xem & cập nhật sự cố được giao
+	{ prefix: '/api/meter-readings', methods: ['GET', 'PUT'] }, // chốt/duyệt số điện nước
+	{ prefix: '/api/rooms', methods: ['GET'] }, // xem phòng (chỉ đọc)
+	{ prefix: '/api/tenants', methods: ['GET'] }, // xem khách thuê (chỉ đọc)
+	{ prefix: '/api/upload', methods: ['POST'] } // đính ảnh khi xử lý sự cố/chốt số
+];
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const session = readSession(event.cookies);
@@ -13,6 +25,21 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (pathname.startsWith('/api') && !PUBLIC_API.some((p) => pathname.startsWith(p))) {
 		if (!session) {
 			return json({ error: 'Chưa đăng nhập' }, { status: 401 });
+		}
+
+		// Phiên có thể thu hồi: xác thực lại danh tính với DB mỗi request, để việc khóa tài khoản
+		// (isActive=false) hoặc đổi quyền có hiệu lực NGAY thay vì chờ cookie hết hạn (tối đa 7 ngày).
+		const account = await db.query.users.findFirst({
+			where: eq(users.id, session.userId),
+			columns: { isActive: true, role: true }
+		});
+		if (!account || !account.isActive) {
+			destroySession(event.cookies);
+			return json({ error: 'Phiên đã hết hiệu lực, vui lòng đăng nhập lại' }, { status: 401 });
+		}
+		if (account.role !== session.role) {
+			destroySession(event.cookies);
+			return json({ error: 'Quyền truy cập đã thay đổi, vui lòng đăng nhập lại' }, { status: 401 });
 		}
 
 		// Chặn truy cập chéo dữ liệu: ID trên query param phải khớp với phiên đăng nhập
@@ -26,6 +53,26 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (session.role === 'TENANT') {
 			const tenantId = event.url.searchParams.get('tenantId');
 			if (tenantId && tenantId !== session.tenantProfileId) {
+				return json({ error: 'Không có quyền truy cập dữ liệu này' }, { status: 403 });
+			}
+		}
+
+		if (session.role === 'STAFF') {
+			// Mặc định chặn: chỉ cho qua path/method nằm trong allowlist
+			const allowed = STAFF_ALLOWLIST.some(
+				(rule) => pathname.startsWith(rule.prefix) && rule.methods.includes(event.request.method)
+			);
+			if (!allowed) {
+				return json({ error: 'Nhân viên không có quyền thực hiện thao tác này' }, { status: 403 });
+			}
+
+			// Nhân viên chỉ thao tác trong phạm vi chủ trọ của mình và trên dữ liệu của chính mình
+			const landlordId = event.url.searchParams.get('landlordId');
+			if (landlordId && landlordId !== session.staffLandlordId) {
+				return json({ error: 'Không có quyền truy cập dữ liệu này' }, { status: 403 });
+			}
+			const staffId = event.url.searchParams.get('staffId');
+			if (staffId && staffId !== session.staffProfileId) {
 				return json({ error: 'Không có quyền truy cập dữ liệu này' }, { status: 403 });
 			}
 		}

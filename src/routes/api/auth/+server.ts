@@ -102,7 +102,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				role: user.role,
 				landlordProfileId: user.landlordProfileId,
 				tenantProfileId: user.tenantProfileId,
-				staffProfileId: null
+				staffProfileId: null,
+				staffLandlordId: null
 			});
 
 			return json(user);
@@ -153,7 +154,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				role: user.role,
 				landlordProfileId: user.landlordProfile?.id || null,
 				tenantProfileId: user.tenantProfile?.id || null,
-				staffProfileId: user.staffProfile?.id || null
+				staffProfileId: user.staffProfile?.id || null,
+				staffLandlordId: user.staffProfile?.landlordId || null
 			});
 
 			return json({
@@ -164,7 +166,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				role: user.role,
 				landlordProfileId: user.landlordProfile?.id || null,
 				tenantProfileId: user.tenantProfile?.id || null,
-				staffProfileId: user.staffProfile?.id || null
+				staffProfileId: user.staffProfile?.id || null,
+				staffLandlordId: user.staffProfile?.landlordId || null
 			});
 		}
 

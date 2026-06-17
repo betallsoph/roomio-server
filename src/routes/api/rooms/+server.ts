@@ -10,7 +10,7 @@ import {
 	meterReadings,
 	roomAssets
 } from '$lib/server/db/schema';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
 export const GET: RequestHandler = async ({ url }) => {
 	try {
@@ -18,6 +18,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		const blockId = url.searchParams.get('blockId');
 		const tenantId = url.searchParams.get('tenantId');
 		const status = url.searchParams.get('status');
+		const landlordId = url.searchParams.get('landlordId');
 
 		const conditions = [];
 		if (status) {
@@ -31,6 +32,18 @@ export const GET: RequestHandler = async ({ url }) => {
 		}
 		if (tenantId) {
 			conditions.push(eq(rooms.tenantId, tenantId));
+		}
+		// Giới hạn theo chủ trọ (dùng cho cổng /staff xem phòng) — chỉ phòng thuộc cơ sở của chủ trọ này
+		if (landlordId) {
+			conditions.push(
+				inArray(
+					rooms.propertyId,
+					db
+						.select({ id: properties.id })
+						.from(properties)
+						.where(eq(properties.landlordId, landlordId))
+				)
+			);
 		}
 
 		const result = await db.query.rooms.findMany({

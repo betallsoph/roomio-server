@@ -7,6 +7,7 @@ export interface SessionData {
 	landlordProfileId: string | null;
 	tenantProfileId: string | null;
 	staffProfileId: string | null;
+	staffLandlordId: string | null; // Chủ trọ mà nhân viên (STAFF) phục vụ — dùng để scope dữ liệu
 }
 
 const SECRET = process.env.SESSION_SECRET ?? 'roomio-dev-secret-change-in-production';
