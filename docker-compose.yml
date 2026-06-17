@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: roomio-db
+    restart: always
+    environment:
+      POSTGRES_USER: roomio
+      POSTGRES_PASSWORD: matkhau_change_me_in_production
+      POSTGRES_DB: roomio
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roomio -d roomio"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: roomio-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://roomio:matkhau_change_me_in_production@db:5432/roomio
+      - SESSION_SECRET=change_me_to_a_secure_random_string_in_production
+      - ORIGIN=http://localhost:3000
+      - PORT=3000
+      - UPLOAD_DIR=/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app_uploads:/app/uploads
+
+volumes:
+  postgres_data:
+  app_uploads:
