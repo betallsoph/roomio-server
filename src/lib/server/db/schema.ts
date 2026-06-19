@@ -155,7 +155,13 @@ export const invoices = pgTable('Invoice', {
 	status: text('status').notNull(), // 'paid' | 'pending' | 'overdue' | 'partial'
 	paidAmount: doublePrecision('paidAmount').notNull().default(0), // Số tiền đã trả
 	paymentProofImage: text('paymentProofImage'), // Ảnh chụp hóa đơn/bill chuyển khoản
-	paymentMethod: text('paymentMethod'), // 'manual' | 'bank_webhook' — cách xác nhận thanh toán
+	paymentMethod: text('paymentMethod'), // 'manual' | 'payos_webhook' — cách xác nhận thanh toán
+	paymentProvider: text('paymentProvider'),
+	payosOrderCode: text('payosOrderCode'),
+	payosPaymentLinkId: text('payosPaymentLinkId'),
+	payosCheckoutUrl: text('payosCheckoutUrl'),
+	payosQrCode: text('payosQrCode'),
+	payosStatus: text('payosStatus'),
 	createdAt: text('createdAt').notNull(), // YYYY-MM-DD
 	notes: text('notes')
 });
@@ -263,6 +269,55 @@ export const expenses = pgTable('Expense', {
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 
+export const automationJobs = pgTable('AutomationJob', {
+	id: text('id').primaryKey().$defaultFn(uuid),
+	landlordId: text('landlordId')
+		.notNull()
+		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+	type: text('type').notNull(), // 'overdue_sweep' | 'invoice_reminder' | 'meter_reminder' | 'contract_reminder'
+	status: text('status').notNull().default('queued'), // 'queued' | 'running' | 'completed' | 'failed'
+	scheduledFor: text('scheduledFor').notNull(), // YYYY-MM-DD
+	startedAt: datetime('startedAt'),
+	completedAt: datetime('completedAt'),
+	payload: text('payload'), // JSON string for run options
+	result: text('result'), // JSON string with counters / errors
+	createdAt: datetime('createdAt').notNull().$defaultFn(now)
+});
+
+export const notificationQueue = pgTable('NotificationQueue', {
+	id: text('id').primaryKey().$defaultFn(uuid),
+	landlordId: text('landlordId')
+		.notNull()
+		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+	tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+	recipientUserId: text('recipientUserId').references(() => users.id, { onDelete: 'set null' }),
+	type: text('type').notNull(), // 'invoice_reminder' | 'meter_reminder' | 'contract_reminder' | 'maintenance_sla'
+	channel: text('channel').notNull().default('in_app'), // 'in_app' | 'email' | 'sms' | 'zalo'
+	title: text('title').notNull(),
+	content: text('content').notNull(),
+	status: text('status').notNull().default('queued'), // 'queued' | 'sent' | 'failed' | 'dismissed'
+	relatedType: text('relatedType'), // 'invoice' | 'contract' | 'meter' | 'request'
+	relatedId: text('relatedId'),
+	scheduledFor: text('scheduledFor').notNull(), // YYYY-MM-DD
+	sentAt: datetime('sentAt'),
+	createdAt: datetime('createdAt').notNull().$defaultFn(now)
+});
+
+export const paymentTransactions = pgTable('PaymentTransaction', {
+	id: text('id').primaryKey().$defaultFn(uuid),
+	landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'set null' }),
+	invoiceId: text('invoiceId').references(() => invoices.id, { onDelete: 'set null' }),
+	provider: text('provider').notNull().default('payos'),
+	providerTransactionId: text('providerTransactionId'),
+	invoiceCode: text('invoiceCode'),
+	amount: doublePrecision('amount').notNull(),
+	transferType: text('transferType').notNull(),
+	content: text('content'),
+	status: text('status').notNull(), // 'applied' | 'ignored' | 'unmatched' | 'duplicate'
+	rawPayload: text('rawPayload').notNull(),
+	receivedAt: datetime('receivedAt').notNull().$defaultFn(now)
+});
+
 // Quan hệ giữa các bảng (dùng cho db.query relational API)
 
 export const usersRelations = relations(users, ({ one }) => ({
@@ -276,7 +331,10 @@ export const landlordProfilesRelations = relations(landlordProfiles, ({ one, man
 	properties: many(properties),
 	services: many(services),
 	staffs: many(staffProfiles),
-	expenses: many(expenses)
+	expenses: many(expenses),
+	automationJobs: many(automationJobs),
+	notificationQueue: many(notificationQueue),
+	paymentTransactions: many(paymentTransactions)
 }));
 
 export const staffProfilesRelations = relations(staffProfiles, ({ one, many }) => ({
@@ -293,7 +351,8 @@ export const tenantProfilesRelations = relations(tenantProfiles, ({ one, many })
 	rooms: many(rooms),
 	requests: many(maintenanceRequests),
 	specialNotes: many(specialNotes),
-	contracts: many(contracts)
+	contracts: many(contracts),
+	notifications: many(notificationQueue)
 }));
 
 export const propertiesRelations = relations(properties, ({ one, many }) => ({
@@ -341,7 +400,8 @@ export const meterReadingsRelations = relations(meterReadings, ({ one }) => ({
 
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
 	room: one(rooms, { fields: [invoices.roomId], references: [rooms.id] }),
-	items: many(invoiceItems)
+	items: many(invoiceItems),
+	payments: many(paymentTransactions)
 }));
 
 export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
@@ -378,4 +438,37 @@ export const expensesRelations = relations(expenses, ({ one }) => ({
 		references: [landlordProfiles.id]
 	}),
 	property: one(properties, { fields: [expenses.propertyId], references: [properties.id] })
+}));
+
+export const automationJobsRelations = relations(automationJobs, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [automationJobs.landlordId],
+		references: [landlordProfiles.id]
+	})
+}));
+
+export const notificationQueueRelations = relations(notificationQueue, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [notificationQueue.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	tenant: one(tenantProfiles, {
+		fields: [notificationQueue.tenantId],
+		references: [tenantProfiles.id]
+	}),
+	recipientUser: one(users, {
+		fields: [notificationQueue.recipientUserId],
+		references: [users.id]
+	})
+}));
+
+export const paymentTransactionsRelations = relations(paymentTransactions, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [paymentTransactions.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	invoice: one(invoices, {
+		fields: [paymentTransactions.invoiceId],
+		references: [invoices.id]
+	})
 }));

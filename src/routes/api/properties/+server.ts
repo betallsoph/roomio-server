@@ -4,14 +4,16 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { properties, blocks } from '$lib/server/db/schema';
 import { asc, eq } from 'drizzle-orm';
+import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+		const landlordId = auth.value;
 
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
-		}
+		// Backward-compatible query param is ignored; session is the source of truth.
+		void url;
 
 		const result = await db.query.properties.findMany({
 			where: eq(properties.landlordId, landlordId),
@@ -30,10 +32,14 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+		const landlordId = auth.value;
+
 		const body = await request.json();
-		const { landlordId, name, shortName, address, blocks: blockNames } = body;
+		const { name, shortName, address, blocks: blockNames } = body;
 
 		if (!landlordId || !name || !shortName || !address) {
 			return json({ error: 'Missing required property fields' }, { status: 400 });
@@ -74,13 +80,19 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const PUT: RequestHandler = async ({ request }) => {
+export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const body = await request.json();
 		const { id, name, shortName, address, blocks: blockNames } = body;
 
 		if (!id) {
 			return json({ error: 'Missing property ID' }, { status: 400 });
+		}
+		if (!(await landlordOwnsProperty(auth.value, id))) {
+			return forbidden();
 		}
 
 		await db.transaction(async (tx) => {
@@ -124,12 +136,18 @@ export const PUT: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ url }) => {
+export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const id = url.searchParams.get('id');
 
 		if (!id) {
 			return json({ error: 'Missing property ID' }, { status: 400 });
+		}
+		if (!(await landlordOwnsProperty(auth.value, id))) {
+			return forbidden();
 		}
 
 		await db.delete(properties).where(eq(properties.id, id));

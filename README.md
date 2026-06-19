@@ -2,6 +2,10 @@
 
 REST API + cơ sở dữ liệu cho hệ thống quản lý nhà trọ Roomio. Chạy độc lập, triển khai trên một server riêng. Frontend (`roomio-web`) gọi sang qua HTTP.
 
+## Phạm vi sản phẩm hiện tại
+
+MVP đang theo hướng **landlord-first**: API ưu tiên phục vụ dashboard chủ trọ, nhân viên hỗ trợ vận hành và super admin. Các endpoint/role liên quan khách thuê tự phục vụ vẫn tồn tại trong code để chuẩn bị Phase 2, nhưng không phải trọng tâm phát triển hiện tại.
+
 ## Công nghệ
 
 - SvelteKit server routes (`@sveltejs/adapter-node`) — chỉ phục vụ REST endpoint, không có UI
@@ -55,9 +59,11 @@ PORT=3000 node build/index.js # giữ sống bằng pm2/systemd
 
 Tinh chỉnh Postgres cho box 6GB: `shared_buffers=1GB`, `work_mem=16MB`, `max_connections=50`. Đưa thư mục `uploads/` vào backup cùng `pg_dump`.
 
-## Đối soát thanh toán (SePay)
+## Thanh toán & đối soát (payOS)
 
-Khai báo webhook trỏ về `https://<domain>/api/payment-webhook`, đặt `SEPAY_API_KEY` khớp header `Authorization: Apikey <key>`. Tiền vào tài khoản có mã hóa đơn trong nội dung CK sẽ tự xác nhận thanh toán.
+Khai báo `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` từ kênh thanh toán payOS. API tạo link thanh toán payOS theo từng hóa đơn để phục vụ luồng thu tiền/đối soát cho chủ trọ; tenant self-service portal để Phase 2. payOS gửi webhook về `https://<domain>/api/payos-webhook` hoặc endpoint tương thích cũ `https://<domain>/api/payment-webhook`.
+
+Webhook được xác thực bằng `signature` HMAC-SHA256 theo `PAYOS_CHECKSUM_KEY`, match hóa đơn bằng `orderCode`/`paymentLinkId`, ghi `PaymentTransaction`, rồi tự cập nhật trạng thái hóa đơn và công nợ phòng.
 
 ## Lưu ý
 

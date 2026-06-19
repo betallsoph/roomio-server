@@ -4,16 +4,15 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { expenses, invoices, properties, rooms } from '$lib/server/db/schema';
 import { eq, inArray } from 'drizzle-orm';
+import { requireLandlord } from '$lib/server/authz';
 
 // Tổng hợp dòng tiền: doanh thu (hóa đơn đã thu) và chi phí theo từng tháng
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+		const landlordId = auth.value;
 		const monthCount = Math.min(Number(url.searchParams.get('months')) || 6, 24);
-
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
-		}
 
 		const invoiceRows = await db
 			.select({ month: invoices.month, paidAmount: invoices.paidAmount })

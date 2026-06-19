@@ -2,10 +2,27 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { announcements } from '$lib/server/db/schema';
+import { announcements, blocks, rooms } from '$lib/server/db/schema';
 import { and, desc, eq, isNull, or } from 'drizzle-orm';
+import { forbidden, landlordOwnsProperty, landlordOwnsRoom, landlordOwnsTenant, requireLandlord } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+async function landlordOwnsBlock(landlordId: string, blockId: string) {
+	const row = await db.query.blocks.findFirst({
+		where: eq(blocks.id, blockId),
+		with: { property: { columns: { landlordId: true } } }
+	});
+	return row?.property.landlordId === landlordId;
+}
+
+async function landlordOwnsAnnouncement(landlordUserId: string, announcementId: string) {
+	const announcement = await db.query.announcements.findFirst({
+		where: and(eq(announcements.id, announcementId), eq(announcements.senderId, landlordUserId)),
+		columns: { id: true }
+	});
+	return !!announcement;
+}
+
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		const senderId = url.searchParams.get('senderId');
 		const targetType = url.searchParams.get('targetType');
@@ -15,27 +32,25 @@ export const GET: RequestHandler = async ({ url }) => {
 		// (toàn hệ thống, tòa nhà, block, phòng hoặc đích danh khách)
 		const audience = url.searchParams.get('audience');
 
-		if (audience === 'tenant') {
-			const propertyId = url.searchParams.get('propertyId');
-			const blockId = url.searchParams.get('blockId');
-			const roomId = url.searchParams.get('roomId');
-			const tenantId = url.searchParams.get('tenantId');
+		if (locals.session?.role === 'TENANT' || audience === 'tenant') {
+			const tenantId = locals.session?.tenantProfileId;
+			if (!tenantId) return forbidden();
+			const room = await db.query.rooms.findFirst({
+				where: eq(rooms.tenantId, tenantId),
+				columns: { id: true, propertyId: true, blockId: true, tenantId: true }
+			});
 
 			const targets = [and(eq(announcements.targetType, 'ALL'), isNull(announcements.targetId))];
-			if (propertyId)
+			if (room?.propertyId)
 				targets.push(
-					and(eq(announcements.targetType, 'PROPERTY'), eq(announcements.targetId, propertyId))
+					and(eq(announcements.targetType, 'PROPERTY'), eq(announcements.targetId, room.propertyId))
 				);
-			if (blockId)
+			if (room?.blockId)
 				targets.push(
-					and(eq(announcements.targetType, 'BLOCK'), eq(announcements.targetId, blockId))
+					and(eq(announcements.targetType, 'BLOCK'), eq(announcements.targetId, room.blockId))
 				);
-			if (roomId)
-				targets.push(and(eq(announcements.targetType, 'ROOM'), eq(announcements.targetId, roomId)));
-			if (tenantId)
-				targets.push(
-					and(eq(announcements.targetType, 'TENANT'), eq(announcements.targetId, tenantId))
-				);
+			if (room?.id) targets.push(and(eq(announcements.targetType, 'ROOM'), eq(announcements.targetId, room.id)));
+			targets.push(and(eq(announcements.targetType, 'TENANT'), eq(announcements.targetId, tenantId)));
 
 			const result = await db
 				.select()
@@ -47,7 +62,11 @@ export const GET: RequestHandler = async ({ url }) => {
 		}
 
 		const conditions = [];
-		if (senderId) conditions.push(eq(announcements.senderId, senderId));
+		if (locals.session?.role === 'LANDLORD') {
+			conditions.push(eq(announcements.senderId, locals.session.userId));
+		} else if (senderId) {
+			conditions.push(eq(announcements.senderId, senderId));
+		}
 		if (targetType) conditions.push(eq(announcements.targetType, targetType));
 		if (targetId) conditions.push(eq(announcements.targetId, targetId));
 
@@ -63,19 +82,34 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const body = await request.json();
-		const { senderId, title, content, isImportant, targetType, targetId } = body;
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
 
-		if (!senderId || !title || !content) {
+		const body = await request.json();
+		const { title, content, isImportant, targetType, targetId } = body;
+
+		if (!title || !content) {
 			return json({ error: 'Missing required announcement fields' }, { status: 400 });
+		}
+		if (targetType === 'PROPERTY' && targetId && !(await landlordOwnsProperty(auth.value, targetId))) {
+			return forbidden();
+		}
+		if (targetType === 'BLOCK' && targetId && !(await landlordOwnsBlock(auth.value, targetId))) {
+			return forbidden();
+		}
+		if (targetType === 'ROOM' && targetId && !(await landlordOwnsRoom(auth.value, targetId))) {
+			return forbidden();
+		}
+		if (targetType === 'TENANT' && targetId && !(await landlordOwnsTenant(auth.value, targetId))) {
+			return forbidden();
 		}
 
 		const created = await db
 			.insert(announcements)
 			.values({
-				senderId,
+				senderId: locals.session!.userId,
 				title,
 				content,
 				isImportant: isImportant || false,
@@ -90,12 +124,18 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ url }) => {
+export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
 		const id = url.searchParams.get('id');
 
 		if (!id) {
 			return json({ error: 'Missing announcement ID' }, { status: 400 });
+		}
+		if (
+			locals.session?.role !== 'LANDLORD' ||
+			!(await landlordOwnsAnnouncement(locals.session.userId, id))
+		) {
+			return forbidden();
 		}
 
 		await db.delete(announcements).where(eq(announcements.id, id));

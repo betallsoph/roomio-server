@@ -3,9 +3,10 @@ import { readSession, destroySession } from '$lib/server/session';
 import { db } from '$lib/server/db';
 import { users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
+import { rateLimit } from '$lib/server/rate-limit';
 
 // Các API không cần đăng nhập
-const PUBLIC_API = ['/api/auth', '/api/payment-webhook'];
+const PUBLIC_API = ['/api/auth', '/api/payment-webhook', '/api/payos-webhook'];
 
 // Nhân viên (STAFF) chỉ được dùng đúng các API phục vụ "vận hành cơ bản" — mặc định chặn, chỉ mở những path/method dưới đây
 const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
@@ -21,6 +22,26 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.session = session;
 
 	const { pathname } = event.url;
+
+	if (pathname === '/api/auth' && event.request.method === 'POST') {
+		const limited = rateLimit(`auth:${event.getClientAddress()}`, 20, 15 * 60 * 1000);
+		if (limited) return limited;
+	}
+
+	if (pathname === '/api/upload' && event.request.method === 'POST') {
+		const limited = rateLimit(`upload:${event.getClientAddress()}`, 60, 60 * 60 * 1000);
+		if (limited) return limited;
+	}
+
+	if (pathname === '/api/payment-webhook' && event.request.method === 'POST') {
+		const limited = rateLimit(`webhook:${event.getClientAddress()}`, 180, 60 * 1000);
+		if (limited) return limited;
+	}
+
+	if (pathname === '/api/payos-webhook' && event.request.method === 'POST') {
+		const limited = rateLimit(`payos-webhook:${event.getClientAddress()}`, 180, 60 * 1000);
+		if (limited) return limited;
+	}
 
 	if (pathname.startsWith('/api') && !PUBLIC_API.some((p) => pathname.startsWith(p))) {
 		if (!session) {

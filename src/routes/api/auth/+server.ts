@@ -6,6 +6,7 @@ import { users, landlordProfiles, tenantProfiles, services } from '$lib/server/d
 import { eq, or } from 'drizzle-orm';
 import { createSession, destroySession } from '$lib/server/session';
 import { hashPassword, verifyPassword } from '$lib/server/password';
+import { requiredEmail, requiredPhone, requiredString, ValidationError } from '$lib/server/validation';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	try {
@@ -13,27 +14,41 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		const { action, email, phone, password, name, role } = body;
 
 		if (action === 'register') {
-			if (!email || !phone || !password || !name) {
-				return json({ error: 'Thiếu thông tin đăng ký bắt buộc' }, { status: 400 });
+			const cleanEmail = requiredEmail(email);
+			const cleanPhone = requiredPhone(phone);
+			const cleanPassword = requiredString(password, 'mật khẩu', 128);
+			const cleanName = requiredString(name, 'họ tên', 120);
+
+			if (role && role !== 'LANDLORD') {
+				return json(
+					{ error: 'Không thể tự đăng ký vai trò này. Vui lòng dùng luồng quản trị phù hợp.' },
+					{ status: 403 }
+				);
 			}
 
 			// Check if user already exists
 			const existingUser = await db.query.users.findFirst({
-				where: or(eq(users.email, email), eq(users.phone, phone))
+				where: or(eq(users.email, cleanEmail), eq(users.phone, cleanPhone))
 			});
 
 			if (existingUser) {
 				return json({ error: 'Email hoặc số điện thoại đã được đăng ký' }, { status: 400 });
 			}
 
-			const passwordHash = await hashPassword(password);
-			const userRole = role || 'LANDLORD'; // Default to LANDLORD
+			const passwordHash = await hashPassword(cleanPassword);
+			const userRole = 'LANDLORD';
 
 			const user = await db.transaction(async (tx) => {
 				const newUser = (
 					await tx
 						.insert(users)
-						.values({ email, phone, passwordHash, name, role: userRole })
+						.values({
+							email: cleanEmail,
+							phone: cleanPhone,
+							passwordHash,
+							name: cleanName,
+							role: userRole
+						})
 						.returning()
 				)[0];
 
@@ -46,11 +61,11 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 							.insert(landlordProfiles)
 							.values({
 								userId: newUser.id,
-								companyName: `${name} PMS`,
+								companyName: `${cleanName} PMS`,
 								bankName: 'Vietcombank',
 								bankCode: 'VCB',
 								accountNumber: '1234567890',
-								accountName: name.toUpperCase(),
+								accountName: cleanName.toUpperCase(),
 								bankBranch: 'Chi nhánh TP.HCM'
 							})
 							.returning()
@@ -116,8 +131,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			}
 
 			const conditions = [];
-			if (email) conditions.push(eq(users.email, email));
-			if (phone) conditions.push(eq(users.phone, phone));
+			if (email) conditions.push(eq(users.email, requiredEmail(email)));
+			if (phone) conditions.push(eq(users.phone, requiredPhone(phone)));
 
 			const user = await db.query.users.findFirst({
 				where: or(...conditions),
@@ -173,6 +188,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 		return json({ error: 'Hành động không hợp lệ' }, { status: 400 });
 	} catch (error) {
+		if (error instanceof ValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };

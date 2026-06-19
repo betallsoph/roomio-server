@@ -13,13 +13,14 @@ import {
 } from '$lib/server/db/schema';
 import { and, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
+import { forbidden, landlordOwnsRoom, landlordOwnsTenant, requireLandlord } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
+		const landlordId =
+			locals.session?.role === 'STAFF' ? locals.session.staffLandlordId : locals.session?.landlordProfileId;
+		if (!landlordId || (locals.session?.role !== 'LANDLORD' && locals.session?.role !== 'STAFF')) {
+			return forbidden();
 		}
 
 		// Tenants that currently occupy a room in one of the landlord's properties
@@ -52,8 +53,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const body = await request.json();
 		const {
 			email,
@@ -80,6 +84,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			deposit === undefined
 		) {
 			return json({ error: 'Thiếu thông tin khách thuê bắt buộc' }, { status: 400 });
+		}
+		if (!(await landlordOwnsRoom(auth.value, roomId))) {
+			return forbidden();
 		}
 
 		// 1. Check if user already exists
@@ -229,6 +236,12 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		// Khách thuê chỉ được cập nhật hồ sơ của chính mình
 		if (locals.session?.role === 'TENANT' && id !== locals.session.tenantProfileId) {
 			return json({ error: 'Không có quyền cập nhật hồ sơ này' }, { status: 403 });
+		}
+		if (
+			locals.session?.role === 'LANDLORD' &&
+			!(await landlordOwnsTenant(locals.session.landlordProfileId!, id))
+		) {
+			return forbidden();
 		}
 
 		const updateData: Record<string, unknown> = {};

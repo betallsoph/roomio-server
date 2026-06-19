@@ -4,14 +4,14 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { properties, rooms, invoices, contracts } from '$lib/server/db/schema';
 import { and, count, eq, gte, inArray, lte, sum } from 'drizzle-orm';
+import { requireLandlord } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
-		}
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+		const landlordId = auth.value;
+		void url;
 
 		// 1. Fetch all rooms belonging to the landlord's properties
 		const roomRows = await db

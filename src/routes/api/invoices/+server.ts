@@ -4,8 +4,9 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { invoices, invoiceItems, rooms, properties } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { forbidden, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		const landlordId = url.searchParams.get('landlordId');
 		const tenantId = url.searchParams.get('tenantId');
@@ -14,7 +15,26 @@ export const GET: RequestHandler = async ({ url }) => {
 
 		const conditions = [];
 
-		if (landlordId) {
+		if (locals.session?.role === 'LANDLORD') {
+			conditions.push(
+				inArray(
+					invoices.roomId,
+					db
+						.select({ id: rooms.id })
+						.from(rooms)
+						.innerJoin(properties, eq(rooms.propertyId, properties.id))
+						.where(eq(properties.landlordId, locals.session.landlordProfileId!))
+				)
+			);
+		} else if (locals.session?.role === 'TENANT') {
+			if (!locals.session.tenantProfileId) return forbidden();
+			conditions.push(
+				inArray(
+					invoices.roomId,
+					db.select({ id: rooms.id }).from(rooms).where(eq(rooms.tenantId, locals.session.tenantProfileId))
+				)
+			);
+		} else if (landlordId) {
 			conditions.push(
 				inArray(
 					invoices.roomId,
@@ -60,8 +80,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const body = await request.json();
 		const { roomId, month, rentAmount, dueDate, items, notes } = body;
 
@@ -74,6 +97,17 @@ export const POST: RequestHandler = async ({ request }) => {
 			!Array.isArray(items)
 		) {
 			return json({ error: 'Missing required invoice parameters' }, { status: 400 });
+		}
+		if (!(await landlordOwnsRoom(auth.value, roomId))) {
+			return forbidden();
+		}
+
+		const existingInvoice = await db.query.invoices.findFirst({
+			where: and(eq(invoices.roomId, roomId), eq(invoices.month, month)),
+			columns: { id: true }
+		});
+		if (existingInvoice) {
+			return json({ error: 'Phòng này đã có hóa đơn cho tháng đã chọn' }, { status: 409 });
 		}
 
 		// Fetch room & active tenant
@@ -154,6 +188,49 @@ export const POST: RequestHandler = async ({ request }) => {
 		});
 
 		return json(fullInvoice);
+	} catch (error) {
+		return json({ error: errorMessage(error) }, { status: 500 });
+	}
+};
+
+export const DELETE: RequestHandler = async ({ request, locals }) => {
+	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
+		const body = await request.json();
+		const ids: string[] = Array.isArray(body.ids)
+			? body.ids.filter((id: unknown): id is string => typeof id === 'string')
+			: [];
+		if (ids.length === 0) {
+			return json({ error: 'Chưa chọn hóa đơn để xóa' }, { status: 400 });
+		}
+
+		const ownedInvoices = await db.query.invoices.findMany({
+			where: inArray(invoices.id, ids),
+			with: { room: { with: { property: { columns: { landlordId: true } } } } }
+		});
+		if (ownedInvoices.length !== ids.length) {
+			return json({ error: 'Một số hóa đơn không tồn tại' }, { status: 404 });
+		}
+		if (ownedInvoices.some((invoice) => invoice.room.property.landlordId !== auth.value)) {
+			return forbidden();
+		}
+
+		await db.transaction(async (tx) => {
+			for (const invoice of ownedInvoices) {
+				await tx.delete(invoices).where(eq(invoices.id, invoice.id));
+				if (invoice.status !== 'paid') {
+					const outstanding = Math.max(invoice.totalAmount - invoice.paidAmount, 0);
+					await tx
+						.update(rooms)
+						.set({ debtAmount: sql`greatest(coalesce(${rooms.debtAmount}, 0) - ${outstanding}, 0)` })
+						.where(eq(rooms.id, invoice.roomId));
+				}
+			}
+		});
+
+		return json({ success: true, count: ownedInvoices.length });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

@@ -2,10 +2,11 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { invoices, rooms } from '$lib/server/db/schema';
+import { invoices, paymentTransactions, rooms } from '$lib/server/db/schema';
 import { eq, sql } from 'drizzle-orm';
+import { forbidden, landlordOwnsInvoice, tenantOwnsInvoice } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ params, locals }) => {
 	try {
 		const { id } = params;
 
@@ -31,6 +32,15 @@ export const GET: RequestHandler = async ({ params }) => {
 
 		if (!invoice) {
 			return json({ error: 'Invoice not found' }, { status: 404 });
+		}
+		if (
+			locals.session?.role === 'LANDLORD' &&
+			invoice.room.property.landlord.id !== locals.session.landlordProfileId
+		) {
+			return forbidden();
+		}
+		if (locals.session?.role === 'TENANT' && !(await tenantOwnsInvoice(locals.session.tenantProfileId!, id))) {
+			return forbidden();
 		}
 
 		return json(invoice);
@@ -63,6 +73,26 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 			return json({ error: 'Invoice not found' }, { status: 404 });
 		}
 
+		if (action === 'uploadProof') {
+			if (
+				locals.session?.role === 'TENANT' &&
+				!(await tenantOwnsInvoice(locals.session.tenantProfileId!, id))
+			) {
+				return forbidden();
+			}
+			if (
+				locals.session?.role === 'LANDLORD' &&
+				!(await landlordOwnsInvoice(locals.session.landlordProfileId!, id))
+			) {
+				return forbidden();
+			}
+		} else if (
+			locals.session?.role !== 'LANDLORD' ||
+			!(await landlordOwnsInvoice(locals.session.landlordProfileId!, id))
+		) {
+			return forbidden('Chỉ chủ trọ sở hữu hóa đơn này được cập nhật thanh toán');
+		}
+
 		if (action === 'confirmPaid') {
 			const alreadyPaid = invoice.status === 'paid';
 			if (alreadyPaid) {
@@ -70,6 +100,8 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 			}
 
 			const updated = await db.transaction(async (tx) => {
+				const outstandingAmount = Math.max(invoice.totalAmount - invoice.paidAmount, 0);
+
 				// 1. Update invoice status
 				const inv = (
 					await tx
@@ -83,8 +115,20 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 						.returning()
 				)[0];
 
+				await tx.insert(paymentTransactions).values({
+					landlordId: locals.session!.landlordProfileId,
+					invoiceId: id,
+					provider: 'manual',
+					providerTransactionId: `manual:${id}:${Date.now()}`,
+					invoiceCode: id,
+					amount: outstandingAmount,
+					transferType: 'manual',
+					content: 'Chủ trọ xác nhận đã nhận đủ tiền',
+					status: 'applied',
+					rawPayload: JSON.stringify({ action: 'confirmPaid', invoiceId: id })
+				});
+
 				// 2. Reduce the room's outstanding debt
-				const outstandingAmount = Math.max(invoice.totalAmount - invoice.paidAmount, 0);
 				await tx
 					.update(rooms)
 					.set({
@@ -140,7 +184,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ params, locals }) => {
 	try {
 		const { id } = params;
 
@@ -154,6 +198,12 @@ export const DELETE: RequestHandler = async ({ params }) => {
 
 		if (!invoice) {
 			return json({ error: 'Invoice not found' }, { status: 404 });
+		}
+		if (
+			locals.session?.role !== 'LANDLORD' ||
+			!(await landlordOwnsInvoice(locals.session.landlordProfileId!, id))
+		) {
+			return forbidden();
 		}
 
 		await db.transaction(async (tx) => {

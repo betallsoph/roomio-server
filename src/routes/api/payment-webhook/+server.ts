@@ -2,73 +2,146 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { invoices, rooms } from '$lib/server/db/schema';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { invoices, paymentTransactions, rooms } from '$lib/server/db/schema';
+import { eq, or, sql } from 'drizzle-orm';
+import { getPayOSConfig, verifyPayOSWebhook } from '$lib/server/payos';
 
-// Nhận webhook từ SePay/Casso khi có tiền vào tài khoản ngân hàng của chủ trọ.
-// Nội dung chuyển khoản chứa mã hóa đơn (đã nhúng sẵn trong mã VietQR) nên có thể
-// tự động đối soát và xác nhận thanh toán — không cần khách gửi bill chụp màn hình.
-//
-// Cấu hình: đặt biến môi trường SEPAY_API_KEY và khai báo webhook trên SePay với
-// header "Authorization: Apikey <SEPAY_API_KEY>".
-
-// Mã hóa đơn dạng INV-202606-1234; ngân hàng có thể bỏ dấu gạch trong nội dung CK
-const INVOICE_CODE_PATTERN = /INV[-\s]?(\d{6})[-\s]?(\d{4})/i;
+// Webhook payOS gửi payload dạng { code, desc, success, data, signature }.
+// Chữ ký được verify bằng PAYOS_CHECKSUM_KEY trên object `data` đã sort key theo docs payOS.
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
-		const apiKey = process.env.SEPAY_API_KEY;
-		if (apiKey) {
-			const auth = request.headers.get('authorization');
-			if (auth !== `Apikey ${apiKey}`) {
-				return json({ error: 'Sai API key' }, { status: 401 });
-			}
+		const config = getPayOSConfig();
+		if (!config) {
+			return json({ error: 'Chưa cấu hình PAYOS_CLIENT_ID, PAYOS_API_KEY và PAYOS_CHECKSUM_KEY' }, { status: 500 });
 		}
 
 		const body = await request.json();
-		// Định dạng webhook SePay: https://developer.sepay.vn
-		const { content, transferAmount, transferType } = body;
-
-		if (transferType !== 'in' || !content || !transferAmount) {
-			return json({ success: true, message: 'Bỏ qua giao dịch không liên quan' });
+		const { code, desc, success, data, signature } = body;
+		if (!data || typeof data !== 'object' || !signature) {
+			return json({ error: 'Payload PayOS không hợp lệ' }, { status: 400 });
+		}
+		if (!verifyPayOSWebhook(data, String(signature), config.checksumKey)) {
+			return json({ error: 'Sai chữ ký PayOS' }, { status: 401 });
 		}
 
-		const match = String(content).match(INVOICE_CODE_PATTERN);
-		if (!match) {
-			return json({ success: true, message: 'Không tìm thấy mã hóa đơn trong nội dung CK' });
-		}
+		const orderCode = data.orderCode !== undefined ? String(data.orderCode) : null;
+		const paymentLinkId = data.paymentLinkId ? String(data.paymentLinkId) : null;
+		const amount = Number(data.amount) || 0;
+		const providerTransactionId = String(
+			data.reference ?? `${orderCode ?? 'unknown'}:${paymentLinkId ?? 'unknown'}:${data.transactionDateTime ?? ''}:${amount}`
+		);
+		const rawPayload = JSON.stringify(body);
 
-		// Hóa đơn có thể mang một trong hai định dạng mã: INV-YYYYMM-XXXX hoặc INV-YYYYMMXXXX
-		const candidates = [`INV-${match[1]}-${match[2]}`, `INV-${match[1]}${match[2]}`];
-		const invoice = await db.query.invoices.findFirst({
-			where: inArray(invoices.id, candidates)
+		const existingTransaction = await db.query.paymentTransactions.findFirst({
+			where: eq(paymentTransactions.providerTransactionId, providerTransactionId),
+			columns: { id: true }
 		});
+		if (existingTransaction) {
+			return json({ success: true, message: 'Giao dịch PayOS đã được xử lý trước đó' });
+		}
+
+		const matchCondition =
+			orderCode && paymentLinkId
+				? or(eq(invoices.payosOrderCode, orderCode), eq(invoices.payosPaymentLinkId, paymentLinkId))
+				: orderCode
+					? eq(invoices.payosOrderCode, orderCode)
+					: paymentLinkId
+						? eq(invoices.payosPaymentLinkId, paymentLinkId)
+						: undefined;
+
+		const invoice = matchCondition
+			? await db.query.invoices.findFirst({
+					where: matchCondition,
+					with: {
+						room: {
+							with: {
+								property: {
+									columns: { landlordId: true }
+								}
+							}
+						}
+					}
+				})
+			: null;
+
+		if (!success || code !== '00' || data.code !== '00') {
+			await db.insert(paymentTransactions).values({
+				landlordId: invoice?.room.property.landlordId ?? null,
+				invoiceId: invoice?.id ?? null,
+				provider: 'payos',
+				providerTransactionId,
+				invoiceCode: orderCode,
+				amount,
+				transferType: 'webhook',
+				content: desc ?? data.desc ?? 'PayOS webhook không thành công',
+				status: 'ignored',
+				rawPayload
+			});
+			return json({ success: true, message: 'Bỏ qua webhook PayOS không thành công' });
+		}
 
 		if (!invoice) {
-			return json({ success: true, message: `Không tìm thấy hóa đơn ${candidates[0]}` });
+			await db.insert(paymentTransactions).values({
+				provider: 'payos',
+				providerTransactionId,
+				invoiceCode: orderCode,
+				amount,
+				transferType: 'webhook',
+				content: data.description ?? null,
+				status: 'unmatched',
+				rawPayload
+			});
+			return json({ success: true, message: 'Không tìm thấy hóa đơn khớp PayOS' });
 		}
 
-		const invoiceId = invoice.id;
-
 		if (invoice.status === 'paid') {
+			await db.insert(paymentTransactions).values({
+				landlordId: invoice.room.property.landlordId,
+				invoiceId: invoice.id,
+				provider: 'payos',
+				providerTransactionId,
+				invoiceCode: orderCode,
+				amount,
+				transferType: 'webhook',
+				content: data.description ?? null,
+				status: 'duplicate',
+				rawPayload
+			});
 			return json({ success: true, message: 'Hóa đơn đã được thanh toán trước đó' });
 		}
 
-		const amount = Number(transferAmount);
 		const newPaidAmount = invoice.paidAmount + amount;
 		const fullyPaid = newPaidAmount >= invoice.totalAmount;
 		const today = new Date().toISOString().split('T')[0];
 
 		await db.transaction(async (tx) => {
+			await tx.insert(paymentTransactions).values({
+				landlordId: invoice.room.property.landlordId,
+				invoiceId: invoice.id,
+				provider: 'payos',
+				providerTransactionId,
+				invoiceCode: orderCode,
+				amount,
+				transferType: 'webhook',
+				content: data.description ?? null,
+				status: 'applied',
+				rawPayload
+			});
+
 			await tx
 				.update(invoices)
 				.set({
 					paidAmount: newPaidAmount,
 					status: fullyPaid ? 'paid' : 'partial',
 					paidDate: fullyPaid ? today : null,
-					paymentMethod: 'bank_webhook'
+					paymentMethod: 'payos_webhook',
+					paymentProvider: 'payos',
+					payosOrderCode: orderCode,
+					payosPaymentLinkId: paymentLinkId,
+					payosStatus: fullyPaid ? 'PAID' : 'PARTIAL'
 				})
-				.where(eq(invoices.id, invoiceId));
+				.where(eq(invoices.id, invoice.id));
 
 			await tx
 				.update(rooms)
@@ -79,7 +152,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				.where(eq(rooms.id, invoice.roomId));
 		});
 
-		return json({ success: true, invoiceId, status: fullyPaid ? 'paid' : 'partial' });
+		return json({ success: true, invoiceId: invoice.id, status: fullyPaid ? 'paid' : 'partial' });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

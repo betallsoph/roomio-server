@@ -4,14 +4,22 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { rooms, invoices, invoiceItems, meterReadings } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+		const landlordId = auth.value;
+
 		const body = await request.json();
-		const { landlordId, propertyId, month, dueDate, readings } = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
+		const { propertyId, month, dueDate, readings } = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
 
 		if (!landlordId || !propertyId || !month || !dueDate || !readings) {
 			return json({ error: 'Missing required parameters' }, { status: 400 });
+		}
+		if (!(await landlordOwnsProperty(landlordId, propertyId))) {
+			return forbidden();
 		}
 
 		// Fetch all occupied rooms for this property
@@ -37,6 +45,12 @@ export const POST: RequestHandler = async ({ request }) => {
 
 			for (const room of occupiedRooms) {
 				if (!room.tenant) continue;
+
+				const existingInvoice = await tx.query.invoices.findFirst({
+					where: and(eq(invoices.roomId, room.id), eq(invoices.month, month)),
+					columns: { id: true }
+				});
+				if (existingInvoice) continue;
 
 				const tenantName = room.tenant.user.name;
 				const tenantPhone = room.tenant.user.phone;
@@ -152,13 +166,19 @@ export const POST: RequestHandler = async ({ request }) => {
 
 // Dữ liệu chuẩn bị cho màn tạo hóa đơn hàng loạt: phòng đang có khách,
 // kèm chỉ số đã được duyệt (khách gửi + chủ chốt) của tháng để tự điền sẵn
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const propertyId = url.searchParams.get('propertyId');
 		const month = url.searchParams.get('month');
 
 		if (!propertyId || !month) {
 			return json({ error: 'Missing propertyId or month' }, { status: 400 });
+		}
+		if (!(await landlordOwnsProperty(auth.value, propertyId))) {
+			return forbidden();
 		}
 
 		const occupiedRooms = await db.query.rooms.findMany({

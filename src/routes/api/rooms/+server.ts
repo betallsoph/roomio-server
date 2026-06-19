@@ -11,8 +11,9 @@ import {
 	roomAssets
 } from '$lib/server/db/schema';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { forbidden, landlordOwnsProperty, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		const propertyId = url.searchParams.get('propertyId');
 		const blockId = url.searchParams.get('blockId');
@@ -21,6 +22,32 @@ export const GET: RequestHandler = async ({ url }) => {
 		const landlordId = url.searchParams.get('landlordId');
 
 		const conditions = [];
+		if (locals.session?.role === 'LANDLORD') {
+			conditions.push(
+				inArray(
+					rooms.propertyId,
+					db
+						.select({ id: properties.id })
+						.from(properties)
+						.where(eq(properties.landlordId, locals.session.landlordProfileId!))
+				)
+			);
+		}
+		if (locals.session?.role === 'TENANT') {
+			if (!locals.session.tenantProfileId) return forbidden();
+			conditions.push(eq(rooms.tenantId, locals.session.tenantProfileId));
+		}
+		if (locals.session?.role === 'STAFF') {
+			conditions.push(
+				inArray(
+					rooms.propertyId,
+					db
+						.select({ id: properties.id })
+						.from(properties)
+						.where(eq(properties.landlordId, locals.session.staffLandlordId!))
+				)
+			);
+		}
 		if (status) {
 			conditions.push(eq(rooms.status, status));
 		}
@@ -70,13 +97,19 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const body = await request.json();
 		const { propertyId, blockId, roomNumber, roomCode, roomType, floor, monthlyRent, area } = body;
 
 		if (!propertyId || !roomNumber || !roomType || !monthlyRent) {
 			return json({ error: 'Missing required room fields' }, { status: 400 });
+		}
+		if (!(await landlordOwnsProperty(auth.value, propertyId))) {
+			return forbidden();
 		}
 
 		// Check if room number already exists in this property
@@ -153,13 +186,19 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const PUT: RequestHandler = async ({ request }) => {
+export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const body = await request.json();
 		const { id, action, ...data } = body;
 
 		if (!id) {
 			return json({ error: 'Missing room ID' }, { status: 400 });
+		}
+		if (!(await landlordOwnsRoom(auth.value, id))) {
+			return forbidden();
 		}
 
 		if (action === 'updateMeters') {
@@ -286,12 +325,18 @@ export const PUT: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ url }) => {
+export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const id = url.searchParams.get('id');
 
 		if (!id) {
 			return json({ error: 'Missing room ID' }, { status: 400 });
+		}
+		if (!(await landlordOwnsRoom(auth.value, id))) {
+			return forbidden();
 		}
 
 		await db.delete(rooms).where(eq(rooms.id, id));

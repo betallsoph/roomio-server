@@ -4,14 +4,32 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { contracts, rooms, properties } from '$lib/server/db/schema';
 import { desc, eq, inArray } from 'drizzle-orm';
+import {
+	forbidden,
+	landlordOwnsContract,
+	landlordOwnsRoom,
+	landlordOwnsTenant,
+	requireLandlord
+} from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		const landlordId = url.searchParams.get('landlordId');
 		const tenantId = url.searchParams.get('tenantId');
 
 		let condition;
-		if (landlordId) {
+		if (locals.session?.role === 'LANDLORD') {
+			condition = inArray(
+				contracts.roomId,
+				db
+					.select({ id: rooms.id })
+					.from(rooms)
+					.innerJoin(properties, eq(rooms.propertyId, properties.id))
+					.where(eq(properties.landlordId, locals.session.landlordProfileId!))
+			);
+		} else if (locals.session?.role === 'TENANT') {
+			condition = eq(contracts.tenantId, locals.session.tenantProfileId!);
+		} else if (landlordId) {
 			condition = inArray(
 				contracts.roomId,
 				db
@@ -41,13 +59,19 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const body = await request.json();
 		const { tenantId, roomId, startDate, endDate, monthlyRent, deposit, fileUrl, notes } = body;
 
 		if (!tenantId || !roomId || !startDate || !endDate || monthlyRent === undefined) {
 			return json({ error: 'Thiếu thông tin hợp đồng bắt buộc' }, { status: 400 });
+		}
+		if (!(await landlordOwnsRoom(auth.value, roomId)) || !(await landlordOwnsTenant(auth.value, tenantId))) {
+			return forbidden();
 		}
 
 		const created = await db
@@ -71,13 +95,19 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const PUT: RequestHandler = async ({ request }) => {
+export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const body = await request.json();
 		const { id, startDate, endDate, monthlyRent, deposit, fileUrl, notes, status } = body;
 
 		if (!id) {
 			return json({ error: 'Missing contract ID' }, { status: 400 });
+		}
+		if (!(await landlordOwnsContract(auth.value, id))) {
+			return forbidden();
 		}
 
 		const updateData: Record<string, unknown> = {};
@@ -105,12 +135,18 @@ export const PUT: RequestHandler = async ({ request }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ url }) => {
+export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+
 		const id = url.searchParams.get('id');
 
 		if (!id) {
 			return json({ error: 'Missing contract ID' }, { status: 400 });
+		}
+		if (!(await landlordOwnsContract(auth.value, id))) {
+			return forbidden();
 		}
 
 		await db.delete(contracts).where(eq(contracts.id, id));

@@ -8,6 +8,20 @@
       "when": 1781239440537,
       "tag": "0000_thankful_forgotten_one",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781868233200,
+      "tag": "0001_swift_onslaught",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781868870755,
+      "tag": "0002_panoramic_lockheed",
+      "breakpoints": true
     }
   ]
 }

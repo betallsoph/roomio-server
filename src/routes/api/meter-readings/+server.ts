@@ -4,9 +4,29 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { meterReadings, rooms, properties, services } from '$lib/server/db/schema';
 import { and, desc, eq, inArray } from 'drizzle-orm';
+import { forbidden, landlordOwnsRoom } from '$lib/server/authz';
 
 // Ngưỡng cảnh báo: mức tiêu thụ lệch quá 50% so với trung bình 3 tháng gần nhất
 const ANOMALY_THRESHOLD = 0.5;
+
+async function actorOwnsReading(session: App.Locals['session'], readingId: string) {
+	const reading = await db.query.meterReadings.findFirst({ where: eq(meterReadings.id, readingId) });
+	if (!reading) return false;
+	if (session?.role === 'LANDLORD') {
+		return landlordOwnsRoom(session.landlordProfileId!, reading.roomId);
+	}
+	if (session?.role === 'STAFF') {
+		const row = await db
+			.select({ id: meterReadings.id })
+			.from(meterReadings)
+			.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
+			.innerJoin(properties, eq(rooms.propertyId, properties.id))
+			.where(and(eq(meterReadings.id, readingId), eq(properties.landlordId, session.staffLandlordId!)))
+			.limit(1);
+		return row.length > 0;
+	}
+	return false;
+}
 
 export const GET: RequestHandler = async ({ url }) => {
 	try {
@@ -90,6 +110,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		// Khách chỉ được gửi chỉ số cho phòng mình đang thuê
 		if (locals.session?.role === 'TENANT' && room.tenantId !== locals.session.tenantProfileId) {
 			return json({ error: 'Bạn không thuê phòng này' }, { status: 403 });
+		}
+		if (
+			locals.session?.role === 'LANDLORD' &&
+			!(await landlordOwnsRoom(locals.session.landlordProfileId!, roomId))
+		) {
+			return forbidden();
 		}
 
 		// Lấy lịch sử đã duyệt để tính chỉ số đầu kỳ và mức tiêu thụ trung bình
@@ -189,6 +215,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const reading = await db.query.meterReadings.findFirst({ where: eq(meterReadings.id, id) });
 		if (!reading) {
 			return json({ error: 'Không tìm thấy bản ghi chỉ số' }, { status: 404 });
+		}
+		if (!(await actorOwnsReading(locals.session, id))) {
+			return forbidden();
 		}
 
 		const updateData: Record<string, unknown> = {

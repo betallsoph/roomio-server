@@ -4,14 +4,13 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { landlordProfiles } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
+import { requireLandlord } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
-		}
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+		const landlordId = auth.value;
 
 		const landlordProfile = await db.query.landlordProfiles.findFirst({
 			where: eq(landlordProfiles.id, landlordId),
@@ -32,11 +31,14 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 };
 
-export const PUT: RequestHandler = async ({ request }) => {
+export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const auth = requireLandlord(locals.session);
+		if (!auth.ok) return auth.response;
+		const landlordId = auth.value;
+
 		const body = await request.json();
 		const {
-			landlordId,
 			companyName,
 			bankName,
 			bankCode,
@@ -45,10 +47,6 @@ export const PUT: RequestHandler = async ({ request }) => {
 			bankBranch,
 			momoNumber
 		} = body;
-
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
-		}
 
 		const updateData: Record<string, unknown> = {};
 		if (companyName !== undefined) updateData.companyName = companyName;
