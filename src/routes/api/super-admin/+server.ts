@@ -2,8 +2,26 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { landlordProfiles, users } from '$lib/server/db/schema';
-import { eq } from 'drizzle-orm';
+import { landlordProfiles, services, users } from '$lib/server/db/schema';
+import { eq, or } from 'drizzle-orm';
+import { hashPassword } from '$lib/server/password';
+import {
+	requiredEmail,
+	requiredEnum,
+	requiredPhone,
+	requiredString,
+	ValidationError
+} from '$lib/server/validation';
+
+const SUBSCRIPTION_TYPES = ['FREE', 'PREMIUM', 'ENTERPRISE'] as const;
+
+const DEFAULT_SERVICES = [
+	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },
+	{ name: 'Nước', type: 'METERED', defaultRate: 15000 },
+	{ name: 'Wifi', type: 'FLAT_ROOM', defaultRate: 100000 },
+	{ name: 'Rác sinh hoạt', type: 'FLAT_PERSON', defaultRate: 30000 },
+	{ name: 'Gửi xe máy', type: 'FLAT_VEHICLE', defaultRate: 100000 }
+];
 
 export const GET: RequestHandler = async () => {
 	try {
@@ -116,6 +134,103 @@ export const GET: RequestHandler = async () => {
 	}
 };
 
+export const POST: RequestHandler = async ({ request }) => {
+	try {
+		const body = await request.json();
+		const name = requiredString(body.name, 'họ tên chủ trọ', 120);
+		const email = requiredEmail(body.email);
+		const phone = requiredPhone(body.phone);
+		const password = requiredString(body.password, 'mật khẩu', 128);
+		const companyName =
+			typeof body.companyName === 'string' && body.companyName.trim()
+				? body.companyName.trim().slice(0, 255)
+				: `${name} PMS`;
+		const subscriptionType =
+			body.subscriptionType === undefined || body.subscriptionType === ''
+				? 'FREE'
+				: requiredEnum(body.subscriptionType, 'gói dịch vụ', SUBSCRIPTION_TYPES);
+		const subValidUntil =
+			typeof body.subValidUntil === 'string' && body.subValidUntil
+				? new Date(body.subValidUntil)
+				: null;
+
+		if (password.length < 6) {
+			return json({ error: 'Mật khẩu phải dài ít nhất 6 ký tự' }, { status: 400 });
+		}
+		if (subValidUntil && Number.isNaN(subValidUntil.getTime())) {
+			return json({ error: 'Hạn gói dịch vụ không hợp lệ' }, { status: 400 });
+		}
+
+		const existingUser = await db.query.users.findFirst({
+			where: or(eq(users.email, email), eq(users.phone, phone)),
+			columns: { id: true }
+		});
+		if (existingUser) {
+			return json({ error: 'Email hoặc số điện thoại đã được đăng ký' }, { status: 400 });
+		}
+
+		const passwordHash = await hashPassword(password);
+		const created = await db.transaction(async (tx) => {
+			const user = (
+				await tx
+					.insert(users)
+					.values({
+						email,
+						phone,
+						passwordHash,
+						name,
+						role: 'LANDLORD',
+						isActive: true
+					})
+					.returning()
+			)[0];
+
+			const landlord = (
+				await tx
+					.insert(landlordProfiles)
+					.values({
+						userId: user.id,
+						companyName,
+						subscriptionType,
+						subValidUntil,
+						bankName: 'Vietcombank',
+						bankCode: 'VCB',
+						accountNumber: '1234567890',
+						accountName: name.toUpperCase(),
+						bankBranch: 'Chi nhánh TP.HCM'
+					})
+					.returning()
+			)[0];
+
+			await tx.insert(services).values(
+				DEFAULT_SERVICES.map((service) => ({
+					...service,
+					landlordId: landlord.id,
+					isActive: true
+				}))
+			);
+
+			return {
+				id: landlord.id,
+				userId: user.id,
+				name: user.name,
+				email: user.email,
+				phone: user.phone,
+				companyName: landlord.companyName,
+				subscriptionType: landlord.subscriptionType,
+				subValidUntil: landlord.subValidUntil
+			};
+		});
+
+		return json(created, { status: 201 });
+	} catch (error) {
+		if (error instanceof ValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
+		return json({ error: errorMessage(error) }, { status: 500 });
+	}
+};
+
 export const PUT: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
@@ -132,7 +247,9 @@ export const PUT: RequestHandler = async ({ request }) => {
 			if (landlordId) {
 				const updateData: Record<string, unknown> = {};
 				if (subscriptionType !== undefined) updateData.subscriptionType = subscriptionType;
-				if (subValidUntil) updateData.subValidUntil = new Date(subValidUntil);
+				if (subValidUntil !== undefined) {
+					updateData.subValidUntil = subValidUntil ? new Date(subValidUntil) : null;
+				}
 
 				if (Object.keys(updateData).length > 0) {
 					profile = (
