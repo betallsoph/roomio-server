@@ -269,6 +269,7 @@ async function main() {
 				.values({
 					userId: landlordUser.id,
 					companyName: 'Nhà Trọ Ngọc Hậu',
+					enabledRentalTypes: 'APARTMENT,MOTEL',
 					bankName: 'Vietcombank',
 					bankCode: 'VCB',
 					accountNumber: '1234567890',
@@ -335,7 +336,8 @@ async function main() {
 						landlordId: landlordProfile.id,
 						name: propData.name,
 						shortName: propData.shortName,
-						address: propData.address
+						address: propData.address,
+						rentalType: 'APARTMENT'
 					})
 					.returning()
 			)[0];

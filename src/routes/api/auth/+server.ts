@@ -64,6 +64,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				userId: user.id,
 				role: user.role,
 				landlordProfileId: user.landlordProfile?.id || null,
+				enabledRentalTypes: user.landlordProfile?.enabledRentalTypes || null,
 				tenantProfileId: user.tenantProfile?.id || null,
 				staffProfileId: user.staffProfile?.id || null,
 				staffLandlordId: user.staffProfile?.landlordId || null
@@ -76,6 +77,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				name: user.name,
 				role: user.role,
 				landlordProfileId: user.landlordProfile?.id || null,
+				enabledRentalTypes: user.landlordProfile?.enabledRentalTypes || null,
 				tenantProfileId: user.tenantProfile?.id || null,
 				staffProfileId: user.staffProfile?.id || null,
 				staffLandlordId: user.staffProfile?.landlordId || null

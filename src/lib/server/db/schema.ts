@@ -27,6 +27,7 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 	subscriptionType: text('subscriptionType').notNull().default('FREE'), // FREE, PREMIUM, ENTERPRISE
 	subValidUntil: datetime('subValidUntil'),
 	companyName: text('companyName'),
+	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL
 
 	// Thông tin ngân hàng nhận tiền chuyển khoản (Cấu hình riêng của mỗi chủ trọ)
 	bankName: text('bankName').notNull().default('Vietcombank'),
@@ -72,6 +73,7 @@ export const properties = pgTable('Property', {
 	name: text('name').notNull(),
 	shortName: text('shortName').notNull(),
 	address: text('address').notNull(),
+	rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 

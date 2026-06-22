@@ -1,0 +1,2 @@
+ALTER TABLE "LandlordProfile" ADD COLUMN "enabledRentalTypes" text DEFAULT 'APARTMENT' NOT NULL;--> statement-breakpoint
+ALTER TABLE "Property" ADD COLUMN "rentalType" text DEFAULT 'APARTMENT' NOT NULL;

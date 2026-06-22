@@ -5,6 +5,7 @@ export interface SessionData {
 	userId: string;
 	role: string; // 'SUPER_ADMIN' | 'LANDLORD' | 'STAFF' | 'TENANT'
 	landlordProfileId: string | null;
+	enabledRentalTypes?: string | null;
 	tenantProfileId: string | null;
 	staffProfileId: string | null;
 	staffLandlordId: string | null; // Chủ trọ mà nhân viên (STAFF) phục vụ — dùng để scope dữ liệu

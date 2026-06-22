@@ -6,6 +6,24 @@ import { properties, blocks } from '$lib/server/db/schema';
 import { asc, eq } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL'] as const;
+
+function normalizeRentalType(value: unknown): (typeof RENTAL_TYPES)[number] {
+	const normalized = typeof value === 'string' ? value.trim().toUpperCase() : 'APARTMENT';
+	return RENTAL_TYPES.includes(normalized as (typeof RENTAL_TYPES)[number])
+		? (normalized as (typeof RENTAL_TYPES)[number])
+		: 'APARTMENT';
+}
+
+async function landlordAllowsRentalType(landlordId: string, rentalType: string) {
+	const profile = await db.query.landlordProfiles.findFirst({
+		where: (landlordProfiles, { eq }) => eq(landlordProfiles.id, landlordId),
+		columns: { enabledRentalTypes: true }
+	});
+	const enabled = profile?.enabledRentalTypes?.split(',').map((type) => type.trim()) ?? ['APARTMENT'];
+	return enabled.includes(rentalType);
+}
+
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		const auth = requireLandlord(locals.session);
@@ -40,15 +58,22 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const body = await request.json();
 		const { name, shortName, address, blocks: blockNames } = body;
+		const rentalType = normalizeRentalType(body.rentalType);
 
 		if (!landlordId || !name || !shortName || !address) {
 			return json({ error: 'Missing required property fields' }, { status: 400 });
+		}
+		if (!(await landlordAllowsRentalType(landlordId, rentalType))) {
+			return json({ error: 'Tài khoản chủ trọ chưa được bật loại hình này' }, { status: 403 });
 		}
 
 		const property = await db.transaction(async (tx) => {
 			// Create property
 			const prop = (
-				await tx.insert(properties).values({ landlordId, name, shortName, address }).returning()
+				await tx
+					.insert(properties)
+					.values({ landlordId, name, shortName, address, rentalType })
+					.returning()
 			)[0];
 
 			// Create initial blocks if specified
@@ -94,6 +119,11 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (!(await landlordOwnsProperty(auth.value, id))) {
 			return forbidden();
 		}
+		const requestedRentalType =
+			body.rentalType !== undefined ? normalizeRentalType(body.rentalType) : null;
+		if (requestedRentalType && !(await landlordAllowsRentalType(auth.value, requestedRentalType))) {
+			return json({ error: 'Tài khoản chủ trọ chưa được bật loại hình này' }, { status: 403 });
+		}
 
 		await db.transaction(async (tx) => {
 			// Update property details
@@ -101,6 +131,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			if (name !== undefined) updateData.name = name;
 			if (shortName !== undefined) updateData.shortName = shortName;
 			if (address !== undefined) updateData.address = address;
+			if (requestedRentalType) updateData.rentalType = requestedRentalType;
 
 			if (Object.keys(updateData).length > 0) {
 				await tx.update(properties).set(updateData).where(eq(properties.id, id));

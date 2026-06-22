@@ -14,6 +14,7 @@ import {
 } from '$lib/server/validation';
 
 const SUBSCRIPTION_TYPES = ['FREE', 'PREMIUM', 'ENTERPRISE'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL'] as const;
 
 const DEFAULT_SERVICES = [
 	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },
@@ -22,6 +23,17 @@ const DEFAULT_SERVICES = [
 	{ name: 'Rác sinh hoạt', type: 'FLAT_PERSON', defaultRate: 30000 },
 	{ name: 'Gửi xe máy', type: 'FLAT_VEHICLE', defaultRate: 100000 }
 ];
+
+function normalizeRentalTypes(value: unknown): string {
+	const rawTypes = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
+	const normalized = rawTypes
+		.map((type) => String(type).trim().toUpperCase())
+		.filter((type): type is (typeof RENTAL_TYPES)[number] =>
+			RENTAL_TYPES.includes(type as (typeof RENTAL_TYPES)[number])
+		);
+	const unique = [...new Set(normalized)];
+	return unique.length > 0 ? unique.join(',') : 'APARTMENT';
+}
 
 export const GET: RequestHandler = async () => {
 	try {
@@ -43,7 +55,7 @@ export const GET: RequestHandler = async () => {
 					columns: { id: true, amount: true, status: true, receivedAt: true, provider: true }
 				},
 				properties: {
-					columns: { id: true, name: true },
+					columns: { id: true, name: true, rentalType: true },
 					with: {
 						rooms: {
 							columns: { id: true, tenantId: true, status: true, debtAmount: true },
@@ -93,10 +105,12 @@ export const GET: RequestHandler = async () => {
 					subscriptionType: landlord.subscriptionType,
 					subValidUntil: landlord.subValidUntil,
 					companyName: landlord.companyName,
+					enabledRentalTypes: landlord.enabledRentalTypes,
 					user: landlord.user,
 					properties: landlord.properties.map((property) => ({
 						id: property.id,
 						name: property.name,
+						rentalType: property.rentalType,
 						_count: { rooms: property.rooms.length }
 					})),
 					metrics: {
@@ -153,6 +167,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			typeof body.subValidUntil === 'string' && body.subValidUntil
 				? new Date(body.subValidUntil)
 				: null;
+		const enabledRentalTypes = normalizeRentalTypes(body.enabledRentalTypes);
 
 		if (password.length < 6) {
 			return json({ error: 'Mật khẩu phải dài ít nhất 6 ký tự' }, { status: 400 });
@@ -193,6 +208,7 @@ export const POST: RequestHandler = async ({ request }) => {
 						companyName,
 						subscriptionType,
 						subValidUntil,
+						enabledRentalTypes,
 						bankName: 'Vietcombank',
 						bankCode: 'VCB',
 						accountNumber: '1234567890',
@@ -218,7 +234,8 @@ export const POST: RequestHandler = async ({ request }) => {
 				phone: user.phone,
 				companyName: landlord.companyName,
 				subscriptionType: landlord.subscriptionType,
-				subValidUntil: landlord.subValidUntil
+				subValidUntil: landlord.subValidUntil,
+				enabledRentalTypes: landlord.enabledRentalTypes
 			};
 		});
 
@@ -234,7 +251,7 @@ export const POST: RequestHandler = async ({ request }) => {
 export const PUT: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		const { landlordId, userId, subscriptionType, isActive, subValidUntil } = body;
+		const { landlordId, userId, subscriptionType, isActive, subValidUntil, enabledRentalTypes } = body;
 
 		if (!landlordId && !userId) {
 			return json({ error: 'Missing landlord ID or user ID' }, { status: 400 });
@@ -249,6 +266,9 @@ export const PUT: RequestHandler = async ({ request }) => {
 				if (subscriptionType !== undefined) updateData.subscriptionType = subscriptionType;
 				if (subValidUntil !== undefined) {
 					updateData.subValidUntil = subValidUntil ? new Date(subValidUntil) : null;
+				}
+				if (enabledRentalTypes !== undefined) {
+					updateData.enabledRentalTypes = normalizeRentalTypes(enabledRentalTypes);
 				}
 
 				if (Object.keys(updateData).length > 0) {
