@@ -65,6 +65,12 @@ Khai báo `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` từ kênh th
 
 Webhook được xác thực bằng `signature` HMAC-SHA256 theo `PAYOS_CHECKSUM_KEY`, match hóa đơn bằng `orderCode`/`paymentLinkId`, ghi `PaymentTransaction`, rồi tự cập nhật trạng thái hóa đơn và công nợ phòng.
 
+## Upload ảnh qua Cloudflare R2
+
+API có endpoint `POST /api/uploads/presign` để cấp pre-signed URL cho frontend/TMA upload ảnh trực tiếp lên Cloudflare R2, tránh đẩy file qua server API. Cần khai báo `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`. Bucket R2 cần bật CORS cho origin của app với method `PUT` và header `Content-Type`.
+
+Doc tích hợp nhanh cho Telegram Mini App: `docs/tma-r2-upload.md`.
+
 ## Lưu ý
 
 - PGlite chỉ cho dev local; production luôn dùng Postgres thật qua `DATABASE_URL`.

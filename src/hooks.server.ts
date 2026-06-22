@@ -14,7 +14,8 @@ const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
 	{ prefix: '/api/meter-readings', methods: ['GET', 'PUT'] }, // chốt/duyệt số điện nước
 	{ prefix: '/api/rooms', methods: ['GET'] }, // xem phòng (chỉ đọc)
 	{ prefix: '/api/tenants', methods: ['GET'] }, // xem khách thuê (chỉ đọc)
-	{ prefix: '/api/upload', methods: ['POST'] } // đính ảnh khi xử lý sự cố/chốt số
+	{ prefix: '/api/upload', methods: ['POST'] }, // đính ảnh khi xử lý sự cố/chốt số
+	{ prefix: '/api/uploads/presign', methods: ['POST'] } // xin pre-signed URL để upload thẳng R2
 ];
 
 export const handle: Handle = async ({ event, resolve }) => {
@@ -30,6 +31,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	if (pathname === '/api/upload' && event.request.method === 'POST') {
 		const limited = rateLimit(`upload:${event.getClientAddress()}`, 60, 60 * 60 * 1000);
+		if (limited) return limited;
+	}
+
+	if (pathname === '/api/uploads/presign' && event.request.method === 'POST') {
+		const limited = rateLimit(`upload-presign:${event.getClientAddress()}`, 120, 60 * 60 * 1000);
 		if (limited) return limited;
 	}
 
