@@ -14,7 +14,7 @@ import {
 } from '$lib/server/validation';
 
 const SUBSCRIPTION_TYPES = ['FREE', 'PREMIUM', 'ENTERPRISE'] as const;
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM'] as const;
 
 const DEFAULT_SERVICES = [
 	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },

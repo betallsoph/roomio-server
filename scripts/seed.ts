@@ -269,7 +269,7 @@ async function main() {
 				.values({
 					userId: landlordUser.id,
 					companyName: 'Nhà Trọ Ngọc Hậu',
-					enabledRentalTypes: 'APARTMENT,MOTEL',
+					enabledRentalTypes: 'APARTMENT,MOTEL,SERVICED_APARTMENT,DORM',
 					bankName: 'Vietcombank',
 					bankCode: 'VCB',
 					accountNumber: '1234567890',
