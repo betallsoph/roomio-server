@@ -189,32 +189,7 @@ type RoomSeedPlan = {
 const hagl3Towers = ['A', 'B', 'C', 'D'];
 const hagl3BlockNames = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'];
 const hagl3Floors = [
-	5,
-	6,
-	7,
-	8,
-	9,
-	10,
-	11,
-	12,
-	14,
-	15,
-	16,
-	17,
-	18,
-	19,
-	20,
-	21,
-	22,
-	23,
-	24,
-	25,
-	26,
-	27,
-	28,
-	30,
-	31,
-	32
+	5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30, 31, 32
 ];
 
 function hagl3BlockName(tower: string, unit: number) {
@@ -265,11 +240,9 @@ function generateHagl3RoomPlans(): RoomSeedPlan[] {
 
 	const sortedCandidates = candidates.sort((a, b) => {
 		const scoreA =
-			(a.floor * 37 + a.roomNumber.charCodeAt(0) * 19 + Number(a.roomNumber.slice(-2)) * 23) %
-			997;
+			(a.floor * 37 + a.roomNumber.charCodeAt(0) * 19 + Number(a.roomNumber.slice(-2)) * 23) % 997;
 		const scoreB =
-			(b.floor * 37 + b.roomNumber.charCodeAt(0) * 19 + Number(b.roomNumber.slice(-2)) * 23) %
-			997;
+			(b.floor * 37 + b.roomNumber.charCodeAt(0) * 19 + Number(b.roomNumber.slice(-2)) * 23) % 997;
 		return scoreA - scoreB || a.roomNumber.localeCompare(b.roomNumber);
 	});
 	const requiredPlans = candidates.filter((plan) => requiredRooms.has(plan.roomNumber));
@@ -277,8 +250,9 @@ function generateHagl3RoomPlans(): RoomSeedPlan[] {
 		.filter((plan) => !requiredRooms.has(plan.roomNumber))
 		.slice(0, 100 - requiredPlans.length);
 
-	return [...requiredPlans, ...randomPlans]
-		.sort((a, b) => a.roomNumber.localeCompare(b.roomNumber));
+	return [...requiredPlans, ...randomPlans].sort((a, b) =>
+		a.roomNumber.localeCompare(b.roomNumber)
+	);
 }
 
 const propertiesData = [
@@ -429,10 +403,7 @@ async function main() {
 
 			for (const blockName of blockNames) {
 				const block = (
-					await tx
-						.insert(blocks)
-						.values({ propertyId: property.id, name: blockName })
-						.returning()
+					await tx.insert(blocks).values({ propertyId: property.id, name: blockName }).returning()
 				)[0];
 				blockByName.set(block.name, block);
 			}

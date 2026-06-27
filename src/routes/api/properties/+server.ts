@@ -20,7 +20,9 @@ async function landlordAllowsRentalType(landlordId: string, rentalType: string) 
 		where: (landlordProfiles, { eq }) => eq(landlordProfiles.id, landlordId),
 		columns: { enabledRentalTypes: true }
 	});
-	const enabled = profile?.enabledRentalTypes?.split(',').map((type) => type.trim()) ?? ['APARTMENT'];
+	const enabled = profile?.enabledRentalTypes?.split(',').map((type) => type.trim()) ?? [
+		'APARTMENT'
+	];
 	return enabled.includes(rentalType);
 }
 

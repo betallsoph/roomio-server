@@ -70,7 +70,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!tenantId || !roomId || !startDate || !endDate || monthlyRent === undefined) {
 			return json({ error: 'Thiếu thông tin hợp đồng bắt buộc' }, { status: 400 });
 		}
-		if (!(await landlordOwnsRoom(auth.value, roomId)) || !(await landlordOwnsTenant(auth.value, tenantId))) {
+		if (
+			!(await landlordOwnsRoom(auth.value, roomId)) ||
+			!(await landlordOwnsTenant(auth.value, tenantId))
+		) {
 			return forbidden();
 		}
 

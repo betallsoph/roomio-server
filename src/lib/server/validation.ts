@@ -29,7 +29,11 @@ export function requiredNumber(value: unknown, field: string, min = 0): number {
 	return numberValue;
 }
 
-export function requiredEnum<T extends string>(value: unknown, field: string, allowed: readonly T[]): T {
+export function requiredEnum<T extends string>(
+	value: unknown,
+	field: string,
+	allowed: readonly T[]
+): T {
 	if (typeof value !== 'string' || !allowed.includes(value as T)) {
 		throw new ValidationError(`${field} không hợp lệ`);
 	}

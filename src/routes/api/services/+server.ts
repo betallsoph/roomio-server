@@ -93,7 +93,10 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (!existing) {
 			return json({ error: 'Không tìm thấy dịch vụ' }, { status: 404 });
 		}
-		if (locals.session?.role !== 'LANDLORD' || existing.landlordId !== locals.session.landlordProfileId) {
+		if (
+			locals.session?.role !== 'LANDLORD' ||
+			existing.landlordId !== locals.session.landlordProfileId
+		) {
 			return json({ error: 'Không có quyền sửa dịch vụ này' }, { status: 403 });
 		}
 
@@ -130,7 +133,10 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 		if (!existing) {
 			return json({ error: 'Không tìm thấy dịch vụ' }, { status: 404 });
 		}
-		if (locals.session?.role !== 'LANDLORD' || existing.landlordId !== locals.session.landlordProfileId) {
+		if (
+			locals.session?.role !== 'LANDLORD' ||
+			existing.landlordId !== locals.session.landlordProfileId
+		) {
 			return json({ error: 'Không có quyền xóa dịch vụ này' }, { status: 403 });
 		}
 

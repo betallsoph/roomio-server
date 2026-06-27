@@ -7,7 +7,13 @@ import { requireLandlord } from '$lib/server/authz';
 import { runAutomationJob } from '$lib/server/automation';
 import { and, desc, eq } from 'drizzle-orm';
 
-const ALLOWED_ACTIONS = ['overdue_sweep', 'invoice_reminder', 'meter_reminder', 'contract_reminder', 'run_all'] as const;
+const ALLOWED_ACTIONS = [
+	'overdue_sweep',
+	'invoice_reminder',
+	'meter_reminder',
+	'contract_reminder',
+	'run_all'
+] as const;
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -22,7 +28,10 @@ export const GET: RequestHandler = async ({ locals }) => {
 				limit: 20
 			}),
 			db.query.notificationQueue.findMany({
-				where: and(eq(notificationQueue.landlordId, landlordId), eq(notificationQueue.status, 'queued')),
+				where: and(
+					eq(notificationQueue.landlordId, landlordId),
+					eq(notificationQueue.status, 'queued')
+				),
 				orderBy: desc(notificationQueue.createdAt),
 				limit: 50
 			})
@@ -46,8 +55,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Automation không hợp lệ' }, { status: 400 });
 		}
 
-		const month = typeof body.month === 'string' ? body.month : new Date().toISOString().slice(0, 7);
-		const actions = action === 'run_all' ? ALLOWED_ACTIONS.filter((item) => item !== 'run_all') : [action];
+		const month =
+			typeof body.month === 'string' ? body.month : new Date().toISOString().slice(0, 7);
+		const actions =
+			action === 'run_all' ? ALLOWED_ACTIONS.filter((item) => item !== 'run_all') : [action];
 		const jobs = [];
 		for (const type of actions) {
 			jobs.push(await runAutomationJob(landlordId, type, { month }));

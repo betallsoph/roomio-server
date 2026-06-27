@@ -38,15 +38,8 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const landlordId = auth.value;
 
 		const body = await request.json();
-		const {
-			companyName,
-			bankName,
-			bankCode,
-			accountNumber,
-			accountName,
-			bankBranch,
-			momoNumber
-		} = body;
+		const { companyName, bankName, bankCode, accountNumber, accountName, bankBranch, momoNumber } =
+			body;
 
 		const updateData: Record<string, unknown> = {};
 		if (companyName !== undefined) updateData.companyName = companyName;

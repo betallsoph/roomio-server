@@ -8,7 +8,10 @@ import { forbidden, landlordOwnsInvoice, tenantOwnsInvoice } from '$lib/server/a
 import { createPayOSPaymentLink, makePayOSOrderCode, resolvePayOSConfig } from '$lib/server/payos';
 
 function paymentDescription(invoiceId: string) {
-	const compact = invoiceId.replace(/[^A-Z0-9]/gi, '').slice(-9).toUpperCase();
+	const compact = invoiceId
+		.replace(/[^A-Z0-9]/gi, '')
+		.slice(-9)
+		.toUpperCase();
 	return `RIO${compact}`.slice(0, 25);
 }
 

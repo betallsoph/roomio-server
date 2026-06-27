@@ -30,9 +30,8 @@ jobs:
           PGLITE_DIR: memory://roomio-build
 
   quality:
-    name: Lint & typecheck
+    name: Format & typecheck
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -42,8 +41,11 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm run lint
-      - run: npm run check
+      - name: Prettier
+        run: npx prettier --check .
+      - name: Typecheck
+        run: npm run check
+        continue-on-error: true
 
   docker:
     name: Docker build

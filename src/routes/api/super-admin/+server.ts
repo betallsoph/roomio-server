@@ -40,7 +40,14 @@ export const GET: RequestHandler = async () => {
 		const landlords = await db.query.landlordProfiles.findMany({
 			with: {
 				user: {
-					columns: { id: true, name: true, email: true, phone: true, isActive: true, createdAt: true }
+					columns: {
+						id: true,
+						name: true,
+						email: true,
+						phone: true,
+						isActive: true,
+						createdAt: true
+					}
 				},
 				staffs: {
 					with: { user: { columns: { id: true, isActive: true } } }
@@ -88,7 +95,9 @@ export const GET: RequestHandler = async () => {
 				const allInvoices = allRooms.flatMap((room) => room.invoices);
 				const unpaidInvoices = allInvoices.filter((invoice) => invoice.status !== 'paid');
 				const paymentTransactions = landlord.paymentTransactions;
-				const payosTransactions = paymentTransactions.filter((payment) => payment.provider === 'payos');
+				const payosTransactions = paymentTransactions.filter(
+					(payment) => payment.provider === 'payos'
+				);
 				const appliedPayments = payosTransactions.filter((payment) => payment.status === 'applied');
 				const unmatchedPayments = payosTransactions.filter(
 					(payment) => payment.status === 'unmatched' || payment.status === 'ignored'
@@ -116,7 +125,8 @@ export const GET: RequestHandler = async () => {
 					metrics: {
 						totalProperties: landlord.properties.length,
 						totalRooms: allRooms.length,
-						occupiedRooms: allRooms.filter((room) => room.tenantId || room.status !== 'empty').length,
+						occupiedRooms: allRooms.filter((room) => room.tenantId || room.status !== 'empty')
+							.length,
 						debtRooms: allRooms.filter((room) => room.status === 'debt').length,
 						activeStaff: landlord.staffs.filter((staff) => staff.user?.isActive).length,
 						activeServices: landlord.services.filter((service) => service.isActive).length,
@@ -251,7 +261,8 @@ export const POST: RequestHandler = async ({ request }) => {
 export const PUT: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		const { landlordId, userId, subscriptionType, isActive, subValidUntil, enabledRentalTypes } = body;
+		const { landlordId, userId, subscriptionType, isActive, subValidUntil, enabledRentalTypes } =
+			body;
 
 		if (!landlordId && !userId) {
 			return json({ error: 'Missing landlord ID or user ID' }, { status: 400 });

@@ -84,7 +84,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!effectiveTenantId || !roomNumber || !buildingName || !category || !title || !description) {
 			return json({ error: 'Missing required maintenance request fields' }, { status: 400 });
 		}
-		if (locals.session?.role === 'TENANT' && tenantId && tenantId !== locals.session.tenantProfileId) {
+		if (
+			locals.session?.role === 'TENANT' &&
+			tenantId &&
+			tenantId !== locals.session.tenantProfileId
+		) {
 			return forbidden();
 		}
 

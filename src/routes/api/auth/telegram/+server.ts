@@ -77,7 +77,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				.update(tenantProfiles)
 				.set({ telegramUserId: tgId })
 				.where(eq(tenantProfiles.id, target.id));
-			await db.update(tenantInvites).set({ usedAt: new Date() }).where(eq(tenantInvites.id, invite.id));
+			await db
+				.update(tenantInvites)
+				.set({ usedAt: new Date() })
+				.where(eq(tenantInvites.id, invite.id));
 
 			tenant = target;
 		}

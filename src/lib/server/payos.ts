@@ -49,7 +49,8 @@ export async function resolvePayOSConfig(
 		where: eq(landlordProfiles.id, ctx.landlordId),
 		columns: { payosClientId: true, payosApiKeyEnc: true, payosChecksumKeyEnc: true }
 	});
-	if (!profile?.payosClientId || !profile.payosApiKeyEnc || !profile.payosChecksumKeyEnc) return null;
+	if (!profile?.payosClientId || !profile.payosApiKeyEnc || !profile.payosChecksumKeyEnc)
+		return null;
 
 	const apiKey = tryDecryptSecret(profile.payosApiKeyEnc);
 	const checksumKey = tryDecryptSecret(profile.payosChecksumKeyEnc);
@@ -67,7 +68,9 @@ function normalizeSignatureValue(value: unknown): string {
 	if (Array.isArray(value)) {
 		return JSON.stringify(
 			value.map((item) =>
-				item && typeof item === 'object' && !Array.isArray(item) ? sortObjectByKey(item as Record<string, unknown>) : item
+				item && typeof item === 'object' && !Array.isArray(item)
+					? sortObjectByKey(item as Record<string, unknown>)
+					: item
 			)
 		);
 	}
@@ -92,7 +95,11 @@ export function createPayOSSignature(data: Record<string, unknown>, checksumKey:
 	return crypto.createHmac('sha256', checksumKey).update(query).digest('hex');
 }
 
-export function verifyPayOSWebhook(data: Record<string, unknown>, signature: string, checksumKey: string) {
+export function verifyPayOSWebhook(
+	data: Record<string, unknown>,
+	signature: string,
+	checksumKey: string
+) {
 	const expected = createPayOSSignature(data, checksumKey);
 	const a = Buffer.from(signature);
 	const b = Buffer.from(expected);
@@ -162,7 +169,10 @@ export async function createPayOSPaymentLink(
 
 	// Fix C: verify chữ ký phản hồi tạo link (chống giả mạo response từ phía PayOS/MITM)
 	if (body.signature) {
-		const expected = createPayOSSignature((body.data ?? {}) as Record<string, unknown>, config.checksumKey);
+		const expected = createPayOSSignature(
+			(body.data ?? {}) as Record<string, unknown>,
+			config.checksumKey
+		);
 		const a = Buffer.from(String(body.signature));
 		const b = Buffer.from(expected);
 		if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
@@ -187,7 +197,9 @@ export async function confirmPayOSWebhook(config: PayOSConfig, webhookUrl: strin
 	});
 	const body = (await response.json().catch(() => ({}))) as { code?: string; desc?: string };
 	if (!response.ok || (body.code !== undefined && body.code !== '00')) {
-		throw new Error(body.desc || 'PayOS không xác nhận được webhook URL (kiểm tra lại key hoặc URL công khai)');
+		throw new Error(
+			body.desc || 'PayOS không xác nhận được webhook URL (kiểm tra lại key hoặc URL công khai)'
+		);
 	}
 	return true;
 }

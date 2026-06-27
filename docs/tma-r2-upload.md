@@ -17,9 +17,9 @@ Body:
 
 ```json
 {
-  "purpose": "meter-reading",
-  "contentType": "image/jpeg",
-  "byteSize": 248120
+	"purpose": "meter-reading",
+	"contentType": "image/jpeg",
+	"byteSize": 248120
 }
 ```
 
@@ -36,16 +36,16 @@ Response:
 
 ```json
 {
-  "uploadUrl": "https://<account>.r2.cloudflarestorage.com/...",
-  "method": "PUT",
-  "headers": {
-    "Content-Type": "image/jpeg"
-  },
-  "objectKey": "uploads/meters/tenant/<tenantId>/2026/06/<uuid>.jpg",
-  "publicUrl": "https://assets.roomio.vn/uploads/meters/tenant/<tenantId>/2026/06/<uuid>.jpg",
-  "url": "https://assets.roomio.vn/uploads/meters/tenant/<tenantId>/2026/06/<uuid>.jpg",
-  "expiresIn": 300,
-  "maxSize": 5242880
+	"uploadUrl": "https://<account>.r2.cloudflarestorage.com/...",
+	"method": "PUT",
+	"headers": {
+		"Content-Type": "image/jpeg"
+	},
+	"objectKey": "uploads/meters/tenant/<tenantId>/2026/06/<uuid>.jpg",
+	"publicUrl": "https://assets.roomio.vn/uploads/meters/tenant/<tenantId>/2026/06/<uuid>.jpg",
+	"url": "https://assets.roomio.vn/uploads/meters/tenant/<tenantId>/2026/06/<uuid>.jpg",
+	"expiresIn": 300,
+	"maxSize": 5242880
 }
 ```
 
@@ -53,29 +53,29 @@ Response:
 
 ```ts
 async function uploadImageToR2(blob: Blob, purpose = 'meter-reading') {
-  const presignRes = await fetch('/api/uploads/presign', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({
-      purpose,
-      contentType: blob.type || 'image/jpeg',
-      byteSize: blob.size
-    })
-  });
+	const presignRes = await fetch('/api/uploads/presign', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'include',
+		body: JSON.stringify({
+			purpose,
+			contentType: blob.type || 'image/jpeg',
+			byteSize: blob.size
+		})
+	});
 
-  const presign = await presignRes.json();
-  if (!presignRes.ok) throw new Error(presign.error || 'Không xin được link upload');
+	const presign = await presignRes.json();
+	if (!presignRes.ok) throw new Error(presign.error || 'Không xin được link upload');
 
-  const uploadRes = await fetch(presign.uploadUrl, {
-    method: 'PUT',
-    headers: presign.headers,
-    body: blob
-  });
+	const uploadRes = await fetch(presign.uploadUrl, {
+		method: 'PUT',
+		headers: presign.headers,
+		body: blob
+	});
 
-  if (!uploadRes.ok) throw new Error('Upload ảnh lên R2 thất bại');
+	if (!uploadRes.ok) throw new Error('Upload ảnh lên R2 thất bại');
 
-  return presign.publicUrl || presign.url;
+	return presign.publicUrl || presign.url;
 }
 ```
 
@@ -85,16 +85,16 @@ Gửi chỉ số sau khi upload:
 const photoUrl = await uploadImageToR2(compressedBlob, 'meter-reading');
 
 await fetch('/api/meter-readings', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  credentials: 'include',
-  body: JSON.stringify({
-    roomId,
-    serviceId,
-    month,
-    currValue,
-    photoUrl
-  })
+	method: 'POST',
+	headers: { 'Content-Type': 'application/json' },
+	credentials: 'include',
+	body: JSON.stringify({
+		roomId,
+		serviceId,
+		month,
+		currValue,
+		photoUrl
+	})
 });
 ```
 
@@ -116,13 +116,13 @@ Bucket R2 cần CORS cho browser upload bằng pre-signed URL:
 
 ```json
 [
-  {
-    "AllowedOrigins": ["https://tma.roomio.vn", "http://localhost:5173"],
-    "AllowedMethods": ["PUT"],
-    "AllowedHeaders": ["Content-Type"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
+	{
+		"AllowedOrigins": ["https://tma.roomio.vn", "http://localhost:5173"],
+		"AllowedMethods": ["PUT"],
+		"AllowedHeaders": ["Content-Type"],
+		"ExposeHeaders": ["ETag"],
+		"MaxAgeSeconds": 3600
+	}
 ]
 ```
 

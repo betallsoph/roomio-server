@@ -99,7 +99,12 @@ function normalizeContentType(value: unknown): string {
 	return contentType;
 }
 
-function createObjectKey(purpose: string, actorRole: string, actorId: string, contentType: string): string {
+function createObjectKey(
+	purpose: string,
+	actorRole: string,
+	actorId: string,
+	contentType: string
+): string {
 	const now = new Date();
 	const year = now.getUTCFullYear();
 	const month = String(now.getUTCMonth() + 1).padStart(2, '0');

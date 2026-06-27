@@ -1,48 +1,48 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1781239440537,
-      "tag": "0000_thankful_forgotten_one",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1781868233200,
-      "tag": "0001_swift_onslaught",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1781868870755,
-      "tag": "0002_panoramic_lockheed",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1782066721874,
-      "tag": "0003_lame_maddog",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1782212453200,
-      "tag": "0004_flaky_cassandra_nova",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1782541322158,
-      "tag": "0005_spotty_sharon_ventura",
-      "breakpoints": true
-    }
-  ]
+	"version": "7",
+	"dialect": "postgresql",
+	"entries": [
+		{
+			"idx": 0,
+			"version": "7",
+			"when": 1781239440537,
+			"tag": "0000_thankful_forgotten_one",
+			"breakpoints": true
+		},
+		{
+			"idx": 1,
+			"version": "7",
+			"when": 1781868233200,
+			"tag": "0001_swift_onslaught",
+			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1781868870755,
+			"tag": "0002_panoramic_lockheed",
+			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1782066721874,
+			"tag": "0003_lame_maddog",
+			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "7",
+			"when": 1782212453200,
+			"tag": "0004_flaky_cassandra_nova",
+			"breakpoints": true
+		},
+		{
+			"idx": 5,
+			"version": "7",
+			"when": 1782541322158,
+			"tag": "0005_spotty_sharon_ventura",
+			"breakpoints": true
+		}
+	]
 }

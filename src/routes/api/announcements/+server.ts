@@ -4,7 +4,13 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { announcements, blocks, rooms } from '$lib/server/db/schema';
 import { and, desc, eq, isNull, or } from 'drizzle-orm';
-import { forbidden, landlordOwnsProperty, landlordOwnsRoom, landlordOwnsTenant, requireLandlord } from '$lib/server/authz';
+import {
+	forbidden,
+	landlordOwnsProperty,
+	landlordOwnsRoom,
+	landlordOwnsTenant,
+	requireLandlord
+} from '$lib/server/authz';
 
 async function landlordOwnsBlock(landlordId: string, blockId: string) {
 	const row = await db.query.blocks.findFirst({
@@ -49,8 +55,13 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 				targets.push(
 					and(eq(announcements.targetType, 'BLOCK'), eq(announcements.targetId, room.blockId))
 				);
-			if (room?.id) targets.push(and(eq(announcements.targetType, 'ROOM'), eq(announcements.targetId, room.id)));
-			targets.push(and(eq(announcements.targetType, 'TENANT'), eq(announcements.targetId, tenantId)));
+			if (room?.id)
+				targets.push(
+					and(eq(announcements.targetType, 'ROOM'), eq(announcements.targetId, room.id))
+				);
+			targets.push(
+				and(eq(announcements.targetType, 'TENANT'), eq(announcements.targetId, tenantId))
+			);
 
 			const result = await db
 				.select()
@@ -93,7 +104,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!title || !content) {
 			return json({ error: 'Missing required announcement fields' }, { status: 400 });
 		}
-		if (targetType === 'PROPERTY' && targetId && !(await landlordOwnsProperty(auth.value, targetId))) {
+		if (
+			targetType === 'PROPERTY' &&
+			targetId &&
+			!(await landlordOwnsProperty(auth.value, targetId))
+		) {
 			return forbidden();
 		}
 		if (targetType === 'BLOCK' && targetId && !(await landlordOwnsBlock(auth.value, targetId))) {

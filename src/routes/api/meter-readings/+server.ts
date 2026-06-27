@@ -10,7 +10,9 @@ import { forbidden, landlordOwnsRoom } from '$lib/server/authz';
 const ANOMALY_THRESHOLD = 0.5;
 
 async function actorOwnsReading(session: App.Locals['session'], readingId: string) {
-	const reading = await db.query.meterReadings.findFirst({ where: eq(meterReadings.id, readingId) });
+	const reading = await db.query.meterReadings.findFirst({
+		where: eq(meterReadings.id, readingId)
+	});
 	if (!reading) return false;
 	if (session?.role === 'LANDLORD') {
 		return landlordOwnsRoom(session.landlordProfileId!, reading.roomId);
@@ -21,7 +23,9 @@ async function actorOwnsReading(session: App.Locals['session'], readingId: strin
 			.from(meterReadings)
 			.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
 			.innerJoin(properties, eq(rooms.propertyId, properties.id))
-			.where(and(eq(meterReadings.id, readingId), eq(properties.landlordId, session.staffLandlordId!)))
+			.where(
+				and(eq(meterReadings.id, readingId), eq(properties.landlordId, session.staffLandlordId!))
+			)
 			.limit(1);
 		return row.length > 0;
 	}

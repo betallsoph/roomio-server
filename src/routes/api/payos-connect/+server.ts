@@ -10,7 +10,11 @@ import { confirmPayOSWebhook } from '$lib/server/payos';
 
 // URL webhook tiền thuê — phải trỏ về box API (không phải frontend). PayOS sẽ ping thử URL này.
 function apiWebhookUrl() {
-	const origin = (process.env.ORIGIN ?? process.env.PUBLIC_APP_ORIGIN ?? 'http://localhost:3000').replace(/\/$/, '');
+	const origin = (
+		process.env.ORIGIN ??
+		process.env.PUBLIC_APP_ORIGIN ??
+		'http://localhost:3000'
+	).replace(/\/$/, '');
 	return `${origin}/api/payos-webhook`;
 }
 
@@ -23,7 +27,8 @@ function resolveTargetLandlordId(
 		return { ok: true, id: session.landlordProfileId };
 	}
 	if (session?.role === 'SUPER_ADMIN') {
-		if (!bodyLandlordId) return { ok: false, response: json({ error: 'Thiếu landlordId' }, { status: 400 }) };
+		if (!bodyLandlordId)
+			return { ok: false, response: json({ error: 'Thiếu landlordId' }, { status: 400 }) };
 		return { ok: true, id: bodyLandlordId };
 	}
 	return { ok: false, response: json({ error: 'Không có quyền cấu hình PayOS' }, { status: 403 }) };
@@ -58,7 +63,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (action === 'disconnect') {
 			await db
 				.update(landlordProfiles)
-				.set({ payosClientId: null, payosApiKeyEnc: null, payosChecksumKeyEnc: null, payosConnectedAt: null })
+				.set({
+					payosClientId: null,
+					payosApiKeyEnc: null,
+					payosChecksumKeyEnc: null,
+					payosConnectedAt: null
+				})
 				.where(eq(landlordProfiles.id, target.id));
 			return json({ connected: false });
 		}

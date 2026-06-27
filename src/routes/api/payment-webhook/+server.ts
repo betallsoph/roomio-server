@@ -24,7 +24,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		const paymentLinkId = data.paymentLinkId ? String(data.paymentLinkId) : null;
 		const amount = Number(data.amount) || 0;
 		const providerTransactionId = String(
-			data.reference ?? `${orderCode ?? 'unknown'}:${paymentLinkId ?? 'unknown'}:${data.transactionDateTime ?? ''}:${amount}`
+			data.reference ??
+				`${orderCode ?? 'unknown'}:${paymentLinkId ?? 'unknown'}:${data.transactionDateTime ?? ''}:${amount}`
 		);
 		const rawPayload = JSON.stringify(body);
 

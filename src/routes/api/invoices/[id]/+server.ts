@@ -39,7 +39,10 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 		) {
 			return forbidden();
 		}
-		if (locals.session?.role === 'TENANT' && !(await tenantOwnsInvoice(locals.session.tenantProfileId!, id))) {
+		if (
+			locals.session?.role === 'TENANT' &&
+			!(await tenantOwnsInvoice(locals.session.tenantProfileId!, id))
+		) {
 			return forbidden();
 		}
 

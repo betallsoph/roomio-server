@@ -25,16 +25,16 @@ Tài khoản mẫu sau khi seed: `ngochau@gmail.com` / `password` (chủ trọ),
 
 ## Lệnh
 
-| Lệnh | Mô tả |
-| --- | --- |
-| `npm run dev` | Chạy dev (cổng 3000) |
-| `npm run build` | Build production |
-| `npm run start` | Chạy bản build (`node build/index.js`) |
-| `npm run check` | Kiểm tra type |
-| `npm run lint` | Lint |
-| `npm run db:generate` | Sinh migration mới từ thay đổi schema |
-| `npm run db:migrate` | Áp dụng migration |
-| `npm run seed` | Tạo dữ liệu mẫu |
+| Lệnh                      | Mô tả                                         |
+| ------------------------- | --------------------------------------------- |
+| `npm run dev`             | Chạy dev (cổng 3000)                          |
+| `npm run build`           | Build production                              |
+| `npm run start`           | Chạy bản build (`node build/index.js`)        |
+| `npm run check`           | Kiểm tra type                                 |
+| `npm run lint`            | Lint                                          |
+| `npm run db:generate`     | Sinh migration mới từ thay đổi schema         |
+| `npm run db:migrate`      | Áp dụng migration                             |
+| `npm run seed`            | Tạo dữ liệu mẫu                               |
 | `npm run cleanup:uploads` | Xóa ảnh đối chiếu (đồng hồ, bill) quá 3 tháng |
 
 ## Biến môi trường

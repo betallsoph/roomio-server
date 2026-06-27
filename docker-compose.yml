@@ -10,7 +10,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U roomio -d roomio"]
+      test: ['CMD-SHELL', 'pg_isready -U roomio -d roomio']
       interval: 5s
       timeout: 5s
       retries: 5
@@ -22,7 +22,7 @@ services:
     container_name: roomio-app
     restart: always
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
       - DATABASE_URL=postgres://roomio:matkhau_change_me_in_production@db:5432/roomio
       - SESSION_SECRET=change_me_to_a_secure_random_string_in_production

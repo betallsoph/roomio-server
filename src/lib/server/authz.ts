@@ -8,19 +8,28 @@ export type AuthResult<T> = { ok: true; value: T } | { ok: false; response: Resp
 
 export function requireLandlord(session: SessionData | null): AuthResult<string> {
 	if (session?.role !== 'LANDLORD' || !session.landlordProfileId) {
-		return { ok: false, response: json({ error: 'Chỉ chủ trọ được thực hiện thao tác này' }, { status: 403 }) };
+		return {
+			ok: false,
+			response: json({ error: 'Chỉ chủ trọ được thực hiện thao tác này' }, { status: 403 })
+		};
 	}
 	return { ok: true, value: session.landlordProfileId };
 }
 
 export function requireTenant(session: SessionData | null): AuthResult<string> {
 	if (session?.role !== 'TENANT' || !session.tenantProfileId) {
-		return { ok: false, response: json({ error: 'Chỉ khách thuê được thực hiện thao tác này' }, { status: 403 }) };
+		return {
+			ok: false,
+			response: json({ error: 'Chỉ khách thuê được thực hiện thao tác này' }, { status: 403 })
+		};
 	}
 	return { ok: true, value: session.tenantProfileId };
 }
 
-export async function landlordOwnsProperty(landlordId: string, propertyId: string): Promise<boolean> {
+export async function landlordOwnsProperty(
+	landlordId: string,
+	propertyId: string
+): Promise<boolean> {
 	const property = await db.query.properties.findFirst({
 		where: and(eq(properties.id, propertyId), eq(properties.landlordId, landlordId)),
 		columns: { id: true }
@@ -70,7 +79,10 @@ export async function tenantOwnsInvoice(tenantId: string, invoiceId: string): Pr
 	return row.length > 0;
 }
 
-export async function landlordOwnsContract(landlordId: string, contractId: string): Promise<boolean> {
+export async function landlordOwnsContract(
+	landlordId: string,
+	contractId: string
+): Promise<boolean> {
 	const row = await db
 		.select({ id: contracts.id })
 		.from(contracts)

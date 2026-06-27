@@ -73,7 +73,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 			}
 			if (account.role !== session.role) {
 				destroySession(event.cookies);
-				return json({ error: 'Quyền truy cập đã thay đổi, vui lòng đăng nhập lại' }, { status: 401 });
+				return json(
+					{ error: 'Quyền truy cập đã thay đổi, vui lòng đăng nhập lại' },
+					{ status: 401 }
+				);
 			}
 		}
 

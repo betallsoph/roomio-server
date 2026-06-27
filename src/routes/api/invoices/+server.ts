@@ -31,7 +31,10 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			conditions.push(
 				inArray(
 					invoices.roomId,
-					db.select({ id: rooms.id }).from(rooms).where(eq(rooms.tenantId, locals.session.tenantProfileId))
+					db
+						.select({ id: rooms.id })
+						.from(rooms)
+						.where(eq(rooms.tenantId, locals.session.tenantProfileId))
 				)
 			);
 		} else if (landlordId) {
@@ -224,7 +227,9 @@ export const DELETE: RequestHandler = async ({ request, locals }) => {
 					const outstanding = Math.max(invoice.totalAmount - invoice.paidAmount, 0);
 					await tx
 						.update(rooms)
-						.set({ debtAmount: sql`greatest(coalesce(${rooms.debtAmount}, 0) - ${outstanding}, 0)` })
+						.set({
+							debtAmount: sql`greatest(coalesce(${rooms.debtAmount}, 0) - ${outstanding}, 0)`
+						})
 						.where(eq(rooms.id, invoice.roomId));
 				}
 			}

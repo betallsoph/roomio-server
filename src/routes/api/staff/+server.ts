@@ -105,7 +105,10 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		}
 
 		// Chỉ chủ trọ sở hữu nhân viên này được sửa
-		if (locals.session?.role !== 'LANDLORD' || profile.landlordId !== locals.session.landlordProfileId) {
+		if (
+			locals.session?.role !== 'LANDLORD' ||
+			profile.landlordId !== locals.session.landlordProfileId
+		) {
 			return json({ error: 'Không có quyền sửa nhân viên này' }, { status: 403 });
 		}
 
@@ -146,7 +149,10 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 			return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
 		}
 
-		if (locals.session?.role !== 'LANDLORD' || profile.landlordId !== locals.session.landlordProfileId) {
+		if (
+			locals.session?.role !== 'LANDLORD' ||
+			profile.landlordId !== locals.session.landlordProfileId
+		) {
 			return json({ error: 'Không có quyền xóa nhân viên này' }, { status: 403 });
 		}
 

@@ -13,12 +13,19 @@ import {
 } from '$lib/server/db/schema';
 import { and, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
-import { forbidden, landlordOwnsRoom, landlordOwnsTenant, requireLandlord } from '$lib/server/authz';
+import {
+	forbidden,
+	landlordOwnsRoom,
+	landlordOwnsTenant,
+	requireLandlord
+} from '$lib/server/authz';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
 		const landlordId =
-			locals.session?.role === 'STAFF' ? locals.session.staffLandlordId : locals.session?.landlordProfileId;
+			locals.session?.role === 'STAFF'
+				? locals.session.staffLandlordId
+				: locals.session?.landlordProfileId;
 		if (!landlordId || (locals.session?.role !== 'LANDLORD' && locals.session?.role !== 'STAFF')) {
 			return forbidden();
 		}

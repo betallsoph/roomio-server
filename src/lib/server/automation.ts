@@ -112,7 +112,10 @@ export async function queueMeterReminders(landlordId: string, month: string) {
 			isNotNull(rooms.tenantId),
 			inArray(
 				rooms.propertyId,
-				db.select({ id: properties.id }).from(properties).where(eq(properties.landlordId, landlordId))
+				db
+					.select({ id: properties.id })
+					.from(properties)
+					.where(eq(properties.landlordId, landlordId))
 			)
 		),
 		with: {
@@ -126,7 +129,9 @@ export async function queueMeterReminders(landlordId: string, month: string) {
 	for (const room of occupiedRooms) {
 		if (!room.tenant) continue;
 
-		const meteredConfigs = room.services.filter((config) => config.service.type === 'METERED' && config.service.isActive);
+		const meteredConfigs = room.services.filter(
+			(config) => config.service.type === 'METERED' && config.service.isActive
+		);
 		if (meteredConfigs.length === 0) continue;
 
 		const existingReadings = await db
@@ -134,7 +139,9 @@ export async function queueMeterReminders(landlordId: string, month: string) {
 			.from(meterReadings)
 			.where(and(eq(meterReadings.roomId, room.id), eq(meterReadings.month, month)));
 		const submittedServiceIds = new Set(existingReadings.map((reading) => reading.serviceId));
-		const missingServices = meteredConfigs.filter((config) => !submittedServiceIds.has(config.serviceId));
+		const missingServices = meteredConfigs.filter(
+			(config) => !submittedServiceIds.has(config.serviceId)
+		);
 		if (missingServices.length === 0) continue;
 
 		const existing = await db.query.notificationQueue.findFirst({
@@ -222,7 +229,11 @@ export async function queueContractReminders(landlordId: string) {
 	return { queuedContractReminders: queued };
 }
 
-export async function runAutomationJob(landlordId: string, type: string, payload: Record<string, unknown> = {}) {
+export async function runAutomationJob(
+	landlordId: string,
+	type: string,
+	payload: Record<string, unknown> = {}
+) {
 	const job = (
 		await db
 			.insert(automationJobs)
@@ -244,7 +255,10 @@ export async function runAutomationJob(landlordId: string, type: string, payload
 		} else if (type === 'invoice_reminder') {
 			result = await queueInvoiceReminders(landlordId);
 		} else if (type === 'meter_reminder') {
-			result = await queueMeterReminders(landlordId, String(payload.month ?? new Date().toISOString().slice(0, 7)));
+			result = await queueMeterReminders(
+				landlordId,
+				String(payload.month ?? new Date().toISOString().slice(0, 7))
+			);
 		} else if (type === 'contract_reminder') {
 			result = await queueContractReminders(landlordId);
 		} else {
@@ -265,7 +279,11 @@ export async function runAutomationJob(landlordId: string, type: string, payload
 		const updated = (
 			await db
 				.update(automationJobs)
-				.set({ status: 'failed', completedAt: new Date(), result: JSON.stringify({ error: message }) })
+				.set({
+					status: 'failed',
+					completedAt: new Date(),
+					result: JSON.stringify({ error: message })
+				})
 				.where(eq(automationJobs.id, job.id))
 				.returning()
 		)[0];
@@ -280,74 +298,86 @@ export async function getCentralInbox(landlordId: string) {
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
 		.where(eq(properties.landlordId, landlordId));
 
-	const [overdueInvoices, proofs, pendingMeters, expiringContracts, openRequests, queuedNotifications] =
-		await Promise.all([
-			db.query.invoices.findMany({
-				where: and(inArray(invoices.roomId, roomIdsSubquery), inArray(invoices.status, ['overdue', 'partial'])),
-				with: { room: { with: { property: { columns: { shortName: true } } } } },
-				orderBy: [desc(invoices.dueDate)]
-			}),
-			db.query.invoices.findMany({
-				where: and(
-					inArray(invoices.roomId, roomIdsSubquery),
-					isNotNull(invoices.paymentProofImage),
-					ne(invoices.status, 'paid')
-				),
-				with: { room: { with: { property: { columns: { shortName: true } } } } }
-			}),
-			db
-				.select({
-					id: meterReadings.id,
-					month: meterReadings.month,
-					roomNumber: rooms.roomNumber,
-					propertyName: properties.shortName,
-					serviceName: services.name,
-					status: meterReadings.status,
-					isAnomalous: meterReadings.isAnomalous
-				})
-				.from(meterReadings)
-				.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
-				.innerJoin(properties, eq(rooms.propertyId, properties.id))
-				.leftJoin(services, eq(meterReadings.serviceId, services.id))
-				.where(
-					and(
-						eq(properties.landlordId, landlordId),
-						sql`(${meterReadings.status} = 'pending' OR ${meterReadings.isAnomalous} = true)`
-					)
-				)
-				.orderBy(desc(meterReadings.month)),
-			db.query.contracts.findMany({
-				where: and(
-					inArray(contracts.roomId, roomIdsSubquery),
-					eq(contracts.status, 'active'),
-					gte(contracts.endDate, today()),
-					lte(contracts.endDate, addDays(30))
-				),
-				with: {
-					tenant: { with: { user: { columns: { name: true } } } },
-					room: { with: { property: { columns: { shortName: true } } } }
-				}
-			}),
-			db.query.maintenanceRequests.findMany({
-				where: and(
-					inArray(
-						maintenanceRequests.tenantId,
-						db
-							.select({ id: rooms.tenantId })
-							.from(rooms)
-							.innerJoin(properties, eq(rooms.propertyId, properties.id))
-							.where(and(eq(properties.landlordId, landlordId), isNotNull(rooms.tenantId)))
-					),
-					inArray(maintenanceRequests.status, ['pending', 'in_progress'])
-				),
-				with: { tenant: { with: { user: { columns: { name: true } } } } },
-				orderBy: desc(maintenanceRequests.createdAt)
-			}),
-			db.query.notificationQueue.findMany({
-				where: and(eq(notificationQueue.landlordId, landlordId), eq(notificationQueue.status, 'queued')),
-				orderBy: desc(notificationQueue.createdAt)
+	const [
+		overdueInvoices,
+		proofs,
+		pendingMeters,
+		expiringContracts,
+		openRequests,
+		queuedNotifications
+	] = await Promise.all([
+		db.query.invoices.findMany({
+			where: and(
+				inArray(invoices.roomId, roomIdsSubquery),
+				inArray(invoices.status, ['overdue', 'partial'])
+			),
+			with: { room: { with: { property: { columns: { shortName: true } } } } },
+			orderBy: [desc(invoices.dueDate)]
+		}),
+		db.query.invoices.findMany({
+			where: and(
+				inArray(invoices.roomId, roomIdsSubquery),
+				isNotNull(invoices.paymentProofImage),
+				ne(invoices.status, 'paid')
+			),
+			with: { room: { with: { property: { columns: { shortName: true } } } } }
+		}),
+		db
+			.select({
+				id: meterReadings.id,
+				month: meterReadings.month,
+				roomNumber: rooms.roomNumber,
+				propertyName: properties.shortName,
+				serviceName: services.name,
+				status: meterReadings.status,
+				isAnomalous: meterReadings.isAnomalous
 			})
-		]);
+			.from(meterReadings)
+			.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
+			.innerJoin(properties, eq(rooms.propertyId, properties.id))
+			.leftJoin(services, eq(meterReadings.serviceId, services.id))
+			.where(
+				and(
+					eq(properties.landlordId, landlordId),
+					sql`(${meterReadings.status} = 'pending' OR ${meterReadings.isAnomalous} = true)`
+				)
+			)
+			.orderBy(desc(meterReadings.month)),
+		db.query.contracts.findMany({
+			where: and(
+				inArray(contracts.roomId, roomIdsSubquery),
+				eq(contracts.status, 'active'),
+				gte(contracts.endDate, today()),
+				lte(contracts.endDate, addDays(30))
+			),
+			with: {
+				tenant: { with: { user: { columns: { name: true } } } },
+				room: { with: { property: { columns: { shortName: true } } } }
+			}
+		}),
+		db.query.maintenanceRequests.findMany({
+			where: and(
+				inArray(
+					maintenanceRequests.tenantId,
+					db
+						.select({ id: rooms.tenantId })
+						.from(rooms)
+						.innerJoin(properties, eq(rooms.propertyId, properties.id))
+						.where(and(eq(properties.landlordId, landlordId), isNotNull(rooms.tenantId)))
+				),
+				inArray(maintenanceRequests.status, ['pending', 'in_progress'])
+			),
+			with: { tenant: { with: { user: { columns: { name: true } } } } },
+			orderBy: desc(maintenanceRequests.createdAt)
+		}),
+		db.query.notificationQueue.findMany({
+			where: and(
+				eq(notificationQueue.landlordId, landlordId),
+				eq(notificationQueue.status, 'queued')
+			),
+			orderBy: desc(notificationQueue.createdAt)
+		})
+	]);
 
 	return {
 		counts: {

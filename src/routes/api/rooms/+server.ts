@@ -11,7 +11,12 @@ import {
 	roomAssets
 } from '$lib/server/db/schema';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
-import { forbidden, landlordOwnsProperty, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
+import {
+	forbidden,
+	landlordOwnsProperty,
+	landlordOwnsRoom,
+	requireLandlord
+} from '$lib/server/authz';
 import { normalizeRoomCodeForProperty, normalizeRoomTextKey } from '$lib/server/room-code';
 
 async function findDuplicateRoom(
@@ -146,7 +151,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 
 		const canonicalRoomCode = normalizeRoomCodeForProperty(propertyId, roomCode || roomNumber);
-		const nextRoomNumber = !roomCode && canonicalRoomCode ? canonicalRoomCode : String(roomNumber).trim();
+		const nextRoomNumber =
+			!roomCode && canonicalRoomCode ? canonicalRoomCode : String(roomNumber).trim();
 		const nextRoomCode = canonicalRoomCode ?? (roomCode ? String(roomCode).trim() : null);
 
 		const existing = await findDuplicateRoom(propertyId, nextRoomNumber, nextRoomCode);
@@ -353,7 +359,12 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 					!submittedRoomCode && canonicalRoomCode ? canonicalRoomCode : submittedRoomNumber;
 				const nextRoomCode = canonicalRoomCode ?? submittedRoomCode;
 
-				const duplicate = await findDuplicateRoom(currentRoom.propertyId, nextRoomNumber, nextRoomCode, id);
+				const duplicate = await findDuplicateRoom(
+					currentRoom.propertyId,
+					nextRoomNumber,
+					nextRoomCode,
+					id
+				);
 				if (duplicate) {
 					return json(
 						{ error: `Mã căn này đã tồn tại (${duplicate.roomCode || duplicate.roomNumber})` },
