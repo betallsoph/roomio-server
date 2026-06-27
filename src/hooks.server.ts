@@ -59,19 +59,22 @@ export const handle: Handle = async ({ event, resolve }) => {
 			return json({ error: 'Chưa đăng nhập' }, { status: 401 });
 		}
 
-		// Phiên có thể thu hồi: xác thực lại danh tính với DB mỗi request, để việc khóa tài khoản
-		// (isActive=false) hoặc đổi quyền có hiệu lực NGAY thay vì chờ cookie hết hạn (tối đa 7 ngày).
-		const account = await db.query.users.findFirst({
-			where: eq(users.id, session.userId),
-			columns: { isActive: true, role: true }
-		});
-		if (!account || !account.isActive) {
-			destroySession(event.cookies);
-			return json({ error: 'Phiên đã hết hiệu lực, vui lòng đăng nhập lại' }, { status: 401 });
-		}
-		if (account.role !== session.role) {
-			destroySession(event.cookies);
-			return json({ error: 'Quyền truy cập đã thay đổi, vui lòng đăng nhập lại' }, { status: 401 });
+		// Hardcoded Super Admin bypasses DB check
+		if (session.userId !== 'hardcoded-super-admin') {
+			// Phiên có thể thu hồi: xác thực lại danh tính với DB mỗi request, để việc khóa tài khoản
+			// (isActive=false) hoặc đổi quyền có hiệu lực NGAY thay vì chờ cookie hết hạn (tối đa 7 ngày).
+			const account = await db.query.users.findFirst({
+				where: eq(users.id, session.userId),
+				columns: { isActive: true, role: true }
+			});
+			if (!account || !account.isActive) {
+				destroySession(event.cookies);
+				return json({ error: 'Phiên đã hết hiệu lực, vui lòng đăng nhập lại' }, { status: 401 });
+			}
+			if (account.role !== session.role) {
+				destroySession(event.cookies);
+				return json({ error: 'Quyền truy cập đã thay đổi, vui lòng đăng nhập lại' }, { status: 401 });
+			}
 		}
 
 		// Chặn truy cập chéo dữ liệu: ID trên query param phải khớp với phiên đăng nhập

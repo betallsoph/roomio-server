@@ -26,6 +26,43 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: 'Thiếu tài khoản hoặc mật khẩu' }, { status: 400 });
 			}
 
+			// Hardcoded Super Admin Check
+			const HARDCODED_ADMINS = [
+				{ email: 'tranthienann228@gmail.com', pass: 'ann123' },
+				{ email: 'roomieversebyantt@gmail.com', pass: 'ann123' },
+				{ email: 'roomieversemod@gmail.com', pass: 'roomieverse' }
+			];
+
+			const isHardcodedAdmin = HARDCODED_ADMINS.some(
+				(a) => a.email === email && a.pass === password
+			);
+
+			if (isHardcodedAdmin) {
+				const adminId = 'hardcoded-super-admin';
+				createSession(cookies, {
+					userId: adminId,
+					role: 'SUPER_ADMIN',
+					landlordProfileId: null,
+					enabledRentalTypes: null,
+					tenantProfileId: null,
+					staffProfileId: null,
+					staffLandlordId: null
+				});
+
+				return json({
+					id: adminId,
+					email: email,
+					phone: null,
+					name: 'Super Admin',
+					role: 'SUPER_ADMIN',
+					landlordProfileId: null,
+					enabledRentalTypes: null,
+					tenantProfileId: null,
+					staffProfileId: null,
+					staffLandlordId: null
+				});
+			}
+
 			const conditions = [];
 			if (email) conditions.push(eq(users.email, requiredEmail(email)));
 			if (phone) conditions.push(eq(users.phone, requiredPhone(phone)));
