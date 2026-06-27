@@ -36,6 +36,13 @@
       "when": 1782212453200,
       "tag": "0004_flaky_cassandra_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782541322158,
+      "tag": "0005_spotty_sharon_ventura",
+      "breakpoints": true
     }
   ]
 }
