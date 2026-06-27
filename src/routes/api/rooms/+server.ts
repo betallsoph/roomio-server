@@ -12,6 +12,39 @@ import {
 } from '$lib/server/db/schema';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
+import { normalizeRoomCodeForProperty, normalizeRoomTextKey } from '$lib/server/room-code';
+
+async function findDuplicateRoom(
+	propertyId: string,
+	roomNumber: string,
+	roomCode: string | null,
+	excludeRoomId?: string
+) {
+	const targetCanonicalCode =
+		normalizeRoomCodeForProperty(propertyId, roomCode) ??
+		normalizeRoomCodeForProperty(propertyId, roomNumber);
+	const targetLooseCode = normalizeRoomTextKey(roomCode);
+	if (!targetCanonicalCode && !targetLooseCode) return undefined;
+
+	const propertyRooms = await db.query.rooms.findMany({
+		where: eq(rooms.propertyId, propertyId),
+		columns: { id: true, roomNumber: true, roomCode: true }
+	});
+
+	return propertyRooms.find((room) => {
+		if (excludeRoomId && room.id === excludeRoomId) return false;
+		const existingCanonicalCode =
+			normalizeRoomCodeForProperty(propertyId, room.roomCode) ??
+			normalizeRoomCodeForProperty(propertyId, room.roomNumber);
+
+		if (targetCanonicalCode) {
+			return existingCanonicalCode === targetCanonicalCode;
+		}
+
+		const existingLooseCode = normalizeRoomTextKey(room.roomCode);
+		return !!targetLooseCode && existingLooseCode === targetLooseCode;
+	});
+}
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
@@ -112,13 +145,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return forbidden();
 		}
 
-		// Check if room number already exists in this property
-		const existing = await db.query.rooms.findFirst({
-			where: and(eq(rooms.propertyId, propertyId), eq(rooms.roomNumber, roomNumber))
-		});
+		const canonicalRoomCode = normalizeRoomCodeForProperty(propertyId, roomCode || roomNumber);
+		const nextRoomNumber = !roomCode && canonicalRoomCode ? canonicalRoomCode : String(roomNumber).trim();
+		const nextRoomCode = canonicalRoomCode ?? (roomCode ? String(roomCode).trim() : null);
 
+		const existing = await findDuplicateRoom(propertyId, nextRoomNumber, nextRoomCode);
 		if (existing) {
-			return json({ error: 'Số phòng này đã tồn tại trong tòa nhà này' }, { status: 400 });
+			return json(
+				{ error: `Mã căn này đã tồn tại (${existing.roomCode || existing.roomNumber})` },
+				{ status: 400 }
+			);
 		}
 
 		const room = await db.transaction(async (tx) => {
@@ -129,8 +165,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					.values({
 						propertyId,
 						blockId: blockId || null,
-						roomNumber,
-						roomCode: roomCode || null,
+						roomNumber: nextRoomNumber,
+						roomCode: nextRoomCode,
 						roomType,
 						floor: floor ? Number(floor) : null,
 						status: 'empty',
@@ -292,8 +328,42 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		} else {
 			// Standard room update
 			const updateData: Record<string, unknown> = {};
-			if (data.roomNumber !== undefined) updateData.roomNumber = data.roomNumber;
-			if (data.roomCode !== undefined) updateData.roomCode = data.roomCode;
+			if (data.roomNumber !== undefined || data.roomCode !== undefined) {
+				const currentRoom = await db.query.rooms.findFirst({
+					where: eq(rooms.id, id),
+					columns: { propertyId: true, roomNumber: true, roomCode: true }
+				});
+				if (!currentRoom) {
+					return json({ error: 'Room not found' }, { status: 404 });
+				}
+
+				const submittedRoomNumber =
+					data.roomNumber !== undefined ? String(data.roomNumber).trim() : currentRoom.roomNumber;
+				const submittedRoomCode =
+					data.roomCode !== undefined
+						? data.roomCode
+							? String(data.roomCode).trim()
+							: null
+						: currentRoom.roomCode;
+				const canonicalRoomCode = normalizeRoomCodeForProperty(
+					currentRoom.propertyId,
+					submittedRoomCode || submittedRoomNumber
+				);
+				const nextRoomNumber =
+					!submittedRoomCode && canonicalRoomCode ? canonicalRoomCode : submittedRoomNumber;
+				const nextRoomCode = canonicalRoomCode ?? submittedRoomCode;
+
+				const duplicate = await findDuplicateRoom(currentRoom.propertyId, nextRoomNumber, nextRoomCode, id);
+				if (duplicate) {
+					return json(
+						{ error: `Mã căn này đã tồn tại (${duplicate.roomCode || duplicate.roomNumber})` },
+						{ status: 400 }
+					);
+				}
+
+				if (data.roomNumber !== undefined) updateData.roomNumber = nextRoomNumber;
+				if (data.roomCode !== undefined) updateData.roomCode = nextRoomCode;
+			}
 			if (data.roomType !== undefined) updateData.roomType = data.roomType;
 			if (data.floor !== undefined) updateData.floor = Number(data.floor);
 			if (data.monthlyRent !== undefined) updateData.monthlyRent = Number(data.monthlyRent);

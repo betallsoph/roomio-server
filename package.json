@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "seed": "tsx scripts/seed.ts",
+    "seed": "DATABASE_URL= PGLITE_DIR=./pgdata tsx scripts/seed.ts",
+    "seed:postgres": "node --env-file-if-exists=.env --import tsx scripts/seed.ts",
     "cleanup:uploads": "tsx scripts/cleanup-uploads.ts"
   },
   "dependencies": {

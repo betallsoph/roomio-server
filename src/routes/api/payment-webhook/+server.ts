@@ -4,25 +4,20 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { invoices, paymentTransactions, rooms } from '$lib/server/db/schema';
 import { eq, or, sql } from 'drizzle-orm';
-import { getPayOSConfig, verifyPayOSWebhook } from '$lib/server/payos';
+import { resolvePayOSConfig, verifyPayOSWebhook } from '$lib/server/payos';
 
-// Webhook payOS gửi payload dạng { code, desc, success, data, signature }.
-// Chữ ký được verify bằng PAYOS_CHECKSUM_KEY trên object `data` đã sort key theo docs payOS.
+// Webhook tiền thuê (khách thuê → chủ trọ). Mỗi chủ trọ dùng PayOS RIÊNG nên không thể verify
+// trước khi biết hóa đơn thuộc chủ trọ nào: ta MATCH hóa đơn theo orderCode/paymentLinkId TRƯỚC
+// (đọc dữ liệu chưa tin), suy ra chủ trọ, rồi VERIFY chữ ký bằng checksumKey của chính chủ trọ đó.
+// Chỉ áp tiền SAU khi chữ ký hợp lệ. orderCode được sinh tất định toàn cục (từ invoiceId) nên
+// match 1 endpoint không nhầm giữa các chủ trọ.
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
-		const config = getPayOSConfig();
-		if (!config) {
-			return json({ error: 'Chưa cấu hình PAYOS_CLIENT_ID, PAYOS_API_KEY và PAYOS_CHECKSUM_KEY' }, { status: 500 });
-		}
-
 		const body = await request.json();
 		const { code, desc, success, data, signature } = body;
 		if (!data || typeof data !== 'object' || !signature) {
 			return json({ error: 'Payload PayOS không hợp lệ' }, { status: 400 });
-		}
-		if (!verifyPayOSWebhook(data, String(signature), config.checksumKey)) {
-			return json({ error: 'Sai chữ ký PayOS' }, { status: 401 });
 		}
 
 		const orderCode = data.orderCode !== undefined ? String(data.orderCode) : null;
@@ -32,14 +27,6 @@ export const POST: RequestHandler = async ({ request }) => {
 			data.reference ?? `${orderCode ?? 'unknown'}:${paymentLinkId ?? 'unknown'}:${data.transactionDateTime ?? ''}:${amount}`
 		);
 		const rawPayload = JSON.stringify(body);
-
-		const existingTransaction = await db.query.paymentTransactions.findFirst({
-			where: eq(paymentTransactions.providerTransactionId, providerTransactionId),
-			columns: { id: true }
-		});
-		if (existingTransaction) {
-			return json({ success: true, message: 'Giao dịch PayOS đã được xử lý trước đó' });
-		}
 
 		const matchCondition =
 			orderCode && paymentLinkId
@@ -53,22 +40,50 @@ export const POST: RequestHandler = async ({ request }) => {
 		const invoice = matchCondition
 			? await db.query.invoices.findFirst({
 					where: matchCondition,
-					with: {
-						room: {
-							with: {
-								property: {
-									columns: { landlordId: true }
-								}
-							}
-						}
-					}
+					with: { room: { with: { property: { columns: { landlordId: true } } } } }
 				})
 			: null;
 
+		// Không khớp hóa đơn → chưa biết key chủ trọ nào để verify; log (KHÔNG áp tiền) rồi ack 200.
+		if (!invoice) {
+			await db.insert(paymentTransactions).values({
+				provider: 'payos',
+				providerTransactionId,
+				invoiceCode: orderCode,
+				amount,
+				transferType: 'webhook',
+				content: data.description ?? 'PayOS webhook không khớp hóa đơn',
+				status: 'unmatched',
+				rawPayload
+			});
+			return json({ success: true, message: 'Không tìm thấy hóa đơn khớp PayOS' });
+		}
+
+		const landlordId = invoice.room.property.landlordId;
+
+		// Verify bằng checksumKey RIÊNG của chủ trọ sở hữu hóa đơn này
+		const config = await resolvePayOSConfig({ scope: 'rent', landlordId });
+		if (!config) {
+			return json({ error: 'Chủ trọ chưa kết nối PayOS để nhận webhook' }, { status: 400 });
+		}
+		if (!verifyPayOSWebhook(data, String(signature), config.checksumKey)) {
+			return json({ error: 'Sai chữ ký PayOS' }, { status: 401 });
+		}
+
+		// Chống xử lý trùng (chỉ sau khi đã verify chữ ký)
+		const existingTransaction = await db.query.paymentTransactions.findFirst({
+			where: eq(paymentTransactions.providerTransactionId, providerTransactionId),
+			columns: { id: true }
+		});
+		if (existingTransaction) {
+			return json({ success: true, message: 'Giao dịch PayOS đã được xử lý trước đó' });
+		}
+
+		// Webhook báo thất bại → log ignored rồi ack
 		if (!success || code !== '00' || data.code !== '00') {
 			await db.insert(paymentTransactions).values({
-				landlordId: invoice?.room.property.landlordId ?? null,
-				invoiceId: invoice?.id ?? null,
+				landlordId,
+				invoiceId: invoice.id,
 				provider: 'payos',
 				providerTransactionId,
 				invoiceCode: orderCode,
@@ -81,23 +96,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			return json({ success: true, message: 'Bỏ qua webhook PayOS không thành công' });
 		}
 
-		if (!invoice) {
-			await db.insert(paymentTransactions).values({
-				provider: 'payos',
-				providerTransactionId,
-				invoiceCode: orderCode,
-				amount,
-				transferType: 'webhook',
-				content: data.description ?? null,
-				status: 'unmatched',
-				rawPayload
-			});
-			return json({ success: true, message: 'Không tìm thấy hóa đơn khớp PayOS' });
-		}
-
 		if (invoice.status === 'paid') {
 			await db.insert(paymentTransactions).values({
-				landlordId: invoice.room.property.landlordId,
+				landlordId,
 				invoiceId: invoice.id,
 				provider: 'payos',
 				providerTransactionId,
@@ -117,7 +118,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		await db.transaction(async (tx) => {
 			await tx.insert(paymentTransactions).values({
-				landlordId: invoice.room.property.landlordId,
+				landlordId,
 				invoiceId: invoice.id,
 				provider: 'payos',
 				providerTransactionId,

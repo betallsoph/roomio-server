@@ -176,36 +176,117 @@ const generateMoveInDate = (): string => {
 	return now.toISOString().split('T')[0];
 };
 
+type RoomSeedPlan = {
+	blockName: string;
+	floor: number;
+	roomNumber: string;
+	roomCode: string | null;
+	roomType: 'standard' | 'master' | 'balcony';
+	monthlyRent: number;
+	area: number;
+};
+
+const hagl3Towers = ['A', 'B', 'C', 'D'];
+const hagl3BlockNames = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'];
+const hagl3Floors = [
+	5,
+	6,
+	7,
+	8,
+	9,
+	10,
+	11,
+	12,
+	14,
+	15,
+	16,
+	17,
+	18,
+	19,
+	20,
+	21,
+	22,
+	23,
+	24,
+	25,
+	26,
+	27,
+	28,
+	30,
+	31,
+	32
+];
+
+function hagl3BlockName(tower: string, unit: number) {
+	return `${tower}${unit <= 6 ? '1' : '2'}`;
+}
+
+function hagl3RoomType(unit: number): RoomSeedPlan['roomType'] {
+	if ([1, 6, 7, 12].includes(unit)) return 'balcony';
+	if ([2, 5, 8, 11].includes(unit)) return 'master';
+	return 'standard';
+}
+
+function hagl3Rent(floor: number, unit: number) {
+	const base = unit <= 6 ? 6800000 : 7200000;
+	const floorBonus = Math.floor((floor - 5) / 4) * 250000;
+	const unitBonus =
+		hagl3RoomType(unit) === 'balcony' ? 900000 : hagl3RoomType(unit) === 'master' ? 500000 : 0;
+	return base + floorBonus + unitBonus;
+}
+
+function hagl3Area(unit: number) {
+	if ([1, 6, 7, 12].includes(unit)) return 76;
+	if ([2, 5, 8, 11].includes(unit)) return 68;
+	return 58;
+}
+
+function generateHagl3RoomPlans(): RoomSeedPlan[] {
+	const candidates: RoomSeedPlan[] = [];
+	const requiredRooms = new Set(['A16-04', 'A15-11']);
+	for (const tower of hagl3Towers) {
+		for (const floor of hagl3Floors) {
+			for (let unit = 1; unit <= 12; unit++) {
+				const roomNumber = `${tower}${floor.toString().padStart(2, '0')}-${unit
+					.toString()
+					.padStart(2, '0')}`;
+				candidates.push({
+					blockName: hagl3BlockName(tower, unit),
+					floor,
+					roomNumber,
+					roomCode: roomNumber,
+					roomType: hagl3RoomType(unit),
+					monthlyRent: hagl3Rent(floor, unit),
+					area: hagl3Area(unit)
+				});
+			}
+		}
+	}
+
+	const sortedCandidates = candidates.sort((a, b) => {
+		const scoreA =
+			(a.floor * 37 + a.roomNumber.charCodeAt(0) * 19 + Number(a.roomNumber.slice(-2)) * 23) %
+			997;
+		const scoreB =
+			(b.floor * 37 + b.roomNumber.charCodeAt(0) * 19 + Number(b.roomNumber.slice(-2)) * 23) %
+			997;
+		return scoreA - scoreB || a.roomNumber.localeCompare(b.roomNumber);
+	});
+	const requiredPlans = candidates.filter((plan) => requiredRooms.has(plan.roomNumber));
+	const randomPlans = sortedCandidates
+		.filter((plan) => !requiredRooms.has(plan.roomNumber))
+		.slice(0, 100 - requiredPlans.length);
+
+	return [...requiredPlans, ...randomPlans]
+		.sort((a, b) => a.roomNumber.localeCompare(b.roomNumber));
+}
+
 const propertiesData = [
 	{
 		id: 'hagl3',
 		name: 'Hoàng Anh Gia Lai 3',
-		shortName: 'HAGL 3',
+		shortName: 'HAGL3',
 		address: '121 Nguyễn Hữu Cảnh, Bình Thạnh, TP.HCM'
-	},
-	{
-		id: 'pha',
-		name: 'Phú Hoàng Anh',
-		shortName: 'Phú Hoàng Anh',
-		address: '1 Nguyễn Hữu Thọ, Nhà Bè, TP.HCM'
-	},
-	{
-		id: 'ssr',
-		name: 'Saigon South Residences',
-		shortName: 'SSR',
-		address: '63 Nguyễn Hữu Thọ, Nhà Bè, TP.HCM'
-	},
-	{
-		id: 'sunrise',
-		name: 'Sunrise Riverside',
-		shortName: 'Sunrise',
-		address: '60 Nguyễn Hữu Thọ, Nhà Bè, TP.HCM'
-	},
-	{
-		id: 'mp6',
-		name: 'Mizuki Park 6',
-		shortName: 'MP6',
-		address: 'Nguyễn Văn Linh, Bình Chánh, TP.HCM'
 	}
 ];
 
@@ -342,30 +423,23 @@ async function main() {
 					.returning()
 			)[0];
 
-			// Tạo các Block/Tầng cho tòa nhà
-			const totalRooms = propData.id === 'mp6' ? 8 : 40; // Giới hạn số phòng lại một chút để seed chạy nhanh hơn
-			const floors = propData.id === 'mp6' ? 3 : 5;
-			const roomsPerFloor = Math.ceil(totalRooms / floors);
+			const roomPlans = generateHagl3RoomPlans();
+			const blockNames = hagl3BlockNames;
+			const blockByName = new Map<string, { id: string; name: string }>();
 
-			const blockList = [];
-			for (let f = 1; f <= floors; f++) {
+			for (const blockName of blockNames) {
 				const block = (
 					await tx
 						.insert(blocks)
-						.values({ propertyId: property.id, name: `Tầng ${f}` })
+						.values({ propertyId: property.id, name: blockName })
 						.returning()
 				)[0];
-				blockList.push(block);
+				blockByName.set(block.name, block);
 			}
 
-			for (let i = 1; i <= totalRooms; i++) {
-				const floor = Math.ceil(i / roomsPerFloor);
-				const roomOnFloor = ((i - 1) % roomsPerFloor) + 1;
-				const block = blockList[floor - 1];
-
-				const roomNumber = `${floor}${roomOnFloor.toString().padStart(2, '0')}`;
-				const roomCode =
-					property.id === 'mp6' ? `MP-${floor}-${roomOnFloor.toString().padStart(2, '0')}` : null;
+			for (const plan of roomPlans) {
+				const block = blockByName.get(plan.blockName)!;
+				const { floor, roomNumber, roomCode, roomType, monthlyRent, area } = plan;
 
 				const randomVal = Math.random();
 				let status: 'empty' | 'paid' | 'debt' = 'empty';
@@ -374,18 +448,6 @@ async function main() {
 				} else if (randomVal >= 0.8) {
 					status = 'debt';
 				}
-
-				// Giá thuê
-				const baseRent = property.id === 'ssr' || property.id === 'sunrise' ? 8000000 : 5000000;
-				const floorBonus = (floor - 1) * 300000;
-				const monthlyRent = baseRent + floorBonus + Math.floor(Math.random() * 2) * 1000000;
-
-				const area =
-					(property.id === 'ssr' || property.id === 'sunrise' ? 65 : 50) +
-					Math.floor(Math.random() * 15);
-
-				const typeRandom = Math.random();
-				const roomType = typeRandom < 0.6 ? 'standard' : typeRandom < 0.85 ? 'master' : 'balcony';
 
 				let tenantProfileId: string | null = null;
 				let tenantMoveIn = '';
@@ -708,8 +770,8 @@ async function main() {
 
 			await tx.insert(maintenanceRequests).values({
 				tenantId: firstTenants[1].id,
-				roomNumber: secondRoom?.roomNumber || '205',
-				buildingName: 'Phú Hoàng Anh',
+				roomNumber: secondRoom?.roomNumber || 'A15-11',
+				buildingName: 'Hoàng Anh Gia Lai 3',
 				category: 'electrical',
 				title: 'Máy lạnh chảy nước và không lạnh',
 				description:
@@ -735,7 +797,7 @@ async function main() {
 				senderId: landlordUser.id,
 				title: 'Bảo trì hệ thống thang máy',
 				content:
-					'Thang máy Block A sẽ tạm ngưng hoạt động từ 9h đến 12h ngày mai để thực hiện bảo trì định kỳ.',
+					'Thang máy Block A1 sẽ tạm ngưng hoạt động từ 9h đến 12h ngày mai để thực hiện bảo trì định kỳ.',
 				isImportant: false,
 				targetType: 'PROPERTY',
 				targetId: 'hagl3'

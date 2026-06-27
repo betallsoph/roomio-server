@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { users } from '$lib/server/db/schema';
+import { landlordProfiles, staffProfiles, tenantProfiles, users } from '$lib/server/db/schema';
 import { eq, or } from 'drizzle-orm';
 import { createSession, destroySession } from '$lib/server/session';
 import { hashPassword, verifyPassword } from '$lib/server/password';
@@ -30,14 +30,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			if (email) conditions.push(eq(users.email, requiredEmail(email)));
 			if (phone) conditions.push(eq(users.phone, requiredPhone(phone)));
 
-			const user = await db.query.users.findFirst({
-				where: or(...conditions),
-				with: {
-					landlordProfile: true,
-					tenantProfile: true,
-					staffProfile: true
-				}
-			});
+			const user = await db.query.users.findFirst({ where: or(...conditions) });
 
 			if (!user) {
 				return json({ error: 'Tài khoản không tồn tại' }, { status: 401 });
@@ -60,14 +53,29 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 					.where(eq(users.id, user.id));
 			}
 
+			const landlordProfile =
+				user.role === 'LANDLORD'
+					? await db.query.landlordProfiles.findFirst({
+							where: eq(landlordProfiles.userId, user.id)
+						})
+					: null;
+			const tenantProfile =
+				user.role === 'TENANT'
+					? await db.query.tenantProfiles.findFirst({ where: eq(tenantProfiles.userId, user.id) })
+					: null;
+			const staffProfile =
+				user.role === 'STAFF'
+					? await db.query.staffProfiles.findFirst({ where: eq(staffProfiles.userId, user.id) })
+					: null;
+
 			createSession(cookies, {
 				userId: user.id,
 				role: user.role,
-				landlordProfileId: user.landlordProfile?.id || null,
-				enabledRentalTypes: user.landlordProfile?.enabledRentalTypes || null,
-				tenantProfileId: user.tenantProfile?.id || null,
-				staffProfileId: user.staffProfile?.id || null,
-				staffLandlordId: user.staffProfile?.landlordId || null
+				landlordProfileId: landlordProfile?.id || null,
+				enabledRentalTypes: landlordProfile?.enabledRentalTypes || null,
+				tenantProfileId: tenantProfile?.id || null,
+				staffProfileId: staffProfile?.id || null,
+				staffLandlordId: staffProfile?.landlordId || null
 			});
 
 			return json({
@@ -76,11 +84,11 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				phone: user.phone,
 				name: user.name,
 				role: user.role,
-				landlordProfileId: user.landlordProfile?.id || null,
-				enabledRentalTypes: user.landlordProfile?.enabledRentalTypes || null,
-				tenantProfileId: user.tenantProfile?.id || null,
-				staffProfileId: user.staffProfile?.id || null,
-				staffLandlordId: user.staffProfile?.landlordId || null
+				landlordProfileId: landlordProfile?.id || null,
+				enabledRentalTypes: landlordProfile?.enabledRentalTypes || null,
+				tenantProfileId: tenantProfile?.id || null,
+				staffProfileId: staffProfile?.id || null,
+				staffLandlordId: staffProfile?.landlordId || null
 			});
 		}
 

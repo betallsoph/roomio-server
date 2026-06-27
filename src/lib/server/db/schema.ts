@@ -35,7 +35,14 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 	accountNumber: text('accountNumber').notNull().default('1234567890'),
 	accountName: text('accountName').notNull().default('NGUYEN VAN HAU'),
 	bankBranch: text('bankBranch').notNull().default('Chi nhánh TP.HCM'),
-	momoNumber: text('momoNumber') // Số điện thoại nhận Momo (tùy chọn)
+	momoNumber: text('momoNumber'), // Số điện thoại nhận Momo (tùy chọn)
+
+	// PayOS riêng của từng chủ trọ — tiền thuê về THẲNG tài khoản chủ trọ (mô hình A2A).
+	// apiKey/checksumKey lưu mã hóa AES-256-GCM (xem lib/server/secrets.ts), clientId để thường.
+	payosClientId: text('payosClientId'),
+	payosApiKeyEnc: text('payosApiKeyEnc'),
+	payosChecksumKeyEnc: text('payosChecksumKeyEnc'),
+	payosConnectedAt: datetime('payosConnectedAt') // null = chưa kết nối PayOS riêng
 });
 
 export const staffProfiles = pgTable('StaffProfile', {
@@ -55,6 +62,7 @@ export const tenantProfiles = pgTable('TenantProfile', {
 		.notNull()
 		.unique()
 		.references(() => users.id, { onDelete: 'cascade' }),
+	telegramUserId: text('telegramUserId').unique(), // ID Telegram để auto-login trong Mini App (null = chưa liên kết)
 	idNumber: text('idNumber').notNull(), // CCCD
 	idFrontImage: text('idFrontImage'), // Ảnh chụp CCCD trước
 	idBackImage: text('idBackImage'), // Ảnh chụp CCCD sau
@@ -63,6 +71,22 @@ export const tenantProfiles = pgTable('TenantProfile', {
 	moveInDate: text('moveInDate').notNull(),
 	deposit: doublePrecision('deposit').notNull(),
 	notes: text('notes')
+});
+
+// Lời mời liên kết khách thuê với Telegram: chủ trọ sinh token 1 lần, khách mở Mini App qua
+// deep-link ?startapp=<token> để gắn tài khoản Telegram của họ vào đúng TenantProfile.
+export const tenantInvites = pgTable('TenantInvite', {
+	id: text('id').primaryKey().$defaultFn(uuid),
+	landlordId: text('landlordId')
+		.notNull()
+		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+	tenantId: text('tenantId')
+		.notNull()
+		.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+	token: text('token').notNull().unique(),
+	expiresAt: datetime('expiresAt').notNull(),
+	usedAt: datetime('usedAt'), // null = chưa dùng
+	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 
 export const properties = pgTable('Property', {
@@ -355,6 +379,17 @@ export const tenantProfilesRelations = relations(tenantProfiles, ({ one, many })
 	specialNotes: many(specialNotes),
 	contracts: many(contracts),
 	notifications: many(notificationQueue)
+}));
+
+export const tenantInvitesRelations = relations(tenantInvites, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [tenantInvites.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	tenant: one(tenantProfiles, {
+		fields: [tenantInvites.tenantId],
+		references: [tenantProfiles.id]
+	})
 }));
 
 export const propertiesRelations = relations(properties, ({ one, many }) => ({

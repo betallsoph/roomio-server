@@ -10,5 +10,5 @@ export default defineConfig({
 	dialect: 'postgresql',
 	...(databaseUrl && databaseUrl.startsWith('postgres')
 		? { dbCredentials: { url: databaseUrl } }
-		: { driver: 'pglite', dbCredentials: { url: './pgdata' } })
+		: { driver: 'pglite', dbCredentials: { url: process.env.PGLITE_DIR ?? './pgdata' } })
 });

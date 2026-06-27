@@ -29,6 +29,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (limited) return limited;
 	}
 
+	if (pathname === '/api/auth/telegram' && event.request.method === 'POST') {
+		const limited = rateLimit(`tg-auth:${event.getClientAddress()}`, 30, 15 * 60 * 1000);
+		if (limited) return limited;
+	}
+
 	if (pathname === '/api/upload' && event.request.method === 'POST') {
 		const limited = rateLimit(`upload:${event.getClientAddress()}`, 60, 60 * 60 * 1000);
 		if (limited) return limited;
