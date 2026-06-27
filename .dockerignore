@@ -1,0 +1,12 @@
+node_modules
+.git
+.github
+.svelte-kit
+build
+pgdata
+uploads
+.env
+.env.*
+!.env.example
+*.md
+.DS_Store

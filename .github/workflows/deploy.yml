@@ -1,0 +1,57 @@
+# Deploy roomio-server → VPS API (140.245.59.215)
+# Thư mục trên server: /home/ubuntu/roomio-server
+#
+# GitHub Secrets (repo roomio-server):
+#   DEPLOY_HOST     = 140.245.59.215
+#   DEPLOY_USER     = ubuntu
+#   DEPLOY_SSH_KEY  = nội dung file ssh-key-2026-06-17.key
+#   DEPLOY_PATH     = /home/ubuntu/roomio-server
+
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy API
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 22
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            echo "==> Pull latest code"
+            git fetch origin master
+            git reset --hard origin/master
+
+            echo "==> Build & restart (arm64 native on VPS)"
+            docker compose up -d --build --remove-orphans
+
+            echo "==> Wait for API healthy"
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:3000/api/auth/me >/dev/null 2>&1 || \
+                 curl -sf http://127.0.0.1:3000/ >/dev/null 2>&1; then
+                echo "API is up"
+                break
+              fi
+              sleep 2
+            done
+
+            docker compose ps
+            docker image prune -f
