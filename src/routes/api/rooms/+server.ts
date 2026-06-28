@@ -17,15 +17,30 @@ import {
 	landlordOwnsRoom,
 	requireLandlord
 } from '$lib/server/authz';
-import { normalizeRoomCodeForProperty, normalizeRoomTextKey } from '$lib/server/room-code';
+import { normalizeRoomTextKey } from '$lib/server/room-code';
 
-// Định danh CĂN của một phòng: ưu tiên mã chuẩn hóa (vd HAGL3 "A16-04"); không có thì dùng mã căn
-// dạng text; không có mã căn thì coi như không thuộc căn nào ('').
-function roomUnitKey(propertyId: string, roomNumber: string, roomCode: string | null) {
-	const canonical =
-		normalizeRoomCodeForProperty(propertyId, roomCode) ??
-		normalizeRoomCodeForProperty(propertyId, roomNumber);
-	return canonical ?? normalizeRoomTextKey(roomCode);
+function roomUnitKey(
+	roomNumber: string,
+	roomCode: string | null,
+	blockId: string | null,
+	floor: number | null
+) {
+	return [blockId || '', floor ?? '', normalizeRoomTextKey(roomCode || roomNumber)].join('|');
+}
+
+function normalizeApartmentUnit(value: unknown) {
+	const raw = String(value ?? '')
+		.trim()
+		.toUpperCase()
+		.replace(/\s+/g, '');
+	if (!raw) return '';
+	return raw;
+}
+
+function normalizeFloor(value: unknown) {
+	const floorNumber = Number(value);
+	if (!Number.isFinite(floorNumber)) return null;
+	return Math.trunc(floorNumber);
 }
 
 // Một MÃ CĂN có thể chứa NHIỀU PHÒNG (cho thuê theo phòng/giường). Vì vậy chỉ coi là TRÙNG khi
@@ -34,20 +49,22 @@ async function findDuplicateRoom(
 	propertyId: string,
 	roomNumber: string,
 	roomCode: string | null,
+	blockId: string | null,
+	floor: number | null,
 	excludeRoomId?: string
 ) {
-	const targetUnit = roomUnitKey(propertyId, roomNumber, roomCode);
+	const targetUnit = roomUnitKey(roomNumber, roomCode, blockId, floor);
 	const targetName = normalizeRoomTextKey(roomNumber);
 	if (!targetUnit && !targetName) return undefined;
 
 	const propertyRooms = await db.query.rooms.findMany({
 		where: eq(rooms.propertyId, propertyId),
-		columns: { id: true, roomNumber: true, roomCode: true }
+		columns: { id: true, roomNumber: true, roomCode: true, blockId: true, floor: true }
 	});
 
 	return propertyRooms.find((room) => {
 		if (excludeRoomId && room.id === excludeRoomId) return false;
-		const existingUnit = roomUnitKey(propertyId, room.roomNumber, room.roomCode);
+		const existingUnit = roomUnitKey(room.roomNumber, room.roomCode, room.blockId, room.floor);
 		const existingName = normalizeRoomTextKey(room.roomNumber);
 		return existingUnit === targetUnit && existingName === targetName;
 	});
@@ -116,6 +133,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		const result = await db.query.rooms.findMany({
 			where: conditions.length > 0 ? and(...conditions) : undefined,
 			with: {
+				block: true,
 				property: true,
 				tenant: {
 					with: { user: true }
@@ -143,7 +161,17 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!auth.ok) return auth.response;
 
 		const body = await request.json();
-		const { propertyId, blockId, roomNumber, roomCode, roomType, floor, monthlyRent, area } = body;
+		const {
+			propertyId,
+			blockId,
+			roomNumber,
+			roomCode,
+			unitNumber,
+			roomType,
+			floor,
+			monthlyRent,
+			area
+		} = body;
 
 		if (!propertyId || !roomNumber || !roomType || !monthlyRent) {
 			return json({ error: 'Missing required room fields' }, { status: 400 });
@@ -152,12 +180,47 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return forbidden();
 		}
 
-		const canonicalRoomCode = normalizeRoomCodeForProperty(propertyId, roomCode || roomNumber);
-		const nextRoomNumber =
-			!roomCode && canonicalRoomCode ? canonicalRoomCode : String(roomNumber).trim();
-		const nextRoomCode = canonicalRoomCode ?? (roomCode ? String(roomCode).trim() : null);
+		const property = await db.query.properties.findFirst({
+			where: eq(properties.id, propertyId),
+			with: { blocks: true }
+		});
+		if (!property) {
+			return json({ error: 'Property not found' }, { status: 404 });
+		}
 
-		const existing = await findDuplicateRoom(propertyId, nextRoomNumber, nextRoomCode);
+		const nextRoomNumber = String(roomNumber).trim();
+		let nextRoomCode = roomCode ? String(roomCode).trim() : null;
+		let nextBlockId = blockId || null;
+		const nextFloor =
+			floor !== undefined && floor !== null && floor !== '' ? normalizeFloor(floor) : null;
+
+		if (property.rentalType === 'APARTMENT') {
+			if (!nextBlockId || nextFloor === null) {
+				return json({ error: 'Chung cư cần chọn block và nhập tầng' }, { status: 400 });
+			}
+			const block = property.blocks.find((item) => item.id === nextBlockId);
+			if (!block) {
+				return json({ error: 'Block không thuộc tòa nhà đã chọn' }, { status: 400 });
+			}
+			const apartmentUnit = normalizeApartmentUnit(unitNumber || roomCode);
+			if (!apartmentUnit) {
+				return json({ error: 'Chung cư cần nhập số căn' }, { status: 400 });
+			}
+			nextRoomCode = apartmentUnit;
+		} else if (nextBlockId) {
+			const block = property.blocks.find((item) => item.id === nextBlockId);
+			if (!block) {
+				return json({ error: 'Khu/dãy không thuộc tòa nhà đã chọn' }, { status: 400 });
+			}
+		}
+
+		const existing = await findDuplicateRoom(
+			propertyId,
+			nextRoomNumber,
+			nextRoomCode,
+			nextBlockId,
+			nextFloor
+		);
 		if (existing) {
 			return json(
 				{
@@ -174,11 +237,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					.insert(rooms)
 					.values({
 						propertyId,
-						blockId: blockId || null,
+						blockId: nextBlockId,
 						roomNumber: nextRoomNumber,
 						roomCode: nextRoomCode,
 						roomType,
-						floor: floor ? Number(floor) : null,
+						floor: nextFloor,
 						status: 'empty',
 						monthlyRent: Number(monthlyRent),
 						area: area ? Number(area) : null,
@@ -338,35 +401,79 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		} else {
 			// Standard room update
 			const updateData: Record<string, unknown> = {};
-			if (data.roomNumber !== undefined || data.roomCode !== undefined) {
+			if (
+				data.roomNumber !== undefined ||
+				data.roomCode !== undefined ||
+				data.unitNumber !== undefined ||
+				data.blockId !== undefined ||
+				data.floor !== undefined
+			) {
 				const currentRoom = await db.query.rooms.findFirst({
 					where: eq(rooms.id, id),
-					columns: { propertyId: true, roomNumber: true, roomCode: true }
+					columns: {
+						propertyId: true,
+						roomNumber: true,
+						roomCode: true,
+						blockId: true,
+						floor: true
+					}
 				});
 				if (!currentRoom) {
 					return json({ error: 'Room not found' }, { status: 404 });
 				}
 
+				const property = await db.query.properties.findFirst({
+					where: eq(properties.id, currentRoom.propertyId),
+					with: { blocks: true }
+				});
+				if (!property) {
+					return json({ error: 'Property not found' }, { status: 404 });
+				}
+
 				const submittedRoomNumber =
 					data.roomNumber !== undefined ? String(data.roomNumber).trim() : currentRoom.roomNumber;
-				const submittedRoomCode =
+				let submittedRoomCode =
 					data.roomCode !== undefined
 						? data.roomCode
 							? String(data.roomCode).trim()
 							: null
 						: currentRoom.roomCode;
-				const canonicalRoomCode = normalizeRoomCodeForProperty(
-					currentRoom.propertyId,
-					submittedRoomCode || submittedRoomNumber
-				);
-				const nextRoomNumber =
-					!submittedRoomCode && canonicalRoomCode ? canonicalRoomCode : submittedRoomNumber;
-				const nextRoomCode = canonicalRoomCode ?? submittedRoomCode;
+				const submittedBlockId =
+					data.blockId !== undefined ? data.blockId || null : currentRoom.blockId;
+				const submittedFloor =
+					data.floor !== undefined && data.floor !== null && data.floor !== ''
+						? normalizeFloor(data.floor)
+						: currentRoom.floor;
+
+				if (property.rentalType === 'APARTMENT') {
+					if (!submittedBlockId || submittedFloor === null) {
+						return json({ error: 'Chung cư cần chọn block và nhập tầng' }, { status: 400 });
+					}
+					const block = property.blocks.find((item) => item.id === submittedBlockId);
+					if (!block) {
+						return json({ error: 'Block không thuộc tòa nhà đã chọn' }, { status: 400 });
+					}
+					const apartmentUnit = normalizeApartmentUnit(data.unitNumber || submittedRoomCode);
+					if (!apartmentUnit) {
+						return json({ error: 'Chung cư cần nhập số căn' }, { status: 400 });
+					}
+					submittedRoomCode = apartmentUnit;
+				} else if (submittedBlockId) {
+					const block = property.blocks.find((item) => item.id === submittedBlockId);
+					if (!block) {
+						return json({ error: 'Khu/dãy không thuộc tòa nhà đã chọn' }, { status: 400 });
+					}
+				}
+
+				const nextRoomNumber = submittedRoomNumber;
+				const nextRoomCode = submittedRoomCode;
 
 				const duplicate = await findDuplicateRoom(
 					currentRoom.propertyId,
 					nextRoomNumber,
 					nextRoomCode,
+					submittedBlockId,
+					submittedFloor,
 					id
 				);
 				if (duplicate) {
@@ -379,15 +486,22 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				}
 
 				if (data.roomNumber !== undefined) updateData.roomNumber = nextRoomNumber;
-				if (data.roomCode !== undefined) updateData.roomCode = nextRoomCode;
+				if (
+					data.roomCode !== undefined ||
+					data.unitNumber !== undefined ||
+					(property.rentalType === 'APARTMENT' &&
+						(data.blockId !== undefined || data.floor !== undefined))
+				) {
+					updateData.roomCode = nextRoomCode;
+				}
 			}
 			if (data.roomType !== undefined) updateData.roomType = data.roomType;
-			if (data.floor !== undefined) updateData.floor = Number(data.floor);
+			if (data.floor !== undefined) updateData.floor = normalizeFloor(data.floor);
 			if (data.monthlyRent !== undefined) updateData.monthlyRent = Number(data.monthlyRent);
 			if (data.area !== undefined) updateData.area = Number(data.area);
 			if (data.status !== undefined) updateData.status = data.status;
 			if (data.debtAmount !== undefined) updateData.debtAmount = Number(data.debtAmount);
-			if (data.blockId !== undefined) updateData.blockId = data.blockId;
+			if (data.blockId !== undefined) updateData.blockId = data.blockId || null;
 
 			if (Object.keys(updateData).length > 0) {
 				await db.update(rooms).set(updateData).where(eq(rooms.id, id));

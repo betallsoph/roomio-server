@@ -176,6 +176,8 @@ const generateMoveInDate = (): string => {
 	return now.toISOString().split('T')[0];
 };
 
+const hagl3BlockNames = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'];
+
 type RoomSeedPlan = {
 	blockName: string;
 	floor: number;
@@ -185,75 +187,6 @@ type RoomSeedPlan = {
 	monthlyRent: number;
 	area: number;
 };
-
-const hagl3Towers = ['A', 'B', 'C', 'D'];
-const hagl3BlockNames = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D1', 'D2'];
-const hagl3Floors = [
-	5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30, 31, 32
-];
-
-function hagl3BlockName(tower: string, unit: number) {
-	return `${tower}${unit <= 6 ? '1' : '2'}`;
-}
-
-function hagl3RoomType(unit: number): RoomSeedPlan['roomType'] {
-	if ([1, 6, 7, 12].includes(unit)) return 'balcony';
-	if ([2, 5, 8, 11].includes(unit)) return 'master';
-	return 'standard';
-}
-
-function hagl3Rent(floor: number, unit: number) {
-	const base = unit <= 6 ? 6800000 : 7200000;
-	const floorBonus = Math.floor((floor - 5) / 4) * 250000;
-	const unitBonus =
-		hagl3RoomType(unit) === 'balcony' ? 900000 : hagl3RoomType(unit) === 'master' ? 500000 : 0;
-	return base + floorBonus + unitBonus;
-}
-
-function hagl3Area(unit: number) {
-	if ([1, 6, 7, 12].includes(unit)) return 76;
-	if ([2, 5, 8, 11].includes(unit)) return 68;
-	return 58;
-}
-
-function generateHagl3RoomPlans(): RoomSeedPlan[] {
-	const candidates: RoomSeedPlan[] = [];
-	const requiredRooms = new Set(['A16-04', 'A15-11']);
-	for (const tower of hagl3Towers) {
-		for (const floor of hagl3Floors) {
-			for (let unit = 1; unit <= 12; unit++) {
-				const roomNumber = `${tower}${floor.toString().padStart(2, '0')}-${unit
-					.toString()
-					.padStart(2, '0')}`;
-				candidates.push({
-					blockName: hagl3BlockName(tower, unit),
-					floor,
-					roomNumber,
-					roomCode: roomNumber,
-					roomType: hagl3RoomType(unit),
-					monthlyRent: hagl3Rent(floor, unit),
-					area: hagl3Area(unit)
-				});
-			}
-		}
-	}
-
-	const sortedCandidates = candidates.sort((a, b) => {
-		const scoreA =
-			(a.floor * 37 + a.roomNumber.charCodeAt(0) * 19 + Number(a.roomNumber.slice(-2)) * 23) % 997;
-		const scoreB =
-			(b.floor * 37 + b.roomNumber.charCodeAt(0) * 19 + Number(b.roomNumber.slice(-2)) * 23) % 997;
-		return scoreA - scoreB || a.roomNumber.localeCompare(b.roomNumber);
-	});
-	const requiredPlans = candidates.filter((plan) => requiredRooms.has(plan.roomNumber));
-	const randomPlans = sortedCandidates
-		.filter((plan) => !requiredRooms.has(plan.roomNumber))
-		.slice(0, 100 - requiredPlans.length);
-
-	return [...requiredPlans, ...randomPlans].sort((a, b) =>
-		a.roomNumber.localeCompare(b.roomNumber)
-	);
-}
 
 const propertiesData = [
 	{
@@ -397,7 +330,6 @@ async function main() {
 					.returning()
 			)[0];
 
-			const roomPlans = generateHagl3RoomPlans();
 			const blockNames = hagl3BlockNames;
 			const blockByName = new Map<string, { id: string; name: string }>();
 
@@ -408,6 +340,8 @@ async function main() {
 				blockByName.set(block.name, block);
 			}
 
+			// HAGL3 chỉ seed tòa nhà và block. Phòng/khách để chủ trọ tự tạo tay trong app.
+			const roomPlans: RoomSeedPlan[] = [];
 			for (const plan of roomPlans) {
 				const block = blockByName.get(plan.blockName)!;
 				const { floor, roomNumber, roomCode, roomType, monthlyRent, area } = plan;
@@ -517,14 +451,14 @@ async function main() {
 						{
 							roomId: room.id,
 							name: 'Máy lạnh Daikin 1.5 HP',
-							code: `DAI-${property.id}-${roomNumber}`,
+							code: `DAI-${property.id}-${roomCode}`,
 							status: 'good',
 							notes: 'Mới lắp đặt năm 2024'
 						},
 						{
 							roomId: room.id,
 							name: 'Tủ lạnh Panasonic 180L',
-							code: `PAN-${property.id}-${roomNumber}`,
+							code: `PAN-${property.id}-${roomCode}`,
 							status: 'good'
 						}
 					]);
@@ -741,7 +675,7 @@ async function main() {
 
 			await tx.insert(maintenanceRequests).values({
 				tenantId: firstTenants[1].id,
-				roomNumber: secondRoom?.roomNumber || 'A15-11',
+				roomNumber: secondRoom?.roomNumber || '11',
 				buildingName: 'Hoàng Anh Gia Lai 3',
 				category: 'electrical',
 				title: 'Máy lạnh chảy nước và không lạnh',
