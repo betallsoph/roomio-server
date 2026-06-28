@@ -160,7 +160,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const existing = await findDuplicateRoom(propertyId, nextRoomNumber, nextRoomCode);
 		if (existing) {
 			return json(
-				{ error: `Phòng "${nextRoomNumber}" đã tồn tại trong căn ${nextRoomCode || existing.roomCode || existing.roomNumber}` },
+				{
+					error: `Phòng "${nextRoomNumber}" đã tồn tại trong căn ${nextRoomCode || existing.roomCode || existing.roomNumber}`
+				},
 				{ status: 400 }
 			);
 		}
@@ -369,7 +371,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				);
 				if (duplicate) {
 					return json(
-						{ error: `Phòng "${nextRoomNumber}" đã tồn tại trong căn ${nextRoomCode || duplicate.roomCode || duplicate.roomNumber}` },
+						{
+							error: `Phòng "${nextRoomNumber}" đã tồn tại trong căn ${nextRoomCode || duplicate.roomCode || duplicate.roomNumber}`
+						},
 						{ status: 400 }
 					);
 				}
