@@ -3,7 +3,7 @@ import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { contracts, rooms, properties } from '$lib/server/db/schema';
-import { desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import {
 	forbidden,
 	landlordOwnsContract,
@@ -19,7 +19,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 		let condition;
 		if (locals.session?.role === 'LANDLORD') {
-			condition = inArray(
+			const ownScope = inArray(
 				contracts.roomId,
 				db
 					.select({ id: rooms.id })
@@ -27,6 +27,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 					.innerJoin(properties, eq(rooms.propertyId, properties.id))
 					.where(eq(properties.landlordId, locals.session.landlordProfileId!))
 			);
+			// Cho phép lọc theo 1 khách (dùng trong tenant detail) nhưng vẫn trong phạm vi chủ trọ
+			condition = tenantId ? and(ownScope, eq(contracts.tenantId, tenantId)) : ownScope;
 		} else if (locals.session?.role === 'TENANT') {
 			condition = eq(contracts.tenantId, locals.session.tenantProfileId!);
 		} else if (landlordId) {

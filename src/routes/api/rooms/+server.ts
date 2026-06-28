@@ -19,17 +19,26 @@ import {
 } from '$lib/server/authz';
 import { normalizeRoomCodeForProperty, normalizeRoomTextKey } from '$lib/server/room-code';
 
+// Định danh CĂN của một phòng: ưu tiên mã chuẩn hóa (vd HAGL3 "A16-04"); không có thì dùng mã căn
+// dạng text; không có mã căn thì coi như không thuộc căn nào ('').
+function roomUnitKey(propertyId: string, roomNumber: string, roomCode: string | null) {
+	const canonical =
+		normalizeRoomCodeForProperty(propertyId, roomCode) ??
+		normalizeRoomCodeForProperty(propertyId, roomNumber);
+	return canonical ?? normalizeRoomTextKey(roomCode);
+}
+
+// Một MÃ CĂN có thể chứa NHIỀU PHÒNG (cho thuê theo phòng/giường). Vì vậy chỉ coi là TRÙNG khi
+// CÙNG mã căn VÀ CÙNG tên phòng — không chặn việc thêm phòng mới vào căn đã tồn tại.
 async function findDuplicateRoom(
 	propertyId: string,
 	roomNumber: string,
 	roomCode: string | null,
 	excludeRoomId?: string
 ) {
-	const targetCanonicalCode =
-		normalizeRoomCodeForProperty(propertyId, roomCode) ??
-		normalizeRoomCodeForProperty(propertyId, roomNumber);
-	const targetLooseCode = normalizeRoomTextKey(roomCode);
-	if (!targetCanonicalCode && !targetLooseCode) return undefined;
+	const targetUnit = roomUnitKey(propertyId, roomNumber, roomCode);
+	const targetName = normalizeRoomTextKey(roomNumber);
+	if (!targetUnit && !targetName) return undefined;
 
 	const propertyRooms = await db.query.rooms.findMany({
 		where: eq(rooms.propertyId, propertyId),
@@ -38,16 +47,9 @@ async function findDuplicateRoom(
 
 	return propertyRooms.find((room) => {
 		if (excludeRoomId && room.id === excludeRoomId) return false;
-		const existingCanonicalCode =
-			normalizeRoomCodeForProperty(propertyId, room.roomCode) ??
-			normalizeRoomCodeForProperty(propertyId, room.roomNumber);
-
-		if (targetCanonicalCode) {
-			return existingCanonicalCode === targetCanonicalCode;
-		}
-
-		const existingLooseCode = normalizeRoomTextKey(room.roomCode);
-		return !!targetLooseCode && existingLooseCode === targetLooseCode;
+		const existingUnit = roomUnitKey(propertyId, room.roomNumber, room.roomCode);
+		const existingName = normalizeRoomTextKey(room.roomNumber);
+		return existingUnit === targetUnit && existingName === targetName;
 	});
 }
 
@@ -158,7 +160,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const existing = await findDuplicateRoom(propertyId, nextRoomNumber, nextRoomCode);
 		if (existing) {
 			return json(
-				{ error: `Mã căn này đã tồn tại (${existing.roomCode || existing.roomNumber})` },
+				{ error: `Phòng "${nextRoomNumber}" đã tồn tại trong căn ${nextRoomCode || existing.roomCode || existing.roomNumber}` },
 				{ status: 400 }
 			);
 		}
@@ -367,7 +369,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				);
 				if (duplicate) {
 					return json(
-						{ error: `Mã căn này đã tồn tại (${duplicate.roomCode || duplicate.roomNumber})` },
+						{ error: `Phòng "${nextRoomNumber}" đã tồn tại trong căn ${nextRoomCode || duplicate.roomCode || duplicate.roomNumber}` },
 						{ status: 400 }
 					);
 				}
