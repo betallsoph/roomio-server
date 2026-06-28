@@ -61,9 +61,18 @@ Tinh chỉnh Postgres cho box 6GB: `shared_buffers=1GB`, `work_mem=16MB`, `max_c
 
 ## Thanh toán & đối soát (payOS)
 
-Khai báo `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` từ kênh thanh toán payOS. API tạo link thanh toán payOS theo từng hóa đơn để phục vụ luồng thu tiền/đối soát cho chủ trọ; tenant self-service portal để Phase 2. payOS gửi webhook về `https://<domain>/api/payos-webhook` hoặc endpoint tương thích cũ `https://<domain>/api/payment-webhook`.
+Roomio hiện tách 2 luồng payOS:
 
-Webhook được xác thực bằng `signature` HMAC-SHA256 theo `PAYOS_CHECKSUM_KEY`, match hóa đơn bằng `orderCode`/`paymentLinkId`, ghi `PaymentTransaction`, rồi tự cập nhật trạng thái hóa đơn và công nợ phòng.
+- **Tiền thuê khách → chủ trọ**: mỗi chủ trọ kết nối payOS riêng trong app/Super Admin. API mã hóa `apiKey` và `checksumKey` bằng `PAYOS_ENC_KEY` trước khi lưu DB. Khi tạo link thanh toán hóa đơn, API dùng key riêng của chủ trọ sở hữu hóa đơn; nếu chủ trọ chưa kết nối payOS thì trả về VietQR để đối soát thủ công.
+- **Phí subscription chủ trọ → nền tảng Roomio**: dùng `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` từ env. Luồng này đi webhook riêng `/api/payos-webhook/subscription` và hiện mới ack/verify, chưa tự gia hạn gói.
+
+Webhook tiền thuê đi về `https://<domain>/api/payos-webhook` hoặc endpoint tương thích cũ `https://<domain>/api/payment-webhook`. API match hóa đơn bằng `orderCode`/`paymentLinkId`, suy ra chủ trọ, rồi verify `signature` HMAC-SHA256 bằng checksum key riêng của chủ trọ đó. Chỉ sau khi verify hợp lệ mới ghi `PaymentTransaction`, cập nhật trạng thái hóa đơn và công nợ phòng.
+
+Production cần khai báo `PAYOS_ENC_KEY` để mã hóa key riêng từng chủ trọ:
+
+```bash
+PAYOS_ENC_KEY="$(openssl rand -base64 32)"
+```
 
 ## Upload ảnh qua Cloudflare R2
 

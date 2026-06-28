@@ -68,6 +68,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!(await landlordAllowsRentalType(landlordId, rentalType))) {
 			return json({ error: 'Tài khoản chủ trọ chưa được bật loại hình này' }, { status: 403 });
 		}
+		if (
+			rentalType === 'APARTMENT' &&
+			(!Array.isArray(blockNames) ||
+				blockNames.map((blockName: string) => blockName.trim()).filter(Boolean).length === 0)
+		) {
+			return json({ error: 'Chung cư cần có ít nhất một block' }, { status: 400 });
+		}
 
 		const property = await db.transaction(async (tx) => {
 			// Create property
