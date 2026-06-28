@@ -16,3 +16,6 @@ uploads/
 *.db-wal
 *.db-shm
 pgdata.bak-*
+
+# Local planning notes
+docs/telegram-message-sync.md
