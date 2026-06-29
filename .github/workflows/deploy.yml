@@ -41,6 +41,9 @@ jobs:
             git reset --hard origin/master
 
             echo "==> Build & restart (arm64 native on VPS)"
+            if [ ! -f .env ] || ! grep -q '^SUPER_ADMIN_ACCOUNTS=' .env; then
+              echo "::warning::SUPER_ADMIN_ACCOUNTS is not set on VPS. Deploy can continue, but env SuperAdmin login will not work until .env is configured."
+            fi
             docker compose up -d --build --remove-orphans
 
             echo "==> Wait for API healthy"
