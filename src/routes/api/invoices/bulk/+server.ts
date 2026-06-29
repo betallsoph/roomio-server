@@ -13,7 +13,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const landlordId = auth.value;
 
 		const body = await request.json();
-		const { propertyId, month, dueDate, readings } = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
+		const { propertyId, month, dueDate, readings, manualAmounts = {} } = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
 
 		if (!landlordId || !propertyId || !month || !dueDate || !readings) {
 			return json({ error: 'Missing required parameters' }, { status: 400 });
@@ -55,6 +55,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				const tenantName = room.tenant.user.name;
 				const tenantPhone = room.tenant.user.phone;
 				const roomReadings = readings[room.id] || {};
+				const roomManualAmounts = manualAmounts[room.id] || {};
 
 				const items = [];
 				let totalServicesAmount = 0;
@@ -100,6 +101,17 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					} else if (config.service.type === 'FLAT_VEHICLE') {
 						amount = rate * config.quantity;
 						details = `Đơn giá: ${new Intl.NumberFormat('vi-VN').format(rate)}đ x ${config.quantity} xe`;
+					} else if (config.service.type === 'MANUAL_AMOUNT') {
+						if (roomManualAmounts[config.serviceId] === undefined) {
+							throw new Error(`Thiếu số tiền ${config.service.name} cho phòng ${room.roomNumber}`);
+						}
+						amount = Number(roomManualAmounts[config.serviceId]);
+						if (!Number.isFinite(amount) || amount < 0) {
+							throw new Error(
+								`Số tiền ${config.service.name} của phòng ${room.roomNumber} không hợp lệ`
+							);
+						}
+						details = `Khoản tự nhập tháng ${month}`;
 					}
 
 					if (amount > 0) {

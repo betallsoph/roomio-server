@@ -5,6 +5,8 @@ import { db } from '$lib/server/db';
 import { services, rooms, properties, roomServiceConfigs } from '$lib/server/db/schema';
 import { asc, eq } from 'drizzle-orm';
 
+const SERVICE_TYPES = ['METERED', 'MANUAL_AMOUNT', 'FLAT_ROOM', 'FLAT_PERSON', 'FLAT_VEHICLE'];
+
 export const GET: RequestHandler = async ({ url }) => {
 	try {
 		const landlordId = url.searchParams.get('landlordId');
@@ -39,6 +41,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!name || !type || defaultRate === undefined) {
 			return json({ error: 'Missing required service fields' }, { status: 400 });
 		}
+		if (!SERVICE_TYPES.includes(type)) {
+			return json({ error: 'Cách tính dịch vụ không hợp lệ' }, { status: 400 });
+		}
 
 		const service = await db.transaction(async (tx) => {
 			const created = (
@@ -47,7 +52,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					.values({
 						landlordId,
 						name,
-						type, // "METERED" | "FLAT_ROOM" | "FLAT_PERSON" | "FLAT_VEHICLE"
+						type, // "METERED" | "MANUAL_AMOUNT" | "FLAT_ROOM" | "FLAT_PERSON" | "FLAT_VEHICLE"
 						defaultRate: Number(defaultRate),
 						isActive: isActive !== undefined ? isActive : true
 					})

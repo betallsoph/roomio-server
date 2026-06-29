@@ -115,7 +115,7 @@ export const services = pgTable('Service', {
 		.notNull()
 		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
 	name: text('name').notNull(), // ví dụ: "Điện", "Nước", "Wifi", "Gửi xe máy"
-	type: text('type').notNull(), // "METERED" | "FLAT_ROOM" | "FLAT_PERSON" | "FLAT_VEHICLE"
+	type: text('type').notNull(), // "METERED" | "MANUAL_AMOUNT" | "FLAT_ROOM" | "FLAT_PERSON" | "FLAT_VEHICLE"
 	defaultRate: doublePrecision('defaultRate').notNull(), // Đơn giá chuẩn áp dụng cho toàn bộ cơ sở
 	isActive: boolean('isActive').notNull().default(true)
 });
