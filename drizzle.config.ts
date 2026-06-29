@@ -2,13 +2,13 @@ import { defineConfig } from 'drizzle-kit';
 
 const databaseUrl = process.env.DATABASE_URL;
 
-// Production: chạy migrate với DATABASE_URL trỏ tới Postgres thật.
-// Dev/local: không có DATABASE_URL thì migrate vào PGlite (./pgdata).
+if (!databaseUrl?.startsWith('postgres')) {
+	throw new Error('DATABASE_URL phải trỏ tới Postgres trước khi chạy drizzle-kit.');
+}
+
 export default defineConfig({
 	schema: './src/lib/server/db/schema.ts',
 	out: './drizzle',
 	dialect: 'postgresql',
-	...(databaseUrl && databaseUrl.startsWith('postgres')
-		? { dbCredentials: { url: databaseUrl } }
-		: { driver: 'pglite', dbCredentials: { url: process.env.PGLITE_DIR ?? './pgdata' } })
+	dbCredentials: { url: databaseUrl }
 });

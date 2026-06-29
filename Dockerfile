@@ -8,6 +8,8 @@ RUN npm ci
 
 # Copy the rest of the application files and build
 COPY . .
+# Build only needs a syntactically valid URL because runtime secrets are injected later.
+ENV DATABASE_URL=postgres://roomio:roomio@localhost:5432/roomio
 RUN npm run build
 
 # Runner stage
@@ -30,5 +32,5 @@ ENV NODE_ENV=production
 
 EXPOSE 3000
 
-# Run migrations and start the SvelteKit application directly
-CMD ["sh", "-c", "npm run db:migrate && node build/index.js"]
+# Start script runs migrations first, then boots the API.
+CMD ["npm", "run", "start"]

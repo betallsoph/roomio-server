@@ -8,6 +8,34 @@ import { createSession, destroySession } from '$lib/server/session';
 import { hashPassword, verifyPassword } from '$lib/server/password';
 import { requiredEmail, requiredPhone, ValidationError } from '$lib/server/validation';
 
+type EnvSuperAdmin = {
+	id: string;
+	email: string;
+	password: string;
+	name: string;
+};
+
+function getEnvSuperAdmins(): EnvSuperAdmin[] {
+	const accounts = process.env.SUPER_ADMIN_ACCOUNTS?.split(',')
+		.map((raw) => raw.trim())
+		.filter(Boolean);
+
+	if (!accounts?.length) return [];
+
+	return accounts.map((account, index) => {
+		const [email, password, name] = account.split(':').map((part) => part?.trim());
+		if (!email || !password) {
+			throw new Error(`SUPER_ADMIN_ACCOUNTS item #${index + 1} phải có dạng email:password[:name]`);
+		}
+		return {
+			id: `env-super-admin:${email.toLowerCase()}`,
+			email: email.toLowerCase(),
+			password,
+			name: name || 'Super Admin'
+		};
+	});
+}
+
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	try {
 		const body = await request.json();
@@ -26,41 +54,35 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: 'Thiếu tài khoản hoặc mật khẩu' }, { status: 400 });
 			}
 
-			// Hardcoded Super Admin Check
-			const HARDCODED_ADMINS = [
-				{ email: 'tranthienann228@gmail.com', pass: 'ann123' },
-				{ email: 'roomieversebyantt@gmail.com', pass: 'ann123' },
-				{ email: 'roomieversemod@gmail.com', pass: 'roomieverse' }
-			];
+			if (email) {
+				const superAdmin = getEnvSuperAdmins().find(
+					(admin) => admin.email === requiredEmail(email) && admin.password === password
+				);
 
-			const isHardcodedAdmin = HARDCODED_ADMINS.some(
-				(a) => a.email === email && a.pass === password
-			);
+				if (superAdmin) {
+					createSession(cookies, {
+						userId: superAdmin.id,
+						role: 'SUPER_ADMIN',
+						landlordProfileId: null,
+						enabledRentalTypes: null,
+						tenantProfileId: null,
+						staffProfileId: null,
+						staffLandlordId: null
+					});
 
-			if (isHardcodedAdmin) {
-				const adminId = 'hardcoded-super-admin';
-				createSession(cookies, {
-					userId: adminId,
-					role: 'SUPER_ADMIN',
-					landlordProfileId: null,
-					enabledRentalTypes: null,
-					tenantProfileId: null,
-					staffProfileId: null,
-					staffLandlordId: null
-				});
-
-				return json({
-					id: adminId,
-					email: email,
-					phone: null,
-					name: 'Super Admin',
-					role: 'SUPER_ADMIN',
-					landlordProfileId: null,
-					enabledRentalTypes: null,
-					tenantProfileId: null,
-					staffProfileId: null,
-					staffLandlordId: null
-				});
+					return json({
+						id: superAdmin.id,
+						email: superAdmin.email,
+						phone: null,
+						name: superAdmin.name,
+						role: 'SUPER_ADMIN',
+						landlordProfileId: null,
+						enabledRentalTypes: null,
+						tenantProfileId: null,
+						staffProfileId: null,
+						staffLandlordId: null
+					});
+				}
 			}
 
 			const conditions = [];

@@ -5,7 +5,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: roomio
-      POSTGRES_PASSWORD: matkhau_change_me_in_production
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: roomio
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -24,11 +24,28 @@ services:
     ports:
       - '3000:3000'
     environment:
-      - DATABASE_URL=postgres://roomio:matkhau_change_me_in_production@db:5432/roomio
-      - SESSION_SECRET=change_me_to_a_secure_random_string_in_production
-      - ORIGIN=http://localhost:3000
+      - DATABASE_URL=postgres://roomio:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/roomio
+      - SUPER_ADMIN_ACCOUNTS=${SUPER_ADMIN_ACCOUNTS:?set SUPER_ADMIN_ACCOUNTS}
+      - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET}
+      - ORIGIN=${ORIGIN:?set ORIGIN}
       - PORT=3000
       - UPLOAD_DIR=/app/uploads
+      - PAYOS_CLIENT_ID=${PAYOS_CLIENT_ID:-}
+      - PAYOS_API_KEY=${PAYOS_API_KEY:-}
+      - PAYOS_CHECKSUM_KEY=${PAYOS_CHECKSUM_KEY:-}
+      - PAYOS_ENC_KEY=${PAYOS_ENC_KEY:-}
+      - PAYOS_PARTNER_CODE=${PAYOS_PARTNER_CODE:-}
+      - PUBLIC_APP_ORIGIN=${PUBLIC_APP_ORIGIN:-}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
+      - R2_PRESIGN_EXPIRES_SECONDS=${R2_PRESIGN_EXPIRES_SECONDS:-300}
+      - R2_UPLOAD_MAX_BYTES=${R2_UPLOAD_MAX_BYTES:-5242880}
+      - BOT_TOKEN=${BOT_TOKEN:-}
+      - BOT_USERNAME=${BOT_USERNAME:-}
+      - MINIAPP_SHORT_NAME=${MINIAPP_SHORT_NAME:-}
     depends_on:
       db:
         condition: service_healthy

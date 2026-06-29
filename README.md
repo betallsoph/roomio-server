@@ -9,37 +9,56 @@ MVP đang theo hướng **landlord-first**: API ưu tiên phục vụ dashboard 
 ## Công nghệ
 
 - SvelteKit server routes (`@sveltejs/adapter-node`) — chỉ phục vụ REST endpoint, không có UI
-- Drizzle ORM + PostgreSQL (driver `pg`); dev dùng PGlite nhúng (không cần cài Postgres)
+- Drizzle ORM + PostgreSQL (driver `pg`)
 - Xác thực bằng session cookie ký HMAC-SHA256 (httpOnly)
 
 ## Chạy local
 
 ```bash
 npm install
-npm run db:migrate   # dev: tạo schema trong PGlite (thư mục ./pgdata)
-npm run seed         # dữ liệu mẫu
-npm run dev          # API tại http://localhost:3000
+npm run dev          # tự migrate schema rồi chạy API tại http://localhost:3000
 ```
 
-Tài khoản mẫu sau khi seed: `ngochau@gmail.com` / `password` (chủ trọ), `superadmin@ngochau.com` / `admin`.
+Local dùng Postgres thật giống production. Tạo database local rồi đặt `DATABASE_URL` trong `.env`, ví dụ:
+
+```bash
+createdb roomio
+cp .env.example .env
+# sửa DATABASE_URL + SUPER_ADMIN_ACCOUNTS trong .env
+```
 
 ## Lệnh
 
 | Lệnh                      | Mô tả                                         |
 | ------------------------- | --------------------------------------------- |
-| `npm run dev`             | Chạy dev (cổng 3000)                          |
+| `npm run dev`             | Tự migrate rồi chạy dev (cổng 3000)           |
 | `npm run build`           | Build production                              |
-| `npm run start`           | Chạy bản build (`node build/index.js`)        |
+| `npm run start`           | Tự migrate rồi chạy bản build                 |
 | `npm run check`           | Kiểm tra type                                 |
 | `npm run lint`            | Lint                                          |
 | `npm run db:generate`     | Sinh migration mới từ thay đổi schema         |
-| `npm run db:migrate`      | Áp dụng migration                             |
-| `npm run seed`            | Tạo dữ liệu mẫu                               |
+| `npm run db:migrate`      | Áp dụng migration thủ công khi cần            |
 | `npm run cleanup:uploads` | Xóa ảnh đối chiếu (đồng hồ, bill) quá 3 tháng |
 
 ## Biến môi trường
 
-Xem `.env.example`. Production bắt buộc: `DATABASE_URL` (Postgres thật), `SESSION_SECRET`, `ORIGIN` (domain HTTPS công khai).
+Xem `.env.example`. Bắt buộc cả local lẫn production: `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `SUPER_ADMIN_ACCOUNTS`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed.
+
+## Đồng bộ production về local
+
+Khi cần debug bằng dữ liệu thật, dump DB trên server rồi restore vào Postgres local:
+
+```bash
+# Server
+pg_dump "$DATABASE_URL" --format=custom --no-owner --no-acl --file=roomio.dump
+
+# Máy local
+dropdb --if-exists roomio_local
+createdb roomio_local
+pg_restore --clean --if-exists --no-owner --no-acl --dbname=roomio_local roomio.dump
+```
+
+Sau đó trỏ `.env` local về `postgres://.../roomio_local`. Super Admin vẫn dùng `SUPER_ADMIN_ACCOUNTS` trong env nên không phụ thuộc dữ liệu dump.
 
 ## Triển khai (server riêng, vd Oracle Ampere A1 1 OCPU / 6GB / ARM64)
 
@@ -56,6 +75,25 @@ npm ci && npm run build
 npm run db:migrate            # lần đầu / khi đổi schema
 PORT=3000 node build/index.js # giữ sống bằng pm2/systemd
 ```
+
+Nếu chạy bằng Docker Compose, đặt file `.env` trên server cạnh `docker-compose.yml`. File này không commit lên git:
+
+```bash
+POSTGRES_PASSWORD=mat-khau-db-rat-dai
+SUPER_ADMIN_ACCOUNTS=email@domain.com:mat-khau-admin:Super Admin
+SESSION_SECRET=chuoi-random-dai
+ORIGIN=https://api.roomio.example.com
+PUBLIC_APP_ORIGIN=https://roomio.example.com
+PAYOS_ENC_KEY=base64-32-byte-neu-dung-payos-rieng
+```
+
+Sau đó chạy:
+
+```bash
+docker compose up -d --build
+```
+
+`npm run start` trong container sẽ tự chạy migration trước khi boot API. Không cần seed.
 
 Tinh chỉnh Postgres cho box 6GB: `shared_buffers=1GB`, `work_mem=16MB`, `max_connections=50`. Đưa thư mục `uploads/` vào backup cùng `pg_dump`.
 
@@ -82,5 +120,5 @@ Doc tích hợp nhanh cho Telegram Mini App: `docs/tma-r2-upload.md`.
 
 ## Lưu ý
 
-- PGlite chỉ cho dev local; production luôn dùng Postgres thật qua `DATABASE_URL`.
-- Trước khi mở cho người dùng thật: nâng băm mật khẩu từ SHA-256 lên bcrypt/argon2.
+- Không còn PGlite. Nếu thiếu `DATABASE_URL`, API và migrate sẽ fail sớm để tránh chạy nhầm DB.
+- Trước khi mở cho người dùng thật: đảm bảo `SESSION_SECRET`, `PAYOS_ENC_KEY`, `SUPER_ADMIN_ACCOUNTS` đã đổi sang giá trị mạnh.
