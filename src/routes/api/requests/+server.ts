@@ -4,7 +4,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { maintenanceRequests, rooms, properties } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
-import { forbidden } from '$lib/server/authz';
+import { forbidden, landlordOwnsTenant } from '$lib/server/authz';
 
 async function landlordOwnsRequest(landlordId: string, requestId: string) {
 	const row = await db
@@ -17,7 +17,7 @@ async function landlordOwnsRequest(landlordId: string, requestId: string) {
 	return row.length > 0;
 }
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		const landlordId = url.searchParams.get('landlordId');
 		const tenantId = url.searchParams.get('tenantId');
@@ -25,7 +25,33 @@ export const GET: RequestHandler = async ({ url }) => {
 
 		const conditions = [];
 
-		if (landlordId) {
+		if (locals.session?.role === 'TENANT') {
+			if (!locals.session.tenantProfileId) return forbidden();
+			if (tenantId && tenantId !== locals.session.tenantProfileId) return forbidden();
+			conditions.push(eq(maintenanceRequests.tenantId, locals.session.tenantProfileId));
+		} else if (locals.session?.role === 'LANDLORD') {
+			if (!locals.session.landlordProfileId) return forbidden();
+			if (landlordId && landlordId !== locals.session.landlordProfileId) return forbidden();
+			conditions.push(
+				inArray(
+					maintenanceRequests.tenantId,
+					db
+						.select({ id: rooms.tenantId })
+						.from(rooms)
+						.innerJoin(properties, eq(rooms.propertyId, properties.id))
+						.where(
+							and(
+								eq(properties.landlordId, locals.session.landlordProfileId),
+								isNotNull(rooms.tenantId)
+							)
+						)
+				)
+			);
+		} else if (locals.session?.role === 'STAFF') {
+			if (!locals.session.staffProfileId) return forbidden();
+			if (staffId && staffId !== locals.session.staffProfileId) return forbidden();
+			conditions.push(eq(maintenanceRequests.assignedToId, locals.session.staffProfileId));
+		} else if (landlordId) {
 			// Requests from tenants currently renting one of the landlord's rooms
 			conditions.push(
 				inArray(
@@ -42,12 +68,16 @@ export const GET: RequestHandler = async ({ url }) => {
 		}
 
 		// Lọc theo nhân viên được giao — dùng cho cổng /staff
-		if (staffId) {
+		if (staffId && locals.session?.role !== 'STAFF') {
 			conditions.push(eq(maintenanceRequests.assignedToId, staffId));
 		}
 
+		if (conditions.length === 0) {
+			return json({ error: 'Missing landlordId or tenantId' }, { status: 400 });
+		}
+
 		const requests = await db.query.maintenanceRequests.findMany({
-			where: conditions.length > 0 ? and(...conditions) : undefined,
+			where: and(...conditions),
 			with: {
 				tenant: {
 					with: {
@@ -88,6 +118,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			locals.session?.role === 'TENANT' &&
 			tenantId &&
 			tenantId !== locals.session.tenantProfileId
+		) {
+			return forbidden();
+		}
+		if (
+			locals.session?.role === 'LANDLORD' &&
+			!(await landlordOwnsTenant(locals.session.landlordProfileId!, effectiveTenantId))
 		) {
 			return forbidden();
 		}
