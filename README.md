@@ -42,7 +42,7 @@ cp .env.example .env
 
 ## Biến môi trường
 
-Xem `.env.example`. Bắt buộc cả local lẫn production: `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `SUPER_ADMIN_ACCOUNTS`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed.
+Xem `.env.example`. Bắt buộc cả local lẫn production: `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `SUPER_ADMIN_ACCOUNTS`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed. Có thể khai báo nhiều thông tin đăng nhập, phân cách bằng dấu phẩy; tất cả cùng đại diện cho một Super Admin và dùng chung quyền quản trị.
 
 ## Đồng bộ production về local
 
@@ -80,7 +80,7 @@ Nếu chạy bằng Docker Compose, đặt file `.env` trên server cạnh `dock
 
 ```bash
 POSTGRES_PASSWORD=mat-khau-db-rat-dai
-SUPER_ADMIN_ACCOUNTS=email@domain.com:mat-khau-admin:Super Admin
+SUPER_ADMIN_ACCOUNTS=email1@domain.com:mat-khau-1:Super Admin,email2@domain.com:mat-khau-2:Super Admin
 SESSION_SECRET=chuoi-random-dai
 ORIGIN=https://api.roomio.example.com
 PUBLIC_APP_ORIGIN=https://roomio.example.com

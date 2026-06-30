@@ -15,6 +15,8 @@ type EnvSuperAdmin = {
 	name: string;
 };
 
+const ENV_SUPER_ADMIN_ID = 'env-super-admin';
+
 function getEnvSuperAdmins(): EnvSuperAdmin[] {
 	const accounts = process.env.SUPER_ADMIN_ACCOUNTS?.split(',')
 		.map((raw) => raw.trim())
@@ -28,7 +30,8 @@ function getEnvSuperAdmins(): EnvSuperAdmin[] {
 			throw new Error(`SUPER_ADMIN_ACCOUNTS item #${index + 1} phải có dạng email:password[:name]`);
 		}
 		return {
-			id: `env-super-admin:${email.toLowerCase()}`,
+			// Nhiều thông tin đăng nhập, nhưng tất cả cùng đại diện cho một Super Admin Roomio.
+			id: ENV_SUPER_ADMIN_ID,
 			email: email.toLowerCase(),
 			password,
 			name: name || 'Super Admin'

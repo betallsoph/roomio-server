@@ -8,6 +8,15 @@ import { rateLimit } from '$lib/server/rate-limit';
 // Các API không cần đăng nhập
 const PUBLIC_API = ['/api/auth', '/api/payment-webhook', '/api/payos-webhook'];
 
+function isEnvSuperAdminSession(session: NonNullable<ReturnType<typeof readSession>>) {
+	return (
+		session.role === 'SUPER_ADMIN' &&
+		(session.userId === 'env-super-admin' ||
+			session.userId.startsWith('env-super-admin:') ||
+			session.userId === 'hardcoded-super-admin')
+	);
+}
+
 // Nhân viên (STAFF) chỉ được dùng đúng các API phục vụ "vận hành cơ bản" — mặc định chặn, chỉ mở những path/method dưới đây
 const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
 	{ prefix: '/api/requests', methods: ['GET', 'PUT'] }, // xem & cập nhật sự cố được giao
@@ -59,8 +68,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 			return json({ error: 'Chưa đăng nhập' }, { status: 401 });
 		}
 
-		// Hardcoded Super Admin bypasses DB check
-		if (session.userId !== 'hardcoded-super-admin') {
+		// Super Admin nằm trong env, không có bản ghi User trong DB. Hỗ trợ cả ID phiên cũ để
+		// những phiên được tạo trước lần chuyển đổi này không bị đăng xuất giữa chừng.
+		if (!isEnvSuperAdminSession(session)) {
 			// Phiên có thể thu hồi: xác thực lại danh tính với DB mỗi request, để việc khóa tài khoản
 			// (isActive=false) hoặc đổi quyền có hiệu lực NGAY thay vì chờ cookie hết hạn (tối đa 7 ngày).
 			const account = await db.query.users.findFirst({
