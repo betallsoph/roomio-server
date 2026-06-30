@@ -40,6 +40,8 @@ cp .env.example .env
 | `npm run db:migrate`      | Áp dụng migration thủ công khi cần            |
 | `npm run cleanup:uploads` | Xóa ảnh đối chiếu (đồng hồ, bill) quá 3 tháng |
 
+Lịch sử automation được tự dọn khi chạy tác vụ: log job giữ 90 ngày; thông báo đã gửi, thất bại hoặc đã bỏ qua giữ 180 ngày. Thông báo đang chờ gửi không bị xóa.
+
 ## Biến môi trường
 
 Xem `.env.example`. Bắt buộc cả local lẫn production: `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `SUPER_ADMIN_ACCOUNTS`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed. Có thể khai báo nhiều thông tin đăng nhập, phân cách bằng dấu phẩy; tất cả cùng đại diện cho một Super Admin và dùng chung quyền quản trị.

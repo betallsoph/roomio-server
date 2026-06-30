@@ -13,11 +13,42 @@ import {
 import { and, desc, eq, gte, inArray, isNotNull, lt, lte, ne, sql } from 'drizzle-orm';
 
 const today = () => new Date().toISOString().split('T')[0];
+const AUTOMATION_LOG_RETENTION_DAYS = 90;
+const NOTIFICATION_HISTORY_RETENTION_DAYS = 180;
+
+const retentionCutoff = (days: number) => {
+	const date = new Date();
+	date.setDate(date.getDate() - days);
+	return date;
+};
+
 const addDays = (days: number) => {
 	const d = new Date();
 	d.setDate(d.getDate() + days);
 	return d.toISOString().split('T')[0];
 };
+
+export async function cleanupAutomationHistory(landlordId: string) {
+	await Promise.all([
+		db
+			.delete(automationJobs)
+			.where(
+				and(
+					eq(automationJobs.landlordId, landlordId),
+					lt(automationJobs.createdAt, retentionCutoff(AUTOMATION_LOG_RETENTION_DAYS))
+				)
+			),
+		db
+			.delete(notificationQueue)
+			.where(
+				and(
+					eq(notificationQueue.landlordId, landlordId),
+					inArray(notificationQueue.status, ['sent', 'failed', 'dismissed']),
+					lt(notificationQueue.createdAt, retentionCutoff(NOTIFICATION_HISTORY_RETENTION_DAYS))
+				)
+			)
+	]);
+}
 
 function monthLabel(month: string) {
 	const [year, monthNumber] = month.split('-');

@@ -4,7 +4,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { automationJobs, notificationQueue } from '$lib/server/db/schema';
 import { requireLandlord } from '$lib/server/authz';
-import { runAutomationJob } from '$lib/server/automation';
+import { cleanupAutomationHistory, runAutomationJob } from '$lib/server/automation';
 import { and, desc, eq } from 'drizzle-orm';
 
 const ALLOWED_ACTIONS = [
@@ -59,6 +59,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			typeof body.month === 'string' ? body.month : new Date().toISOString().slice(0, 7);
 		const actions =
 			action === 'run_all' ? ALLOWED_ACTIONS.filter((item) => item !== 'run_all') : [action];
+
+		await cleanupAutomationHistory(landlordId);
+
 		const jobs = [];
 		for (const type of actions) {
 			jobs.push(await runAutomationJob(landlordId, type, { month }));
