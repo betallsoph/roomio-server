@@ -32,7 +32,7 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - Không còn khái niệm Premium hay Enterprise.
 - Các loại hình chung cư, phòng trọ, CHDV và KTX/Sleepbox cùng kích hoạt bảng giá chuẩn một lần.
 - Loại hình `COLIVING` kích hoạt bảng giá co-living.
-- Khi tạo tài khoản lần đầu, Super Admin nhập số phòng đã thương lượng theo nhóm, xem gói được gợi ý rồi cấp gói và hạn mức ban đầu.
+- Khi tạo tài khoản lần đầu, Super Admin nhập số phòng đã thương lượng theo nhóm, tự chọn gói rồi cấp gói và hạn mức ban đầu.
 - Với danh mục kết hợp chuẩn + co-living, hệ thống tính cả hai phương án rồi tự lấy giá thấp hơn:
   - `Gộp`: gom toàn bộ phòng, dùng bảng chuẩn nếu có ít nhất một phòng chuẩn.
   - `Tách`: tính riêng số phòng chuẩn và số phòng co-living theo từng bảng rồi cộng lại.
