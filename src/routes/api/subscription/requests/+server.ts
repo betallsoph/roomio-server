@@ -94,26 +94,49 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		});
 		if (!landlord) return json({ error: 'Không tìm thấy tài khoản chủ trọ' }, { status: 404 });
 		const currentRentalTypes = new Set(landlord.enabledRentalTypes.split(',').filter(Boolean));
-		const requestedRentalTypes = Array.isArray(body.addRentalTypes)
-			? [
-					...new Set(
-						body.addRentalTypes
-							.map((type: unknown) => String(type).trim().toUpperCase())
-							.filter(
-								(type: string) => RENTAL_TYPES.includes(type) && !currentRentalTypes.has(type)
-							)
-					)
-				]
+		const roomAdditions: Record<string, number> = {};
+		if (
+			body.roomAdditions &&
+			typeof body.roomAdditions === 'object' &&
+			!Array.isArray(body.roomAdditions)
+		) {
+			for (const [rawType, rawCount] of Object.entries(body.roomAdditions)) {
+				const type = rawType.trim().toUpperCase();
+				const count = Math.floor(Number(rawCount));
+				if (RENTAL_TYPES.includes(type) && Number.isFinite(count) && count > 0) {
+					roomAdditions[type] = count;
+				}
+			}
+		}
+		const legacyRequestedTypes = Array.isArray(body.addRentalTypes)
+			? body.addRentalTypes.map((type: unknown) => String(type).trim().toUpperCase())
 			: [];
+		const requestedRentalTypes = [
+			...new Set([...Object.keys(roomAdditions), ...legacyRequestedTypes])
+		].filter((type) => RENTAL_TYPES.includes(type) && !currentRentalTypes.has(type));
 		const actualCounts = await roomCounts(landlordId);
+		const baseStandardRoomCount =
+			landlord.subscribedStandardRoomLimit ?? actualCounts.standardRoomCount;
+		const baseColivingRoomCount =
+			landlord.subscribedColivingRoomLimit ?? actualCounts.colivingRoomCount;
 		const requestedCount = (value: unknown, actual: number) => {
 			const count = Number(value);
 			return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : actual;
 		};
-		const counts = {
-			standardRoomCount: requestedCount(body.standardRoomCount, actualCounts.standardRoomCount),
-			colivingRoomCount: requestedCount(body.colivingRoomCount, actualCounts.colivingRoomCount)
-		};
+		const hasRoomAdditions = Object.keys(roomAdditions).length > 0;
+		const counts = hasRoomAdditions
+			? {
+					standardRoomCount:
+						baseStandardRoomCount +
+						Object.entries(roomAdditions)
+							.filter(([type]) => type !== 'COLIVING')
+							.reduce((sum, [, count]) => sum + count, 0),
+					colivingRoomCount: baseColivingRoomCount + (roomAdditions.COLIVING ?? 0)
+				}
+			: {
+					standardRoomCount: requestedCount(body.standardRoomCount, baseStandardRoomCount),
+					colivingRoomCount: requestedCount(body.colivingRoomCount, baseColivingRoomCount)
+				};
 		if (
 			counts.standardRoomCount < actualCounts.standardRoomCount ||
 			counts.colivingRoomCount < actualCounts.colivingRoomCount
@@ -170,6 +193,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					currentPeriod: landlord.subscriptionPeriod,
 					requestedRentalTypes:
 						requestedRentalTypes.length > 0 ? requestedRentalTypes.join(',') : null,
+					requestedRoomAdditions: hasRoomAdditions ? JSON.stringify(roomAdditions) : null,
 					standardRoomCount: counts.standardRoomCount,
 					colivingRoomCount: counts.colivingRoomCount,
 					quotedMonthlyPrice: quote.monthlyPrice,

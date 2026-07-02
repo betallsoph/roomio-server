@@ -357,6 +357,7 @@ export const subscriptionChangeRequests = pgTable('SubscriptionChangeRequest', {
 	currentTier: text('currentTier').notNull(),
 	currentPeriod: text('currentPeriod').notNull(),
 	requestedRentalTypes: text('requestedRentalTypes'), // comma list các loại hình muốn bật thêm
+	requestedRoomAdditions: text('requestedRoomAdditions'), // JSON map loại hình -> số phòng muốn thêm
 	standardRoomCount: integer('standardRoomCount').notNull(),
 	colivingRoomCount: integer('colivingRoomCount').notNull(),
 	quotedMonthlyPrice: doublePrecision('quotedMonthlyPrice'),

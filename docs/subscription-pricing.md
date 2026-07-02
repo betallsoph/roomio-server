@@ -32,7 +32,7 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - Không còn khái niệm Premium hay Enterprise.
 - Các loại hình chung cư, phòng trọ, CHDV và KTX/Sleepbox cùng kích hoạt bảng giá chuẩn một lần.
 - Loại hình `COLIVING` kích hoạt bảng giá co-living.
-- Giá yêu cầu dựa trên cơ cấu số phòng dự kiến do chủ trọ khai báo trước khi tạo phòng.
+- Khi tạo tài khoản lần đầu, Super Admin nhập số phòng đã thương lượng theo nhóm, xem gói được gợi ý rồi cấp gói và hạn mức ban đầu.
 - Với danh mục kết hợp chuẩn + co-living, hệ thống tính cả hai phương án rồi tự lấy giá thấp hơn:
   - `Gộp`: gom toàn bộ phòng, dùng bảng chuẩn nếu có ít nhất một phòng chuẩn.
   - `Tách`: tính riêng số phòng chuẩn và số phòng co-living theo từng bảng rồi cộng lại.
@@ -53,6 +53,7 @@ Code nguồn của bảng giá nằm tại `src/lib/server/subscription-pricing.
 - Chủ trọ có thể hủy yêu cầu đang chờ bằng `PUT` với action `cancel`.
 - Super Admin duyệt hoặc từ chối bằng `PUT` với action `approve` hoặc `reject`.
 - Khi duyệt, hệ thống mới cập nhật gói và ngày hết hạn, đồng thời nối các loại hình được yêu cầu vào danh sách đang quản lý. Yêu cầu chỉ thêm loại hình không làm gia hạn lại gói hiện tại.
-- Chủ trọ khai báo số phòng chuẩn và co-living dự kiến; hệ thống tự chọn gói khớp với tổng số phòng và tính giá trước khi phòng được tạo.
+- Khi mở rộng, chủ trọ chọn từng loại hình và nhập **số phòng muốn thêm**. Hệ thống cộng phần này vào hạn mức đã duyệt, tự chọn gói mới và tính giá trước khi phòng được tạo.
+- Chi tiết phần mở rộng theo từng loại hình được lưu trong `requestedRoomAdditions`; hai trường số phòng trên yêu cầu lưu hạn mức đích của nhóm chuẩn và co-living.
 - Việc chỉ bật thêm loại hình với hạn mức bằng 0 không tự cộng phí, nhưng chủ trọ vẫn chưa thể tạo phòng thuộc nhóm đó.
 - Nếu số phòng thực tế vượt mức đã khai báo trong lúc yêu cầu đang chờ, yêu cầu cũ không được duyệt và chủ trọ phải gửi lại để tính giá mới.

@@ -17,6 +17,7 @@ import {
 	SUBSCRIPTION_PERIODS,
 	SUBSCRIPTION_TIERS,
 	subscriptionExpiryDate,
+	subscriptionTierLimits,
 	type SubscriptionPeriod,
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
@@ -40,6 +41,13 @@ function normalizeRentalTypes(value: unknown): string {
 		);
 	const unique = [...new Set(normalized)];
 	return unique.length > 0 ? unique.join(',') : 'APARTMENT';
+}
+
+function normalizeRoomLimit(value: unknown): number | undefined {
+	if (value === undefined || value === null || value === '') return undefined;
+	const count = Number(value);
+	if (!Number.isFinite(count) || count < 0) throw new ValidationError('Số phòng không hợp lệ');
+	return Math.floor(count);
 }
 
 function normalizeSubscriptionTier(value: unknown): SubscriptionTier {
@@ -150,6 +158,8 @@ export const GET: RequestHandler = async () => {
 					subscriptionType,
 					subscriptionPeriod,
 					subValidUntil: landlord.subValidUntil,
+					subscribedStandardRoomLimit: landlord.subscribedStandardRoomLimit,
+					subscribedColivingRoomLimit: landlord.subscribedColivingRoomLimit,
 					companyName: landlord.companyName,
 					enabledRentalTypes: landlord.enabledRentalTypes,
 					user: landlord.user,
@@ -221,6 +231,23 @@ export const POST: RequestHandler = async ({ request }) => {
 		const subValidUntil =
 			subscriptionType === 'FREE' ? null : subscriptionExpiryDate(subscriptionPeriod);
 		const enabledRentalTypes = normalizeRentalTypes(body.enabledRentalTypes);
+		const standardRoomLimit = normalizeRoomLimit(body.standardRoomLimit);
+		const colivingRoomLimit = normalizeRoomLimit(body.colivingRoomLimit);
+		const initialRoomLimit = (standardRoomLimit ?? 0) + (colivingRoomLimit ?? 0);
+		const initialTierLimits = subscriptionTierLimits(subscriptionType);
+		if (initialTierLimits.maxRooms !== null && initialRoomLimit > initialTierLimits.maxRooms) {
+			return json(
+				{ error: `Gói ban đầu chỉ cho phép tối đa ${initialTierLimits.maxRooms} phòng` },
+				{ status: 400 }
+			);
+		}
+		const enabledTypeSet = new Set(enabledRentalTypes.split(',').filter(Boolean));
+		if ((colivingRoomLimit ?? 0) > 0 && !enabledTypeSet.has('COLIVING')) {
+			return json({ error: 'Cần bật loại hình Co-living' }, { status: 400 });
+		}
+		if ((standardRoomLimit ?? 0) > 0 && ![...enabledTypeSet].some((type) => type !== 'COLIVING')) {
+			return json({ error: 'Cần bật một loại hình phòng tiêu chuẩn' }, { status: 400 });
+		}
 
 		if (password.length < 6) {
 			return json({ error: 'Mật khẩu phải dài ít nhất 6 ký tự' }, { status: 400 });
@@ -258,6 +285,8 @@ export const POST: RequestHandler = async ({ request }) => {
 						subscriptionType,
 						subscriptionPeriod,
 						subValidUntil,
+						subscribedStandardRoomLimit: standardRoomLimit,
+						subscribedColivingRoomLimit: colivingRoomLimit,
 						enabledRentalTypes,
 						bankName: 'Vietcombank',
 						bankCode: 'VCB',
@@ -308,7 +337,9 @@ export const PUT: RequestHandler = async ({ request }) => {
 			subscriptionType,
 			subscriptionPeriod,
 			isActive,
-			enabledRentalTypes
+			enabledRentalTypes,
+			standardRoomLimit,
+			colivingRoomLimit
 		} = body;
 
 		if (!landlordId && !userId) {
@@ -321,6 +352,8 @@ export const PUT: RequestHandler = async ({ request }) => {
 
 			if (landlordId) {
 				const updateData: Record<string, unknown> = {};
+				const normalizedStandardLimit = normalizeRoomLimit(standardRoomLimit);
+				const normalizedColivingLimit = normalizeRoomLimit(colivingRoomLimit);
 				if (subscriptionType !== undefined || subscriptionPeriod !== undefined) {
 					const tier = requiredEnum(subscriptionType ?? 'FREE', 'gói dịch vụ', SUBSCRIPTION_TIERS);
 					const period = requiredEnum(
@@ -331,6 +364,19 @@ export const PUT: RequestHandler = async ({ request }) => {
 					updateData.subscriptionType = tier;
 					updateData.subscriptionPeriod = period;
 					updateData.subValidUntil = tier === 'FREE' ? null : subscriptionExpiryDate(period);
+					if (normalizedStandardLimit !== undefined || normalizedColivingLimit !== undefined) {
+						const totalLimit = (normalizedStandardLimit ?? 0) + (normalizedColivingLimit ?? 0);
+						const limits = subscriptionTierLimits(tier);
+						if (limits.maxRooms !== null && totalLimit > limits.maxRooms) {
+							throw new ValidationError(`Gói này chỉ cho phép tối đa ${limits.maxRooms} phòng`);
+						}
+					}
+				}
+				if (normalizedStandardLimit !== undefined) {
+					updateData.subscribedStandardRoomLimit = normalizedStandardLimit;
+				}
+				if (normalizedColivingLimit !== undefined) {
+					updateData.subscribedColivingRoomLimit = normalizedColivingLimit;
 				}
 				if (enabledRentalTypes !== undefined) {
 					updateData.enabledRentalTypes = normalizeRentalTypes(enabledRentalTypes);

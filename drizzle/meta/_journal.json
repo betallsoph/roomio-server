@@ -71,6 +71,13 @@
 			"when": 1782983217497,
 			"tag": "0009_yellow_ben_urich",
 			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1782983890951,
+			"tag": "0010_black_bloodstorm",
+			"breakpoints": true
 		}
 	]
 }
