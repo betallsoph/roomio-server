@@ -57,6 +57,13 @@
 			"when": 1782978411628,
 			"tag": "0007_hard_dragon_man",
 			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1782982524466,
+			"tag": "0008_skinny_hiroim",
+			"breakpoints": true
 		}
 	]
 }

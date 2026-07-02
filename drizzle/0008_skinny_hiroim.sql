@@ -1,0 +1,1 @@
+ALTER TABLE "SubscriptionChangeRequest" ADD COLUMN "requestedRentalTypes" text;

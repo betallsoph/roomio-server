@@ -17,7 +17,12 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 		if (!auth.ok) return auth.response;
 		const landlord = await db.query.landlordProfiles.findFirst({
 			where: eq(landlordProfiles.id, auth.value),
-			columns: { subscriptionType: true, subscriptionPeriod: true, subValidUntil: true }
+			columns: {
+				subscriptionType: true,
+				subscriptionPeriod: true,
+				subValidUntil: true,
+				enabledRentalTypes: true
+			}
 		});
 		if (!landlord) return json({ error: 'Không tìm thấy tài khoản chủ trọ' }, { status: 404 });
 
@@ -57,7 +62,8 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 			activeSubscription: {
 				tier: activeTier,
 				period: activePeriod,
-				validUntil: landlord.subValidUntil
+				validUntil: landlord.subValidUntil,
+				enabledRentalTypes: landlord.enabledRentalTypes.split(',').filter(Boolean)
 			}
 		});
 	} catch (error) {

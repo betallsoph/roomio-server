@@ -48,7 +48,9 @@ Code nguồn của bảng giá nằm tại `src/lib/server/subscription-pricing.
 ## Yêu cầu điều chỉnh gói
 
 - Chủ trọ xem báo giá tại tab `Cài đặt → Gói Roomio`.
-- `POST /api/subscription/requests` tạo một yêu cầu với gói và thời hạn mong muốn. Mỗi tài khoản chỉ có một yêu cầu `pending` tại một thời điểm.
+- `POST /api/subscription/requests` tạo một yêu cầu với gói, thời hạn và các loại hình muốn bật thêm. Mỗi tài khoản chỉ có một yêu cầu `pending` tại một thời điểm.
 - Chủ trọ có thể hủy yêu cầu đang chờ bằng `PUT` với action `cancel`.
 - Super Admin duyệt hoặc từ chối bằng `PUT` với action `approve` hoặc `reject`.
-- Khi duyệt, hệ thống mới cập nhật gói và ngày hết hạn. Nếu cơ cấu phòng thay đổi sau khi gửi yêu cầu, yêu cầu cũ không được duyệt và chủ trọ phải gửi lại để tính giá mới.
+- Khi duyệt, hệ thống mới cập nhật gói và ngày hết hạn, đồng thời nối các loại hình được yêu cầu vào danh sách đang quản lý. Yêu cầu chỉ thêm loại hình không làm gia hạn lại gói hiện tại.
+- Việc bật thêm loại hình không tự cộng phí; báo giá chỉ thay đổi khi chủ trọ tạo phòng thực tế thuộc loại hình đó.
+- Nếu cơ cấu phòng thay đổi sau khi gửi yêu cầu, yêu cầu cũ không được duyệt và chủ trọ phải gửi lại để tính giá mới.

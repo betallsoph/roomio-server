@@ -18,6 +18,8 @@ import {
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
 
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM', 'COLIVING'];
+
 async function roomCounts(landlordId: string) {
 	const rows = await db
 		.select({ rentalType: properties.rentalType, count: sql<number>`count(${rooms.id})` })
@@ -82,14 +84,27 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const landlord = await db.query.landlordProfiles.findFirst({
 			where: eq(landlordProfiles.id, landlordId),
-			columns: { subscriptionType: true, subscriptionPeriod: true }
+			columns: { subscriptionType: true, subscriptionPeriod: true, enabledRentalTypes: true }
 		});
 		if (!landlord) return json({ error: 'Không tìm thấy tài khoản chủ trọ' }, { status: 404 });
+		const currentRentalTypes = new Set(landlord.enabledRentalTypes.split(',').filter(Boolean));
+		const requestedRentalTypes = Array.isArray(body.addRentalTypes)
+			? [
+					...new Set(
+						body.addRentalTypes
+							.map((type: unknown) => String(type).trim().toUpperCase())
+							.filter(
+								(type: string) => RENTAL_TYPES.includes(type) && !currentRentalTypes.has(type)
+							)
+					)
+				]
+			: [];
 		if (
 			landlord.subscriptionType === body.requestedTier &&
-			landlord.subscriptionPeriod === body.requestedPeriod
+			landlord.subscriptionPeriod === body.requestedPeriod &&
+			requestedRentalTypes.length === 0
 		) {
-			return json({ error: 'Đây đang là gói hiện tại của bạn' }, { status: 400 });
+			return json({ error: 'Bạn chưa chọn thay đổi nào' }, { status: 400 });
 		}
 
 		const counts = await roomCounts(landlordId);
@@ -111,6 +126,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					requestedPeriod: body.requestedPeriod,
 					currentTier: landlord.subscriptionType,
 					currentPeriod: landlord.subscriptionPeriod,
+					requestedRentalTypes:
+						requestedRentalTypes.length > 0 ? requestedRentalTypes.join(',') : null,
 					standardRoomCount: counts.standardRoomCount,
 					colivingRoomCount: counts.colivingRoomCount,
 					quotedMonthlyPrice: quote.monthlyPrice,
@@ -171,17 +188,42 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				);
 			}
 		}
+		const profileForApproval =
+			body.action === 'approve'
+				? await db.query.landlordProfiles.findFirst({
+						where: eq(landlordProfiles.id, existing.landlordId),
+						columns: {
+							enabledRentalTypes: true,
+							subscriptionType: true,
+							subscriptionPeriod: true
+						}
+					})
+				: null;
 
 		const reviewed = await db.transaction(async (tx) => {
 			if (body.action === 'approve') {
 				const tier = existing.requestedTier as SubscriptionTier;
 				const period = existing.requestedPeriod as SubscriptionPeriod;
+				const enabledRentalTypes = new Set(
+					(profileForApproval?.enabledRentalTypes || 'APARTMENT').split(',').filter(Boolean)
+				);
+				for (const type of (existing.requestedRentalTypes || '').split(',').filter(Boolean)) {
+					enabledRentalTypes.add(type);
+				}
+				const subscriptionChanged =
+					profileForApproval?.subscriptionType !== tier ||
+					profileForApproval?.subscriptionPeriod !== period;
 				await tx
 					.update(landlordProfiles)
 					.set({
-						subscriptionType: tier,
-						subscriptionPeriod: period,
-						subValidUntil: tier === 'FREE' ? null : subscriptionExpiryDate(period)
+						enabledRentalTypes: [...enabledRentalTypes].join(','),
+						...(subscriptionChanged
+							? {
+									subscriptionType: tier,
+									subscriptionPeriod: period,
+									subValidUntil: tier === 'FREE' ? null : subscriptionExpiryDate(period)
+								}
+							: {})
 					})
 					.where(eq(landlordProfiles.id, existing.landlordId));
 			}
