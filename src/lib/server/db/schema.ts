@@ -24,10 +24,11 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 		.notNull()
 		.unique()
 		.references(() => users.id, { onDelete: 'cascade' }),
-	subscriptionType: text('subscriptionType').notNull().default('FREE'), // FREE, PREMIUM, ENTERPRISE
+	subscriptionType: text('subscriptionType').notNull().default('FREE'), // FREE | ROOMS_4_10 | ... | ROOMS_101_PLUS
+	subscriptionPeriod: text('subscriptionPeriod').notNull().default('MONTHLY'), // MONTHLY | YEARLY
 	subValidUntil: datetime('subValidUntil'),
 	companyName: text('companyName'),
-	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, SERVICED_APARTMENT, DORM
+	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, SERVICED_APARTMENT, DORM, COLIVING
 
 	// Thông tin ngân hàng nhận tiền chuyển khoản (Cấu hình riêng của mỗi chủ trọ)
 	bankName: text('bankName').notNull().default('Vietcombank'),
@@ -97,7 +98,7 @@ export const properties = pgTable('Property', {
 	name: text('name').notNull(),
 	shortName: text('shortName').notNull(),
 	address: text('address').notNull(),
-	rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL | SERVICED_APARTMENT | DORM
+	rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL | SERVICED_APARTMENT | DORM | COLIVING
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 

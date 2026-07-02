@@ -12,9 +12,16 @@ import {
 	requiredString,
 	ValidationError
 } from '$lib/server/validation';
+import {
+	calculateSubscriptionQuote,
+	SUBSCRIPTION_PERIODS,
+	SUBSCRIPTION_TIERS,
+	subscriptionExpiryDate,
+	type SubscriptionPeriod,
+	type SubscriptionTier
+} from '$lib/server/subscription-pricing';
 
-const SUBSCRIPTION_TYPES = ['FREE', 'PREMIUM', 'ENTERPRISE'] as const;
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM', 'COLIVING'] as const;
 
 const DEFAULT_SERVICES = [
 	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },
@@ -33,6 +40,18 @@ function normalizeRentalTypes(value: unknown): string {
 		);
 	const unique = [...new Set(normalized)];
 	return unique.length > 0 ? unique.join(',') : 'APARTMENT';
+}
+
+function normalizeSubscriptionTier(value: unknown): SubscriptionTier {
+	return SUBSCRIPTION_TIERS.includes(value as SubscriptionTier)
+		? (value as SubscriptionTier)
+		: 'FREE';
+}
+
+function normalizeSubscriptionPeriod(value: unknown): SubscriptionPeriod {
+	return SUBSCRIPTION_PERIODS.includes(value as SubscriptionPeriod)
+		? (value as SubscriptionPeriod)
+		: 'MONTHLY';
 }
 
 export const GET: RequestHandler = async () => {
@@ -92,6 +111,14 @@ export const GET: RequestHandler = async () => {
 		const result = landlords
 			.map((landlord) => {
 				const allRooms = landlord.properties.flatMap((property) => property.rooms);
+				const subscriptionType = normalizeSubscriptionTier(landlord.subscriptionType);
+				const subscriptionPeriod = normalizeSubscriptionPeriod(landlord.subscriptionPeriod);
+				const subscriptionQuote = calculateSubscriptionQuote({
+					tier: subscriptionType,
+					period: subscriptionPeriod,
+					rentalTypes: landlord.enabledRentalTypes.split(','),
+					roomCount: allRooms.length
+				});
 				const allInvoices = allRooms.flatMap((room) => room.invoices);
 				const unpaidInvoices = allInvoices.filter((invoice) => invoice.status !== 'paid');
 				const paymentTransactions = landlord.paymentTransactions;
@@ -111,7 +138,8 @@ export const GET: RequestHandler = async () => {
 				return {
 					id: landlord.id,
 					userId: landlord.userId,
-					subscriptionType: landlord.subscriptionType,
+					subscriptionType,
+					subscriptionPeriod,
 					subValidUntil: landlord.subValidUntil,
 					companyName: landlord.companyName,
 					enabledRentalTypes: landlord.enabledRentalTypes,
@@ -122,6 +150,7 @@ export const GET: RequestHandler = async () => {
 						rentalType: property.rentalType,
 						_count: { rooms: property.rooms.length }
 					})),
+					subscriptionQuote,
 					metrics: {
 						totalProperties: landlord.properties.length,
 						totalRooms: allRooms.length,
@@ -172,20 +201,18 @@ export const POST: RequestHandler = async ({ request }) => {
 		const subscriptionType =
 			body.subscriptionType === undefined || body.subscriptionType === ''
 				? 'FREE'
-				: requiredEnum(body.subscriptionType, 'gói dịch vụ', SUBSCRIPTION_TYPES);
+				: requiredEnum(body.subscriptionType, 'gói dịch vụ', SUBSCRIPTION_TIERS);
+		const subscriptionPeriod =
+			body.subscriptionPeriod === undefined || body.subscriptionPeriod === ''
+				? 'MONTHLY'
+				: requiredEnum(body.subscriptionPeriod, 'thời hạn gói', SUBSCRIPTION_PERIODS);
 		const subValidUntil =
-			typeof body.subValidUntil === 'string' && body.subValidUntil
-				? new Date(body.subValidUntil)
-				: null;
+			subscriptionType === 'FREE' ? null : subscriptionExpiryDate(subscriptionPeriod);
 		const enabledRentalTypes = normalizeRentalTypes(body.enabledRentalTypes);
 
 		if (password.length < 6) {
 			return json({ error: 'Mật khẩu phải dài ít nhất 6 ký tự' }, { status: 400 });
 		}
-		if (subValidUntil && Number.isNaN(subValidUntil.getTime())) {
-			return json({ error: 'Hạn gói dịch vụ không hợp lệ' }, { status: 400 });
-		}
-
 		const existingUser = await db.query.users.findFirst({
 			where: or(eq(users.email, email), eq(users.phone, phone)),
 			columns: { id: true }
@@ -217,6 +244,7 @@ export const POST: RequestHandler = async ({ request }) => {
 						userId: user.id,
 						companyName,
 						subscriptionType,
+						subscriptionPeriod,
 						subValidUntil,
 						enabledRentalTypes,
 						bankName: 'Vietcombank',
@@ -244,6 +272,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				phone: user.phone,
 				companyName: landlord.companyName,
 				subscriptionType: landlord.subscriptionType,
+				subscriptionPeriod: landlord.subscriptionPeriod,
 				subValidUntil: landlord.subValidUntil,
 				enabledRentalTypes: landlord.enabledRentalTypes
 			};
@@ -261,8 +290,14 @@ export const POST: RequestHandler = async ({ request }) => {
 export const PUT: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		const { landlordId, userId, subscriptionType, isActive, subValidUntil, enabledRentalTypes } =
-			body;
+		const {
+			landlordId,
+			userId,
+			subscriptionType,
+			subscriptionPeriod,
+			isActive,
+			enabledRentalTypes
+		} = body;
 
 		if (!landlordId && !userId) {
 			return json({ error: 'Missing landlord ID or user ID' }, { status: 400 });
@@ -274,9 +309,16 @@ export const PUT: RequestHandler = async ({ request }) => {
 
 			if (landlordId) {
 				const updateData: Record<string, unknown> = {};
-				if (subscriptionType !== undefined) updateData.subscriptionType = subscriptionType;
-				if (subValidUntil !== undefined) {
-					updateData.subValidUntil = subValidUntil ? new Date(subValidUntil) : null;
+				if (subscriptionType !== undefined || subscriptionPeriod !== undefined) {
+					const tier = requiredEnum(subscriptionType ?? 'FREE', 'gói dịch vụ', SUBSCRIPTION_TIERS);
+					const period = requiredEnum(
+						subscriptionPeriod ?? 'MONTHLY',
+						'thời hạn gói',
+						SUBSCRIPTION_PERIODS
+					);
+					updateData.subscriptionType = tier;
+					updateData.subscriptionPeriod = period;
+					updateData.subValidUntil = tier === 'FREE' ? null : subscriptionExpiryDate(period);
 				}
 				if (enabledRentalTypes !== undefined) {
 					updateData.enabledRentalTypes = normalizeRentalTypes(enabledRentalTypes);
@@ -304,6 +346,9 @@ export const PUT: RequestHandler = async ({ request }) => {
 
 		return json(updated);
 	} catch (error) {
+		if (error instanceof ValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
