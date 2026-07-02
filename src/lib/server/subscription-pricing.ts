@@ -19,6 +19,10 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
 ];
 export const SUBSCRIPTION_PERIODS: SubscriptionPeriod[] = ['MONTHLY', 'YEARLY'];
 
+export function pricingGroupForRentalType(rentalType: string | null | undefined): PricingGroup {
+	return rentalType === 'APARTMENT' || rentalType === 'COLIVING' ? 'COLIVING' : 'STANDARD';
+}
+
 const TIER_LIMITS: Record<SubscriptionTier, { minRooms: number; maxRooms: number | null }> = {
 	FREE: { minRooms: 0, maxRooms: 3 },
 	ROOMS_4_10: { minRooms: 4, maxRooms: 10 },

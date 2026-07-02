@@ -21,6 +21,7 @@ import {
 import { normalizeRoomTextKey } from '$lib/server/room-code';
 import {
 	SUBSCRIPTION_TIERS,
+	pricingGroupForRentalType,
 	subscriptionTierLimits,
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
@@ -263,22 +264,22 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				.where(eq(properties.landlordId, auth.value))
 				.groupBy(properties.rentalType);
 			const standardCount = roomCounts
-				.filter((row) => row.rentalType !== 'COLIVING')
+				.filter((row) => pricingGroupForRentalType(row.rentalType) === 'STANDARD')
 				.reduce((sum, row) => sum + Number(row.count), 0);
 			const colivingCount = roomCounts
-				.filter((row) => row.rentalType === 'COLIVING')
+				.filter((row) => pricingGroupForRentalType(row.rentalType) === 'COLIVING')
 				.reduce((sum, row) => sum + Number(row.count), 0);
 			const totalCount = standardCount + colivingCount;
 			const limits = subscriptionTierLimits(tier);
 			if (limits.maxRooms !== null && totalCount >= limits.maxRooms) {
 				return { error: `Gói hiện tại chỉ cho phép tối đa ${limits.maxRooms} phòng` };
 			}
-			const groupCount = property.rentalType === 'COLIVING' ? colivingCount : standardCount;
-			const groupLimit =
-				property.rentalType === 'COLIVING' ? profile?.colivingLimit : profile?.standardLimit;
+			const isColivingGroup = pricingGroupForRentalType(property.rentalType) === 'COLIVING';
+			const groupCount = isColivingGroup ? colivingCount : standardCount;
+			const groupLimit = isColivingGroup ? profile?.colivingLimit : profile?.standardLimit;
 			if (groupLimit !== null && groupLimit !== undefined && groupCount >= groupLimit) {
 				return {
-					error: `Đã đạt hạn mức ${groupLimit} phòng ${property.rentalType === 'COLIVING' ? 'co-living' : 'trọ / CHDV / Sleepbox'} đã đăng ký`
+					error: `Đã đạt hạn mức ${groupLimit} phòng ${isColivingGroup ? 'chung cư / co-living' : 'trọ / CHDV / Sleepbox'} đã đăng ký`
 				};
 			}
 

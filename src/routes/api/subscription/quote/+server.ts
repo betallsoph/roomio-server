@@ -5,6 +5,7 @@ import { landlordProfiles, properties, rooms } from '$lib/server/db/schema';
 import { requireLandlord } from '$lib/server/authz';
 import {
 	calculateSubscriptionQuote,
+	pricingGroupForRentalType,
 	SUBSCRIPTION_TIERS,
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
@@ -36,10 +37,10 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 			.groupBy(properties.rentalType);
 
 		const actualStandardRoomCount = roomCounts
-			.filter((row) => row.rentalType !== 'COLIVING')
+			.filter((row) => pricingGroupForRentalType(row.rentalType) === 'STANDARD')
 			.reduce((sum, row) => sum + Number(row.count), 0);
 		const actualColivingRoomCount = roomCounts
-			.filter((row) => row.rentalType === 'COLIVING')
+			.filter((row) => pricingGroupForRentalType(row.rentalType) === 'COLIVING')
 			.reduce((sum, row) => sum + Number(row.count), 0);
 		const requestedCount = (name: string, actual: number) => {
 			const raw = url.searchParams.get(name);

@@ -14,6 +14,7 @@ import {
 } from '$lib/server/validation';
 import {
 	calculateSubscriptionQuote,
+	pricingGroupForRentalType,
 	SUBSCRIPTION_PERIODS,
 	SUBSCRIPTION_TIERS,
 	subscriptionExpiryDate,
@@ -33,6 +34,7 @@ const DEFAULT_SERVICES = [
 ];
 
 function normalizeRentalTypes(value: unknown): string {
+	if (value === undefined || value === null) return 'APARTMENT';
 	const rawTypes = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
 	const normalized = rawTypes
 		.map((type) => String(type).trim().toUpperCase())
@@ -40,7 +42,8 @@ function normalizeRentalTypes(value: unknown): string {
 			RENTAL_TYPES.includes(type as (typeof RENTAL_TYPES)[number])
 		);
 	const unique = [...new Set(normalized)];
-	return unique.length > 0 ? unique.join(',') : 'APARTMENT';
+	if (unique.length === 0) throw new ValidationError('Phải chọn ít nhất một loại hình');
+	return unique.join(',');
 }
 
 function normalizeRoomLimit(value: unknown): number | undefined {
@@ -123,10 +126,10 @@ export const GET: RequestHandler = async () => {
 			.map((landlord) => {
 				const allRooms = landlord.properties.flatMap((property) => property.rooms);
 				const standardRoomCount = landlord.properties
-					.filter((property) => property.rentalType !== 'COLIVING')
+					.filter((property) => pricingGroupForRentalType(property.rentalType) === 'STANDARD')
 					.reduce((sum, property) => sum + property.rooms.length, 0);
 				const colivingRoomCount = landlord.properties
-					.filter((property) => property.rentalType === 'COLIVING')
+					.filter((property) => pricingGroupForRentalType(property.rentalType) === 'COLIVING')
 					.reduce((sum, property) => sum + property.rooms.length, 0);
 				const subscriptionType = normalizeSubscriptionTier(landlord.subscriptionType);
 				const subscriptionPeriod = normalizeSubscriptionPeriod(landlord.subscriptionPeriod);
@@ -242,10 +245,16 @@ export const POST: RequestHandler = async ({ request }) => {
 			);
 		}
 		const enabledTypeSet = new Set(enabledRentalTypes.split(',').filter(Boolean));
-		if ((colivingRoomLimit ?? 0) > 0 && !enabledTypeSet.has('COLIVING')) {
-			return json({ error: 'Cần bật loại hình Co-living' }, { status: 400 });
+		if (
+			(colivingRoomLimit ?? 0) > 0 &&
+			![...enabledTypeSet].some((type) => pricingGroupForRentalType(type) === 'COLIVING')
+		) {
+			return json({ error: 'Cần bật loại hình Chung cư hoặc Co-living' }, { status: 400 });
 		}
-		if ((standardRoomLimit ?? 0) > 0 && ![...enabledTypeSet].some((type) => type !== 'COLIVING')) {
+		if (
+			(standardRoomLimit ?? 0) > 0 &&
+			![...enabledTypeSet].some((type) => pricingGroupForRentalType(type) === 'STANDARD')
+		) {
 			return json({ error: 'Cần bật một loại hình phòng tiêu chuẩn' }, { status: 400 });
 		}
 

@@ -11,6 +11,7 @@ import {
 import { errorMessage } from '$lib/server/api';
 import {
 	calculateSubscriptionQuote,
+	pricingGroupForRentalType,
 	SUBSCRIPTION_PERIODS,
 	SUBSCRIPTION_TIERS,
 	subscriptionExpiryDate,
@@ -29,10 +30,10 @@ async function roomCounts(landlordId: string) {
 		.groupBy(properties.rentalType);
 	return {
 		standardRoomCount: rows
-			.filter((row) => row.rentalType !== 'COLIVING')
+			.filter((row) => pricingGroupForRentalType(row.rentalType) === 'STANDARD')
 			.reduce((sum, row) => sum + Number(row.count), 0),
 		colivingRoomCount: rows
-			.filter((row) => row.rentalType === 'COLIVING')
+			.filter((row) => pricingGroupForRentalType(row.rentalType) === 'COLIVING')
 			.reduce((sum, row) => sum + Number(row.count), 0)
 	};
 }
@@ -129,9 +130,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					standardRoomCount:
 						baseStandardRoomCount +
 						Object.entries(roomAdditions)
-							.filter(([type]) => type !== 'COLIVING')
+							.filter(([type]) => pricingGroupForRentalType(type) === 'STANDARD')
 							.reduce((sum, [, count]) => sum + count, 0),
-					colivingRoomCount: baseColivingRoomCount + (roomAdditions.COLIVING ?? 0)
+					colivingRoomCount:
+						baseColivingRoomCount +
+						Object.entries(roomAdditions)
+							.filter(([type]) => pricingGroupForRentalType(type) === 'COLIVING')
+							.reduce((sum, [, count]) => sum + count, 0)
 				}
 			: {
 					standardRoomCount: requestedCount(body.standardRoomCount, baseStandardRoomCount),
@@ -147,15 +152,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			);
 		}
 		const futureRentalTypes = new Set([...currentRentalTypes, ...requestedRentalTypes]);
-		if (counts.colivingRoomCount > 0 && !futureRentalTypes.has('COLIVING')) {
+		if (
+			counts.colivingRoomCount > 0 &&
+			![...futureRentalTypes].some((type) => pricingGroupForRentalType(type) === 'COLIVING')
+		) {
 			return json(
-				{ error: 'Cần chọn thêm loại hình Co-living cho số phòng dự kiến' },
+				{ error: 'Cần chọn loại hình Chung cư hoặc Co-living cho số phòng dự kiến' },
 				{ status: 400 }
 			);
 		}
 		if (
 			counts.standardRoomCount > 0 &&
-			![...futureRentalTypes].some((type) => type !== 'COLIVING')
+			![...futureRentalTypes].some((type) => pricingGroupForRentalType(type) === 'STANDARD')
 		) {
 			return json({ error: 'Cần chọn một loại hình phòng tiêu chuẩn' }, { status: 400 });
 		}

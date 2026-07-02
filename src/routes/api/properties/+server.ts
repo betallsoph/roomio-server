@@ -5,6 +5,7 @@ import { db } from '$lib/server/db';
 import { properties, blocks, landlordProfiles, rooms } from '$lib/server/db/schema';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
+import { pricingGroupForRentalType } from '$lib/server/subscription-pricing';
 
 const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM', 'COLIVING'] as const;
 
@@ -143,7 +144,12 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 						.from(properties)
 						.where(eq(properties.id, id))
 				)[0];
-				if (currentProperty && currentProperty.rentalType !== requestedRentalType) {
+				if (
+					currentProperty &&
+					currentProperty.rentalType !== requestedRentalType &&
+					pricingGroupForRentalType(currentProperty.rentalType) !==
+						pricingGroupForRentalType(requestedRentalType)
+				) {
 					const profile = (
 						await tx
 							.select({
@@ -153,7 +159,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 							.from(landlordProfiles)
 							.where(eq(landlordProfiles.id, auth.value))
 					)[0];
-					const targetIsColiving = requestedRentalType === 'COLIVING';
+					const targetIsColiving = pricingGroupForRentalType(requestedRentalType) === 'COLIVING';
 					const targetLimit = targetIsColiving ? profile?.colivingLimit : profile?.standardLimit;
 					if (targetLimit !== null && targetLimit !== undefined) {
 						const propertyRoomCount = Number(
@@ -174,15 +180,15 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 										and(
 											eq(properties.landlordId, auth.value),
 											targetIsColiving
-												? eq(properties.rentalType, 'COLIVING')
-												: sql`${properties.rentalType} <> 'COLIVING'`
+												? sql`${properties.rentalType} in ('APARTMENT', 'COLIVING')`
+												: sql`${properties.rentalType} not in ('APARTMENT', 'COLIVING')`
 										)
 									)
 							)[0]?.count ?? 0
 						);
 						if (targetRoomCount + propertyRoomCount > targetLimit) {
 							return {
-								error: `Chuyển loại hình sẽ vượt hạn mức ${targetLimit} phòng ${targetIsColiving ? 'co-living' : 'tiêu chuẩn'}`
+								error: `Chuyển loại hình sẽ vượt hạn mức ${targetLimit} phòng ${targetIsColiving ? 'chung cư / co-living' : 'tiêu chuẩn'}`
 							};
 						}
 					}
