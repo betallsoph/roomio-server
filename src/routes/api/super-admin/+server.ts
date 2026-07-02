@@ -77,6 +77,9 @@ export const GET: RequestHandler = async () => {
 				notificationQueue: {
 					columns: { id: true, status: true }
 				},
+				subscriptionChangeRequests: {
+					columns: { id: true, status: true }
+				},
 				paymentTransactions: {
 					columns: { id: true, amount: true, status: true, receivedAt: true, provider: true }
 				},
@@ -111,13 +114,19 @@ export const GET: RequestHandler = async () => {
 		const result = landlords
 			.map((landlord) => {
 				const allRooms = landlord.properties.flatMap((property) => property.rooms);
+				const standardRoomCount = landlord.properties
+					.filter((property) => property.rentalType !== 'COLIVING')
+					.reduce((sum, property) => sum + property.rooms.length, 0);
+				const colivingRoomCount = landlord.properties
+					.filter((property) => property.rentalType === 'COLIVING')
+					.reduce((sum, property) => sum + property.rooms.length, 0);
 				const subscriptionType = normalizeSubscriptionTier(landlord.subscriptionType);
 				const subscriptionPeriod = normalizeSubscriptionPeriod(landlord.subscriptionPeriod);
 				const subscriptionQuote = calculateSubscriptionQuote({
 					tier: subscriptionType,
 					period: subscriptionPeriod,
-					rentalTypes: landlord.enabledRentalTypes.split(','),
-					roomCount: allRooms.length
+					standardRoomCount,
+					colivingRoomCount
 				});
 				const allInvoices = allRooms.flatMap((room) => room.invoices);
 				const unpaidInvoices = allInvoices.filter((invoice) => invoice.status !== 'paid');
@@ -174,6 +183,9 @@ export const GET: RequestHandler = async () => {
 						payosAppliedAmount: appliedPayments.reduce((sum, payment) => sum + payment.amount, 0),
 						queuedNotifications: landlord.notificationQueue.filter(
 							(notification) => notification.status === 'queued'
+						).length,
+						pendingSubscriptionRequests: landlord.subscriptionChangeRequests.filter(
+							(request) => request.status === 'pending'
 						).length,
 						lastPaymentAt
 					}

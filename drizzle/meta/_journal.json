@@ -50,6 +50,13 @@
 			"when": 1782975366785,
 			"tag": "0006_same_stature",
 			"breakpoints": true
+		},
+		{
+			"idx": 7,
+			"version": "7",
+			"when": 1782978411628,
+			"tag": "0007_hard_dragon_man",
+			"breakpoints": true
 		}
 	]
 }

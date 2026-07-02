@@ -1,0 +1,2094 @@
+{
+	"id": "e7cca569-4155-420e-a94a-0eecff96e801",
+	"prevId": "82405af8-7521-47ce-9cf9-c93ed8064619",
+	"version": "7",
+	"dialect": "postgresql",
+	"tables": {
+		"public.Announcement": {
+			"name": "Announcement",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"senderId": {
+					"name": "senderId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"title": {
+					"name": "title",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"content": {
+					"name": "content",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"isImportant": {
+					"name": "isImportant",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": false
+				},
+				"targetType": {
+					"name": "targetType",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"targetId": {
+					"name": "targetId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.AutomationJob": {
+			"name": "AutomationJob",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"type": {
+					"name": "type",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'queued'"
+				},
+				"scheduledFor": {
+					"name": "scheduledFor",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"startedAt": {
+					"name": "startedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"completedAt": {
+					"name": "completedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payload": {
+					"name": "payload",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"result": {
+					"name": "result",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"AutomationJob_landlordId_LandlordProfile_id_fk": {
+					"name": "AutomationJob_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "AutomationJob",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Block": {
+			"name": "Block",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"propertyId": {
+					"name": "propertyId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"Block_propertyId_Property_id_fk": {
+					"name": "Block_propertyId_Property_id_fk",
+					"tableFrom": "Block",
+					"tableTo": "Property",
+					"columnsFrom": ["propertyId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Contract": {
+			"name": "Contract",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"tenantId": {
+					"name": "tenantId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"roomId": {
+					"name": "roomId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"startDate": {
+					"name": "startDate",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"endDate": {
+					"name": "endDate",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"monthlyRent": {
+					"name": "monthlyRent",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"deposit": {
+					"name": "deposit",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true,
+					"default": 0
+				},
+				"fileUrl": {
+					"name": "fileUrl",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'active'"
+				},
+				"notes": {
+					"name": "notes",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"Contract_tenantId_TenantProfile_id_fk": {
+					"name": "Contract_tenantId_TenantProfile_id_fk",
+					"tableFrom": "Contract",
+					"tableTo": "TenantProfile",
+					"columnsFrom": ["tenantId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"Contract_roomId_Room_id_fk": {
+					"name": "Contract_roomId_Room_id_fk",
+					"tableFrom": "Contract",
+					"tableTo": "Room",
+					"columnsFrom": ["roomId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Expense": {
+			"name": "Expense",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"propertyId": {
+					"name": "propertyId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"category": {
+					"name": "category",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"description": {
+					"name": "description",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"amount": {
+					"name": "amount",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"date": {
+					"name": "date",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"notes": {
+					"name": "notes",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"Expense_landlordId_LandlordProfile_id_fk": {
+					"name": "Expense_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "Expense",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"Expense_propertyId_Property_id_fk": {
+					"name": "Expense_propertyId_Property_id_fk",
+					"tableFrom": "Expense",
+					"tableTo": "Property",
+					"columnsFrom": ["propertyId"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.InvoiceItem": {
+			"name": "InvoiceItem",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"invoiceId": {
+					"name": "invoiceId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"amount": {
+					"name": "amount",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"details": {
+					"name": "details",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"InvoiceItem_invoiceId_Invoice_id_fk": {
+					"name": "InvoiceItem_invoiceId_Invoice_id_fk",
+					"tableFrom": "InvoiceItem",
+					"tableTo": "Invoice",
+					"columnsFrom": ["invoiceId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Invoice": {
+			"name": "Invoice",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"roomId": {
+					"name": "roomId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"roomNumber": {
+					"name": "roomNumber",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"tenantName": {
+					"name": "tenantName",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"tenantPhone": {
+					"name": "tenantPhone",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"month": {
+					"name": "month",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"rentAmount": {
+					"name": "rentAmount",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"totalAmount": {
+					"name": "totalAmount",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"dueDate": {
+					"name": "dueDate",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"paidDate": {
+					"name": "paidDate",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"paidAmount": {
+					"name": "paidAmount",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true,
+					"default": 0
+				},
+				"paymentProofImage": {
+					"name": "paymentProofImage",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"paymentMethod": {
+					"name": "paymentMethod",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"paymentProvider": {
+					"name": "paymentProvider",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosOrderCode": {
+					"name": "payosOrderCode",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosPaymentLinkId": {
+					"name": "payosPaymentLinkId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosCheckoutUrl": {
+					"name": "payosCheckoutUrl",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosQrCode": {
+					"name": "payosQrCode",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosStatus": {
+					"name": "payosStatus",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"notes": {
+					"name": "notes",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"Invoice_roomId_Room_id_fk": {
+					"name": "Invoice_roomId_Room_id_fk",
+					"tableFrom": "Invoice",
+					"tableTo": "Room",
+					"columnsFrom": ["roomId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.LandlordProfile": {
+			"name": "LandlordProfile",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"userId": {
+					"name": "userId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"subscriptionType": {
+					"name": "subscriptionType",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'FREE'"
+				},
+				"subscriptionPeriod": {
+					"name": "subscriptionPeriod",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'MONTHLY'"
+				},
+				"subValidUntil": {
+					"name": "subValidUntil",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"companyName": {
+					"name": "companyName",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"enabledRentalTypes": {
+					"name": "enabledRentalTypes",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'APARTMENT'"
+				},
+				"bankName": {
+					"name": "bankName",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'Vietcombank'"
+				},
+				"bankCode": {
+					"name": "bankCode",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'VCB'"
+				},
+				"accountNumber": {
+					"name": "accountNumber",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'1234567890'"
+				},
+				"accountName": {
+					"name": "accountName",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'NGUYEN VAN HAU'"
+				},
+				"bankBranch": {
+					"name": "bankBranch",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'Chi nhánh TP.HCM'"
+				},
+				"momoNumber": {
+					"name": "momoNumber",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosClientId": {
+					"name": "payosClientId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosApiKeyEnc": {
+					"name": "payosApiKeyEnc",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosChecksumKeyEnc": {
+					"name": "payosChecksumKeyEnc",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"payosConnectedAt": {
+					"name": "payosConnectedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"LandlordProfile_userId_User_id_fk": {
+					"name": "LandlordProfile_userId_User_id_fk",
+					"tableFrom": "LandlordProfile",
+					"tableTo": "User",
+					"columnsFrom": ["userId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {
+				"LandlordProfile_userId_unique": {
+					"name": "LandlordProfile_userId_unique",
+					"nullsNotDistinct": false,
+					"columns": ["userId"]
+				}
+			},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.MaintenanceRequest": {
+			"name": "MaintenanceRequest",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"tenantId": {
+					"name": "tenantId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"roomNumber": {
+					"name": "roomNumber",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"buildingName": {
+					"name": "buildingName",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"category": {
+					"name": "category",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"title": {
+					"name": "title",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"description": {
+					"name": "description",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"imageUrl": {
+					"name": "imageUrl",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"priority": {
+					"name": "priority",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"updatedAt": {
+					"name": "updatedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"response": {
+					"name": "response",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"assignedToId": {
+					"name": "assignedToId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"MaintenanceRequest_tenantId_TenantProfile_id_fk": {
+					"name": "MaintenanceRequest_tenantId_TenantProfile_id_fk",
+					"tableFrom": "MaintenanceRequest",
+					"tableTo": "TenantProfile",
+					"columnsFrom": ["tenantId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"MaintenanceRequest_assignedToId_StaffProfile_id_fk": {
+					"name": "MaintenanceRequest_assignedToId_StaffProfile_id_fk",
+					"tableFrom": "MaintenanceRequest",
+					"tableTo": "StaffProfile",
+					"columnsFrom": ["assignedToId"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Message": {
+			"name": "Message",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"conversationId": {
+					"name": "conversationId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"senderId": {
+					"name": "senderId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"content": {
+					"name": "content",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.MeterReading": {
+			"name": "MeterReading",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"roomId": {
+					"name": "roomId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"serviceId": {
+					"name": "serviceId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"month": {
+					"name": "month",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"prevValue": {
+					"name": "prevValue",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"currValue": {
+					"name": "currValue",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"recordedAt": {
+					"name": "recordedAt",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"photoUrl": {
+					"name": "photoUrl",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'approved'"
+				},
+				"submittedBy": {
+					"name": "submittedBy",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'LANDLORD'"
+				},
+				"isAnomalous": {
+					"name": "isAnomalous",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"MeterReading_roomId_Room_id_fk": {
+					"name": "MeterReading_roomId_Room_id_fk",
+					"tableFrom": "MeterReading",
+					"tableTo": "Room",
+					"columnsFrom": ["roomId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.NotificationQueue": {
+			"name": "NotificationQueue",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"tenantId": {
+					"name": "tenantId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"recipientUserId": {
+					"name": "recipientUserId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"type": {
+					"name": "type",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"channel": {
+					"name": "channel",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'in_app'"
+				},
+				"title": {
+					"name": "title",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"content": {
+					"name": "content",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'queued'"
+				},
+				"relatedType": {
+					"name": "relatedType",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"relatedId": {
+					"name": "relatedId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"scheduledFor": {
+					"name": "scheduledFor",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"sentAt": {
+					"name": "sentAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"NotificationQueue_landlordId_LandlordProfile_id_fk": {
+					"name": "NotificationQueue_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "NotificationQueue",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"NotificationQueue_tenantId_TenantProfile_id_fk": {
+					"name": "NotificationQueue_tenantId_TenantProfile_id_fk",
+					"tableFrom": "NotificationQueue",
+					"tableTo": "TenantProfile",
+					"columnsFrom": ["tenantId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"NotificationQueue_recipientUserId_User_id_fk": {
+					"name": "NotificationQueue_recipientUserId_User_id_fk",
+					"tableFrom": "NotificationQueue",
+					"tableTo": "User",
+					"columnsFrom": ["recipientUserId"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.PaymentTransaction": {
+			"name": "PaymentTransaction",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"invoiceId": {
+					"name": "invoiceId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"provider": {
+					"name": "provider",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'payos'"
+				},
+				"providerTransactionId": {
+					"name": "providerTransactionId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"invoiceCode": {
+					"name": "invoiceCode",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"amount": {
+					"name": "amount",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"transferType": {
+					"name": "transferType",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"content": {
+					"name": "content",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"rawPayload": {
+					"name": "rawPayload",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"receivedAt": {
+					"name": "receivedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"PaymentTransaction_landlordId_LandlordProfile_id_fk": {
+					"name": "PaymentTransaction_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "PaymentTransaction",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"PaymentTransaction_invoiceId_Invoice_id_fk": {
+					"name": "PaymentTransaction_invoiceId_Invoice_id_fk",
+					"tableFrom": "PaymentTransaction",
+					"tableTo": "Invoice",
+					"columnsFrom": ["invoiceId"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Property": {
+			"name": "Property",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"shortName": {
+					"name": "shortName",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"address": {
+					"name": "address",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"rentalType": {
+					"name": "rentalType",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'APARTMENT'"
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"Property_landlordId_LandlordProfile_id_fk": {
+					"name": "Property_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "Property",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.RoomAsset": {
+			"name": "RoomAsset",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"roomId": {
+					"name": "roomId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"code": {
+					"name": "code",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"imageUrl": {
+					"name": "imageUrl",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"notes": {
+					"name": "notes",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"RoomAsset_roomId_Room_id_fk": {
+					"name": "RoomAsset_roomId_Room_id_fk",
+					"tableFrom": "RoomAsset",
+					"tableTo": "Room",
+					"columnsFrom": ["roomId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.RoomServiceConfig": {
+			"name": "RoomServiceConfig",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"roomId": {
+					"name": "roomId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"serviceId": {
+					"name": "serviceId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"customRate": {
+					"name": "customRate",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"quantity": {
+					"name": "quantity",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"default": 1
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"RoomServiceConfig_roomId_Room_id_fk": {
+					"name": "RoomServiceConfig_roomId_Room_id_fk",
+					"tableFrom": "RoomServiceConfig",
+					"tableTo": "Room",
+					"columnsFrom": ["roomId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"RoomServiceConfig_serviceId_Service_id_fk": {
+					"name": "RoomServiceConfig_serviceId_Service_id_fk",
+					"tableFrom": "RoomServiceConfig",
+					"tableTo": "Service",
+					"columnsFrom": ["serviceId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Room": {
+			"name": "Room",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"propertyId": {
+					"name": "propertyId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"blockId": {
+					"name": "blockId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"roomNumber": {
+					"name": "roomNumber",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"roomCode": {
+					"name": "roomCode",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"roomType": {
+					"name": "roomType",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"floor": {
+					"name": "floor",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"monthlyRent": {
+					"name": "monthlyRent",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"area": {
+					"name": "area",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"debtAmount": {
+					"name": "debtAmount",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": false,
+					"default": 0
+				},
+				"tenantId": {
+					"name": "tenantId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"Room_propertyId_Property_id_fk": {
+					"name": "Room_propertyId_Property_id_fk",
+					"tableFrom": "Room",
+					"tableTo": "Property",
+					"columnsFrom": ["propertyId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"Room_blockId_Block_id_fk": {
+					"name": "Room_blockId_Block_id_fk",
+					"tableFrom": "Room",
+					"tableTo": "Block",
+					"columnsFrom": ["blockId"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"Room_tenantId_TenantProfile_id_fk": {
+					"name": "Room_tenantId_TenantProfile_id_fk",
+					"tableFrom": "Room",
+					"tableTo": "TenantProfile",
+					"columnsFrom": ["tenantId"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.Service": {
+			"name": "Service",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"type": {
+					"name": "type",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"defaultRate": {
+					"name": "defaultRate",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"isActive": {
+					"name": "isActive",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"Service_landlordId_LandlordProfile_id_fk": {
+					"name": "Service_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "Service",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.SpecialNote": {
+			"name": "SpecialNote",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"tenantId": {
+					"name": "tenantId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"content": {
+					"name": "content",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"sender": {
+					"name": "sender",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'TENANT'"
+				},
+				"isRead": {
+					"name": "isRead",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"SpecialNote_tenantId_TenantProfile_id_fk": {
+					"name": "SpecialNote_tenantId_TenantProfile_id_fk",
+					"tableFrom": "SpecialNote",
+					"tableTo": "TenantProfile",
+					"columnsFrom": ["tenantId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.StaffProfile": {
+			"name": "StaffProfile",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"userId": {
+					"name": "userId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"StaffProfile_userId_User_id_fk": {
+					"name": "StaffProfile_userId_User_id_fk",
+					"tableFrom": "StaffProfile",
+					"tableTo": "User",
+					"columnsFrom": ["userId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"StaffProfile_landlordId_LandlordProfile_id_fk": {
+					"name": "StaffProfile_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "StaffProfile",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {
+				"StaffProfile_userId_unique": {
+					"name": "StaffProfile_userId_unique",
+					"nullsNotDistinct": false,
+					"columns": ["userId"]
+				}
+			},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.SubscriptionChangeRequest": {
+			"name": "SubscriptionChangeRequest",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"requestedTier": {
+					"name": "requestedTier",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"requestedPeriod": {
+					"name": "requestedPeriod",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"currentTier": {
+					"name": "currentTier",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"currentPeriod": {
+					"name": "currentPeriod",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"standardRoomCount": {
+					"name": "standardRoomCount",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"colivingRoomCount": {
+					"name": "colivingRoomCount",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"quotedMonthlyPrice": {
+					"name": "quotedMonthlyPrice",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"quotedPeriodPrice": {
+					"name": "quotedPeriodPrice",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"pricingStrategy": {
+					"name": "pricingStrategy",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'pending'"
+				},
+				"note": {
+					"name": "note",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"adminNote": {
+					"name": "adminNote",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"reviewedAt": {
+					"name": "reviewedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"SubscriptionChangeRequest_landlordId_LandlordProfile_id_fk": {
+					"name": "SubscriptionChangeRequest_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "SubscriptionChangeRequest",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.TenantInvite": {
+			"name": "TenantInvite",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"landlordId": {
+					"name": "landlordId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"tenantId": {
+					"name": "tenantId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"token": {
+					"name": "token",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"expiresAt": {
+					"name": "expiresAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"usedAt": {
+					"name": "usedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"TenantInvite_landlordId_LandlordProfile_id_fk": {
+					"name": "TenantInvite_landlordId_LandlordProfile_id_fk",
+					"tableFrom": "TenantInvite",
+					"tableTo": "LandlordProfile",
+					"columnsFrom": ["landlordId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"TenantInvite_tenantId_TenantProfile_id_fk": {
+					"name": "TenantInvite_tenantId_TenantProfile_id_fk",
+					"tableFrom": "TenantInvite",
+					"tableTo": "TenantProfile",
+					"columnsFrom": ["tenantId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {
+				"TenantInvite_token_unique": {
+					"name": "TenantInvite_token_unique",
+					"nullsNotDistinct": false,
+					"columns": ["token"]
+				}
+			},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.TenantProfile": {
+			"name": "TenantProfile",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"userId": {
+					"name": "userId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"telegramUserId": {
+					"name": "telegramUserId",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"idNumber": {
+					"name": "idNumber",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"idFrontImage": {
+					"name": "idFrontImage",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"idBackImage": {
+					"name": "idBackImage",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"vehicleImage": {
+					"name": "vehicleImage",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"checkInImage": {
+					"name": "checkInImage",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"moveInDate": {
+					"name": "moveInDate",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"deposit": {
+					"name": "deposit",
+					"type": "double precision",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"notes": {
+					"name": "notes",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"TenantProfile_userId_User_id_fk": {
+					"name": "TenantProfile_userId_User_id_fk",
+					"tableFrom": "TenantProfile",
+					"tableTo": "User",
+					"columnsFrom": ["userId"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {
+				"TenantProfile_userId_unique": {
+					"name": "TenantProfile_userId_unique",
+					"nullsNotDistinct": false,
+					"columns": ["userId"]
+				},
+				"TenantProfile_telegramUserId_unique": {
+					"name": "TenantProfile_telegramUserId_unique",
+					"nullsNotDistinct": false,
+					"columns": ["telegramUserId"]
+				}
+			},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.User": {
+			"name": "User",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true
+				},
+				"email": {
+					"name": "email",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"phone": {
+					"name": "phone",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"passwordHash": {
+					"name": "passwordHash",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"avatar": {
+					"name": "avatar",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"role": {
+					"name": "role",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'TENANT'"
+				},
+				"isActive": {
+					"name": "isActive",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": true
+				},
+				"createdAt": {
+					"name": "createdAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"updatedAt": {
+					"name": "updatedAt",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {
+				"User_email_unique": {
+					"name": "User_email_unique",
+					"nullsNotDistinct": false,
+					"columns": ["email"]
+				},
+				"User_phone_unique": {
+					"name": "User_phone_unique",
+					"nullsNotDistinct": false,
+					"columns": ["phone"]
+				}
+			},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		}
+	},
+	"enums": {},
+	"schemas": {},
+	"sequences": {},
+	"roles": {},
+	"policies": {},
+	"views": {},
+	"_meta": {
+		"columns": {},
+		"schemas": {},
+		"tables": {}
+	}
+}

@@ -345,6 +345,27 @@ export const paymentTransactions = pgTable('PaymentTransaction', {
 	receivedAt: datetime('receivedAt').notNull().$defaultFn(now)
 });
 
+export const subscriptionChangeRequests = pgTable('SubscriptionChangeRequest', {
+	id: text('id').primaryKey().$defaultFn(uuid),
+	landlordId: text('landlordId')
+		.notNull()
+		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+	requestedTier: text('requestedTier').notNull(),
+	requestedPeriod: text('requestedPeriod').notNull(),
+	currentTier: text('currentTier').notNull(),
+	currentPeriod: text('currentPeriod').notNull(),
+	standardRoomCount: integer('standardRoomCount').notNull(),
+	colivingRoomCount: integer('colivingRoomCount').notNull(),
+	quotedMonthlyPrice: doublePrecision('quotedMonthlyPrice'),
+	quotedPeriodPrice: doublePrecision('quotedPeriodPrice'),
+	pricingStrategy: text('pricingStrategy').notNull(),
+	status: text('status').notNull().default('pending'), // pending | approved | rejected | cancelled
+	note: text('note'),
+	adminNote: text('adminNote'),
+	createdAt: datetime('createdAt').notNull().$defaultFn(now),
+	reviewedAt: datetime('reviewedAt')
+});
+
 // Quan hệ giữa các bảng (dùng cho db.query relational API)
 
 export const usersRelations = relations(users, ({ one }) => ({
@@ -361,7 +382,8 @@ export const landlordProfilesRelations = relations(landlordProfiles, ({ one, man
 	expenses: many(expenses),
 	automationJobs: many(automationJobs),
 	notificationQueue: many(notificationQueue),
-	paymentTransactions: many(paymentTransactions)
+	paymentTransactions: many(paymentTransactions),
+	subscriptionChangeRequests: many(subscriptionChangeRequests)
 }));
 
 export const staffProfilesRelations = relations(staffProfiles, ({ one, many }) => ({
@@ -445,6 +467,16 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
 export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
 	invoice: one(invoices, { fields: [invoiceItems.invoiceId], references: [invoices.id] })
 }));
+
+export const subscriptionChangeRequestsRelations = relations(
+	subscriptionChangeRequests,
+	({ one }) => ({
+		landlord: one(landlordProfiles, {
+			fields: [subscriptionChangeRequests.landlordId],
+			references: [landlordProfiles.id]
+		})
+	})
+);
 
 export const maintenanceRequestsRelations = relations(maintenanceRequests, ({ one }) => ({
 	tenant: one(tenantProfiles, {

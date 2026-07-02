@@ -7,6 +7,7 @@ export type SubscriptionTier =
 	| 'ROOMS_101_PLUS';
 export type SubscriptionPeriod = 'MONTHLY' | 'YEARLY';
 export type PricingGroup = 'STANDARD' | 'COLIVING';
+export type PricingStrategy = 'POOLED' | 'SPLIT';
 
 export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
 	'FREE',
@@ -46,63 +47,131 @@ const MONTHLY_PRICES: Record<PricingGroup, Record<SubscriptionTier, number | nul
 	}
 };
 
-const STANDARD_RENTAL_TYPES = new Set(['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM']);
+export type PricingBreakdownItem = {
+	group: PricingGroup;
+	roomCount: number;
+	tier: SubscriptionTier;
+	monthlyPrice: number | null;
+};
 
 export type SubscriptionQuote = {
 	tier: SubscriptionTier;
+	recommendedTier: SubscriptionTier;
 	period: SubscriptionPeriod;
 	minRooms: number;
 	maxRooms: number | null;
-	pricingGroups: PricingGroup[];
+	strategy: PricingStrategy;
+	splitEligible: boolean;
 	monthlyPrice: number | null;
 	periodPrice: number | null;
+	pooledMonthlyPrice: number | null;
+	splitMonthlyPrice: number | null;
 	roomCount: number;
+	standardRoomCount: number;
+	colivingRoomCount: number;
 	overCapacity: boolean;
 	requiresContact: boolean;
-	breakdown: { group: PricingGroup; monthlyPrice: number | null }[];
+	breakdown: PricingBreakdownItem[];
 };
 
-export function pricingGroupsForRentalTypes(rentalTypes: string[]): PricingGroup[] {
-	const normalized = new Set(rentalTypes.map((type) => type.trim().toUpperCase()));
-	const groups: PricingGroup[] = [];
-	if ([...normalized].some((type) => STANDARD_RENTAL_TYPES.has(type))) groups.push('STANDARD');
-	if (normalized.has('COLIVING')) groups.push('COLIVING');
-	return groups.length > 0 ? groups : ['STANDARD'];
+export function subscriptionTierForRoomCount(roomCount: number): SubscriptionTier {
+	const normalized = normalizeRoomCount(roomCount);
+	return (
+		SUBSCRIPTION_TIERS.find((tier) => {
+			const limits = TIER_LIMITS[tier];
+			return (
+				normalized >= limits.minRooms && (limits.maxRooms === null || normalized <= limits.maxRooms)
+			);
+		}) ?? 'ROOMS_101_PLUS'
+	);
+}
+
+function normalizeRoomCount(value: number): number {
+	return Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+}
+
+function monthlyPrice(group: PricingGroup, tier: SubscriptionTier): number | null {
+	return MONTHLY_PRICES[group][tier];
+}
+
+function sumPrices(items: PricingBreakdownItem[]): number | null {
+	return items.some((item) => item.monthlyPrice === null)
+		? null
+		: items.reduce((sum, item) => sum + (item.monthlyPrice ?? 0), 0);
 }
 
 export function calculateSubscriptionQuote(input: {
 	tier: SubscriptionTier;
 	period: SubscriptionPeriod;
-	rentalTypes: string[];
-	roomCount?: number;
+	standardRoomCount: number;
+	colivingRoomCount: number;
 }): SubscriptionQuote {
 	const { tier, period } = input;
-	const roomCount = Math.max(
-		0,
-		Math.floor(Number.isFinite(input.roomCount) ? input.roomCount! : 0)
-	);
-	const pricingGroups = pricingGroupsForRentalTypes(input.rentalTypes);
-	const breakdown = pricingGroups.map((group) => ({
-		group,
-		monthlyPrice: MONTHLY_PRICES[group][tier]
-	}));
-	const requiresContact = breakdown.some((item) => item.monthlyPrice === null);
-	const monthlyPrice = requiresContact
-		? null
-		: breakdown.reduce((sum, item) => sum + (item.monthlyPrice ?? 0), 0);
+	const standardRoomCount = normalizeRoomCount(input.standardRoomCount);
+	const colivingRoomCount = normalizeRoomCount(input.colivingRoomCount);
+	const roomCount = standardRoomCount + colivingRoomCount;
+	const recommendedTier = subscriptionTierForRoomCount(roomCount);
+	const pooledGroup: PricingGroup =
+		standardRoomCount > 0 ? 'STANDARD' : colivingRoomCount > 0 ? 'COLIVING' : 'STANDARD';
+	const pooledBreakdown: PricingBreakdownItem[] = [
+		{
+			group: pooledGroup,
+			roomCount,
+			tier: recommendedTier,
+			monthlyPrice: monthlyPrice(pooledGroup, recommendedTier)
+		}
+	];
+	const splitBreakdown: PricingBreakdownItem[] = [];
+	if (standardRoomCount > 0) {
+		const standardTier = subscriptionTierForRoomCount(standardRoomCount);
+		splitBreakdown.push({
+			group: 'STANDARD',
+			roomCount: standardRoomCount,
+			tier: standardTier,
+			monthlyPrice: monthlyPrice('STANDARD', standardTier)
+		});
+	}
+	if (colivingRoomCount > 0) {
+		const colivingTier = subscriptionTierForRoomCount(colivingRoomCount);
+		splitBreakdown.push({
+			group: 'COLIVING',
+			roomCount: colivingRoomCount,
+			tier: colivingTier,
+			monthlyPrice: monthlyPrice('COLIVING', colivingTier)
+		});
+	}
+
+	const pooledMonthlyPrice = sumPrices(pooledBreakdown);
+	const splitMonthlyPrice = sumPrices(splitBreakdown.length > 0 ? splitBreakdown : pooledBreakdown);
+	// Free allowance áp dụng một lần cho toàn tài khoản, không cho tách để hưởng hai lần Free.
+	const canSplit = standardRoomCount >= 4 && colivingRoomCount >= 4;
+	const useSplit =
+		canSplit &&
+		splitMonthlyPrice !== null &&
+		(pooledMonthlyPrice === null || splitMonthlyPrice < pooledMonthlyPrice);
+	const strategy: PricingStrategy = useSplit ? 'SPLIT' : 'POOLED';
+	const breakdown = useSplit ? splitBreakdown : pooledBreakdown;
+	const selectedMonthlyPrice = useSplit ? splitMonthlyPrice : pooledMonthlyPrice;
 	const limits = TIER_LIMITS[tier];
 
 	return {
 		tier,
+		recommendedTier,
 		period,
 		minRooms: limits.minRooms,
 		maxRooms: limits.maxRooms,
-		pricingGroups,
-		monthlyPrice,
-		periodPrice: monthlyPrice === null ? null : monthlyPrice * (period === 'YEARLY' ? 12 : 1),
+		strategy,
+		splitEligible: canSplit,
+		monthlyPrice: selectedMonthlyPrice,
+		periodPrice:
+			selectedMonthlyPrice === null ? null : selectedMonthlyPrice * (period === 'YEARLY' ? 12 : 1),
+		pooledMonthlyPrice,
+		splitMonthlyPrice,
 		roomCount,
+		standardRoomCount,
+		colivingRoomCount,
 		overCapacity: limits.maxRooms !== null && roomCount > limits.maxRooms,
-		requiresContact,
+		requiresContact: selectedMonthlyPrice === null,
 		breakdown
 	};
 }
