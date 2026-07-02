@@ -27,6 +27,8 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 	subscriptionType: text('subscriptionType').notNull().default('FREE'), // FREE | ROOMS_4_10 | ... | ROOMS_101_PLUS
 	subscriptionPeriod: text('subscriptionPeriod').notNull().default('MONTHLY'), // MONTHLY | YEARLY
 	subValidUntil: datetime('subValidUntil'),
+	subscribedStandardRoomLimit: integer('subscribedStandardRoomLimit'),
+	subscribedColivingRoomLimit: integer('subscribedColivingRoomLimit'),
 	companyName: text('companyName'),
 	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, SERVICED_APARTMENT, DORM, COLIVING
 

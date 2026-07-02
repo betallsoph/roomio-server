@@ -21,7 +21,9 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 				subscriptionType: true,
 				subscriptionPeriod: true,
 				subValidUntil: true,
-				enabledRentalTypes: true
+				enabledRentalTypes: true,
+				subscribedStandardRoomLimit: true,
+				subscribedColivingRoomLimit: true
 			}
 		});
 		if (!landlord) return json({ error: 'Không tìm thấy tài khoản chủ trọ' }, { status: 404 });
@@ -33,12 +35,20 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 			.where(eq(properties.landlordId, auth.value))
 			.groupBy(properties.rentalType);
 
-		const standardRoomCount = roomCounts
+		const actualStandardRoomCount = roomCounts
 			.filter((row) => row.rentalType !== 'COLIVING')
 			.reduce((sum, row) => sum + Number(row.count), 0);
-		const colivingRoomCount = roomCounts
+		const actualColivingRoomCount = roomCounts
 			.filter((row) => row.rentalType === 'COLIVING')
 			.reduce((sum, row) => sum + Number(row.count), 0);
+		const requestedCount = (name: string, actual: number) => {
+			const raw = url.searchParams.get(name);
+			if (raw === null || raw.trim() === '') return actual;
+			const value = Number(raw);
+			return Number.isFinite(value) ? Math.max(actual, Math.floor(value), 0) : actual;
+		};
+		const standardRoomCount = requestedCount('standardRoomCount', actualStandardRoomCount);
+		const colivingRoomCount = requestedCount('colivingRoomCount', actualColivingRoomCount);
 		const activeTier = SUBSCRIPTION_TIERS.includes(landlord.subscriptionType as SubscriptionTier)
 			? (landlord.subscriptionType as SubscriptionTier)
 			: 'FREE';
@@ -63,7 +73,13 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 				tier: activeTier,
 				period: activePeriod,
 				validUntil: landlord.subValidUntil,
-				enabledRentalTypes: landlord.enabledRentalTypes.split(',').filter(Boolean)
+				enabledRentalTypes: landlord.enabledRentalTypes.split(',').filter(Boolean),
+				standardRoomLimit: landlord.subscribedStandardRoomLimit,
+				colivingRoomLimit: landlord.subscribedColivingRoomLimit
+			},
+			actualRoomCounts: {
+				standard: actualStandardRoomCount,
+				coliving: actualColivingRoomCount
 			}
 		});
 	} catch (error) {

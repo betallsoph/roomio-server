@@ -32,7 +32,7 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - Không còn khái niệm Premium hay Enterprise.
 - Các loại hình chung cư, phòng trọ, CHDV và KTX/Sleepbox cùng kích hoạt bảng giá chuẩn một lần.
 - Loại hình `COLIVING` kích hoạt bảng giá co-living.
-- Giá chỉ dựa trên số phòng đã tạo và loại hình của từng tòa, không dựa trên việc loại hình chỉ mới được bật trong tài khoản.
+- Giá yêu cầu dựa trên cơ cấu số phòng dự kiến do chủ trọ khai báo trước khi tạo phòng.
 - Với danh mục kết hợp chuẩn + co-living, hệ thống tính cả hai phương án rồi tự lấy giá thấp hơn:
   - `Gộp`: gom toàn bộ phòng, dùng bảng chuẩn nếu có ít nhất một phòng chuẩn.
   - `Tách`: tính riêng số phòng chuẩn và số phòng co-living theo từng bảng rồi cộng lại.
@@ -40,7 +40,8 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - Ví dụ 4 phòng chuẩn + 4 phòng co-living: giá gộp 149.000đ, giá tách 278.000đ nên lấy giá gộp.
 - Ví dụ 8 phòng chuẩn + 8 phòng co-living: giá gộp 349.000đ, giá tách 278.000đ nên lấy giá tách.
 - `MONTHLY` có hạn một tháng. `YEARLY` có hạn một năm và giá hiện bằng đúng 12 tháng, chưa áp dụng chiết khấu.
-- Phòng trống vẫn được tính vào số phòng đang quản lý. Nếu số phòng thực tế vượt sức chứa gói, admin sẽ thấy cảnh báo.
+- Phòng trống vẫn được tính vào số phòng đang quản lý.
+- Khi Super Admin duyệt, hệ thống lưu riêng hạn mức phòng chuẩn và co-living. API tạo phòng chặn cả tổng sức chứa của gói lẫn hạn mức từng nhóm; gói trả phí hết hạn cũng không được tạo thêm phòng.
 - Gói trên 100 phòng chưa có giá tự động và hiển thị `Liên hệ`.
 
 Code nguồn của bảng giá nằm tại `src/lib/server/subscription-pricing.ts`. Endpoint `GET /api/subscription/quote` trả về báo giá hiện tại của chủ trọ đang đăng nhập.
@@ -52,5 +53,6 @@ Code nguồn của bảng giá nằm tại `src/lib/server/subscription-pricing.
 - Chủ trọ có thể hủy yêu cầu đang chờ bằng `PUT` với action `cancel`.
 - Super Admin duyệt hoặc từ chối bằng `PUT` với action `approve` hoặc `reject`.
 - Khi duyệt, hệ thống mới cập nhật gói và ngày hết hạn, đồng thời nối các loại hình được yêu cầu vào danh sách đang quản lý. Yêu cầu chỉ thêm loại hình không làm gia hạn lại gói hiện tại.
-- Việc bật thêm loại hình không tự cộng phí; báo giá chỉ thay đổi khi chủ trọ tạo phòng thực tế thuộc loại hình đó.
-- Nếu cơ cấu phòng thay đổi sau khi gửi yêu cầu, yêu cầu cũ không được duyệt và chủ trọ phải gửi lại để tính giá mới.
+- Chủ trọ khai báo số phòng chuẩn và co-living dự kiến; hệ thống tự chọn gói khớp với tổng số phòng và tính giá trước khi phòng được tạo.
+- Việc chỉ bật thêm loại hình với hạn mức bằng 0 không tự cộng phí, nhưng chủ trọ vẫn chưa thể tạo phòng thuộc nhóm đó.
+- Nếu số phòng thực tế vượt mức đã khai báo trong lúc yêu cầu đang chờ, yêu cầu cũ không được duyệt và chủ trọ phải gửi lại để tính giá mới.

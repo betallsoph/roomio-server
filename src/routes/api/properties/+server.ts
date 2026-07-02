@@ -2,8 +2,8 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { properties, blocks } from '$lib/server/db/schema';
-import { asc, eq } from 'drizzle-orm';
+import { properties, blocks, landlordProfiles, rooms } from '$lib/server/db/schema';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 
 const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM', 'COLIVING'] as const;
@@ -134,7 +134,60 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Tài khoản chủ trọ chưa được bật loại hình này' }, { status: 403 });
 		}
 
-		await db.transaction(async (tx) => {
+		const updateResult = await db.transaction(async (tx) => {
+			if (requestedRentalType) {
+				await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${auth.value}))`);
+				const currentProperty = (
+					await tx
+						.select({ rentalType: properties.rentalType })
+						.from(properties)
+						.where(eq(properties.id, id))
+				)[0];
+				if (currentProperty && currentProperty.rentalType !== requestedRentalType) {
+					const profile = (
+						await tx
+							.select({
+								standardLimit: landlordProfiles.subscribedStandardRoomLimit,
+								colivingLimit: landlordProfiles.subscribedColivingRoomLimit
+							})
+							.from(landlordProfiles)
+							.where(eq(landlordProfiles.id, auth.value))
+					)[0];
+					const targetIsColiving = requestedRentalType === 'COLIVING';
+					const targetLimit = targetIsColiving ? profile?.colivingLimit : profile?.standardLimit;
+					if (targetLimit !== null && targetLimit !== undefined) {
+						const propertyRoomCount = Number(
+							(
+								await tx
+									.select({ count: sql<number>`count(${rooms.id})` })
+									.from(rooms)
+									.where(eq(rooms.propertyId, id))
+							)[0]?.count ?? 0
+						);
+						const targetRoomCount = Number(
+							(
+								await tx
+									.select({ count: sql<number>`count(${rooms.id})` })
+									.from(properties)
+									.leftJoin(rooms, eq(rooms.propertyId, properties.id))
+									.where(
+										and(
+											eq(properties.landlordId, auth.value),
+											targetIsColiving
+												? eq(properties.rentalType, 'COLIVING')
+												: sql`${properties.rentalType} <> 'COLIVING'`
+										)
+									)
+							)[0]?.count ?? 0
+						);
+						if (targetRoomCount + propertyRoomCount > targetLimit) {
+							return {
+								error: `Chuyển loại hình sẽ vượt hạn mức ${targetLimit} phòng ${targetIsColiving ? 'co-living' : 'tiêu chuẩn'}`
+							};
+						}
+					}
+				}
+			}
 			// Update property details
 			const updateData: Record<string, unknown> = {};
 			if (name !== undefined) updateData.name = name;
@@ -160,7 +213,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 					await tx.insert(blocks).values(newBlocks);
 				}
 			}
+			return { success: true };
 		});
+		if ('error' in updateResult) return json({ error: updateResult.error }, { status: 403 });
 
 		const fullProperty = await db.query.properties.findFirst({
 			where: eq(properties.id, id),

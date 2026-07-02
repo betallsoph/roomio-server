@@ -84,7 +84,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const landlord = await db.query.landlordProfiles.findFirst({
 			where: eq(landlordProfiles.id, landlordId),
-			columns: { subscriptionType: true, subscriptionPeriod: true, enabledRentalTypes: true }
+			columns: {
+				subscriptionType: true,
+				subscriptionPeriod: true,
+				enabledRentalTypes: true,
+				subscribedStandardRoomLimit: true,
+				subscribedColivingRoomLimit: true
+			}
 		});
 		if (!landlord) return json({ error: 'Không tìm thấy tài khoản chủ trọ' }, { status: 404 });
 		const currentRentalTypes = new Set(landlord.enabledRentalTypes.split(',').filter(Boolean));
@@ -99,22 +105,58 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					)
 				]
 			: [];
+		const actualCounts = await roomCounts(landlordId);
+		const requestedCount = (value: unknown, actual: number) => {
+			const count = Number(value);
+			return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : actual;
+		};
+		const counts = {
+			standardRoomCount: requestedCount(body.standardRoomCount, actualCounts.standardRoomCount),
+			colivingRoomCount: requestedCount(body.colivingRoomCount, actualCounts.colivingRoomCount)
+		};
 		if (
-			landlord.subscriptionType === body.requestedTier &&
-			landlord.subscriptionPeriod === body.requestedPeriod &&
-			requestedRentalTypes.length === 0
+			counts.standardRoomCount < actualCounts.standardRoomCount ||
+			counts.colivingRoomCount < actualCounts.colivingRoomCount
 		) {
-			return json({ error: 'Bạn chưa chọn thay đổi nào' }, { status: 400 });
+			return json(
+				{ error: 'Số phòng dự kiến không được thấp hơn số phòng đang có' },
+				{ status: 400 }
+			);
 		}
-
-		const counts = await roomCounts(landlordId);
+		const futureRentalTypes = new Set([...currentRentalTypes, ...requestedRentalTypes]);
+		if (counts.colivingRoomCount > 0 && !futureRentalTypes.has('COLIVING')) {
+			return json(
+				{ error: 'Cần chọn thêm loại hình Co-living cho số phòng dự kiến' },
+				{ status: 400 }
+			);
+		}
+		if (
+			counts.standardRoomCount > 0 &&
+			![...futureRentalTypes].some((type) => type !== 'COLIVING')
+		) {
+			return json({ error: 'Cần chọn một loại hình phòng tiêu chuẩn' }, { status: 400 });
+		}
 		const quote = calculateSubscriptionQuote({
 			tier: body.requestedTier as SubscriptionTier,
 			period: body.requestedPeriod as SubscriptionPeriod,
 			...counts
 		});
 		if (quote.overCapacity) {
-			return json({ error: 'Gói yêu cầu không đủ cho số phòng hiện tại' }, { status: 400 });
+			return json({ error: 'Gói yêu cầu không đủ cho số phòng dự kiến' }, { status: 400 });
+		}
+		if (quote.recommendedTier !== body.requestedTier) {
+			return json({ error: 'Gói yêu cầu chưa khớp với số phòng dự kiến' }, { status: 400 });
+		}
+		const allocationChanged =
+			landlord.subscribedStandardRoomLimit !== counts.standardRoomCount ||
+			landlord.subscribedColivingRoomLimit !== counts.colivingRoomCount;
+		if (
+			landlord.subscriptionType === body.requestedTier &&
+			landlord.subscriptionPeriod === body.requestedPeriod &&
+			requestedRentalTypes.length === 0 &&
+			!allocationChanged
+		) {
+			return json({ error: 'Bạn chưa chọn thay đổi nào' }, { status: 400 });
 		}
 
 		const created = (
@@ -179,11 +221,11 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (body.action === 'approve') {
 			const counts = await roomCounts(existing.landlordId);
 			if (
-				counts.standardRoomCount !== existing.standardRoomCount ||
-				counts.colivingRoomCount !== existing.colivingRoomCount
+				counts.standardRoomCount > existing.standardRoomCount ||
+				counts.colivingRoomCount > existing.colivingRoomCount
 			) {
 				return json(
-					{ error: 'Số phòng đã thay đổi; chủ trọ cần gửi lại yêu cầu mới' },
+					{ error: 'Số phòng thực tế đã vượt mức dự kiến; chủ trọ cần gửi lại yêu cầu mới' },
 					{ status: 409 }
 				);
 			}
@@ -217,6 +259,8 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 					.update(landlordProfiles)
 					.set({
 						enabledRentalTypes: [...enabledRentalTypes].join(','),
+						subscribedStandardRoomLimit: existing.standardRoomCount,
+						subscribedColivingRoomLimit: existing.colivingRoomCount,
 						...(subscriptionChanged
 							? {
 									subscriptionType: tier,

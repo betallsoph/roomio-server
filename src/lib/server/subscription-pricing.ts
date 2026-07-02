@@ -28,6 +28,10 @@ const TIER_LIMITS: Record<SubscriptionTier, { minRooms: number; maxRooms: number
 	ROOMS_101_PLUS: { minRooms: 101, maxRooms: null }
 };
 
+export function subscriptionTierLimits(tier: SubscriptionTier) {
+	return TIER_LIMITS[tier];
+}
+
 const MONTHLY_PRICES: Record<PricingGroup, Record<SubscriptionTier, number | null>> = {
 	STANDARD: {
 		FREE: 0,

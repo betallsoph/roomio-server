@@ -8,9 +8,10 @@ import {
 	services,
 	roomServiceConfigs,
 	meterReadings,
-	roomAssets
+	roomAssets,
+	landlordProfiles
 } from '$lib/server/db/schema';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
 	forbidden,
 	landlordOwnsProperty,
@@ -18,6 +19,11 @@ import {
 	requireLandlord
 } from '$lib/server/authz';
 import { normalizeRoomTextKey } from '$lib/server/room-code';
+import {
+	SUBSCRIPTION_TIERS,
+	subscriptionTierLimits,
+	type SubscriptionTier
+} from '$lib/server/subscription-pricing';
 
 function roomUnitKey(
 	roomNumber: string,
@@ -230,7 +236,52 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			);
 		}
 
-		const room = await db.transaction(async (tx) => {
+		const createResult = await db.transaction(async (tx) => {
+			await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${auth.value}))`);
+			const profile = (
+				await tx
+					.select({
+						subscriptionType: landlordProfiles.subscriptionType,
+						subValidUntil: landlordProfiles.subValidUntil,
+						standardLimit: landlordProfiles.subscribedStandardRoomLimit,
+						colivingLimit: landlordProfiles.subscribedColivingRoomLimit
+					})
+					.from(landlordProfiles)
+					.where(eq(landlordProfiles.id, auth.value))
+			)[0];
+			const tier = SUBSCRIPTION_TIERS.includes(profile?.subscriptionType as SubscriptionTier)
+				? (profile.subscriptionType as SubscriptionTier)
+				: 'FREE';
+			if (tier !== 'FREE' && profile?.subValidUntil && profile.subValidUntil <= new Date()) {
+				return { error: 'Gói Roomio đã hết hạn; vui lòng gia hạn trước khi thêm phòng' };
+			}
+
+			const roomCounts = await tx
+				.select({ rentalType: properties.rentalType, count: sql<number>`count(${rooms.id})` })
+				.from(properties)
+				.leftJoin(rooms, eq(rooms.propertyId, properties.id))
+				.where(eq(properties.landlordId, auth.value))
+				.groupBy(properties.rentalType);
+			const standardCount = roomCounts
+				.filter((row) => row.rentalType !== 'COLIVING')
+				.reduce((sum, row) => sum + Number(row.count), 0);
+			const colivingCount = roomCounts
+				.filter((row) => row.rentalType === 'COLIVING')
+				.reduce((sum, row) => sum + Number(row.count), 0);
+			const totalCount = standardCount + colivingCount;
+			const limits = subscriptionTierLimits(tier);
+			if (limits.maxRooms !== null && totalCount >= limits.maxRooms) {
+				return { error: `Gói hiện tại chỉ cho phép tối đa ${limits.maxRooms} phòng` };
+			}
+			const groupCount = property.rentalType === 'COLIVING' ? colivingCount : standardCount;
+			const groupLimit =
+				property.rentalType === 'COLIVING' ? profile?.colivingLimit : profile?.standardLimit;
+			if (groupLimit !== null && groupLimit !== undefined && groupCount >= groupLimit) {
+				return {
+					error: `Đã đạt hạn mức ${groupLimit} phòng ${property.rentalType === 'COLIVING' ? 'co-living' : 'trọ / CHDV / Sleepbox'} đã đăng ký`
+				};
+			}
+
 			// Create the room
 			const r = (
 				await tx
@@ -251,18 +302,20 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			)[0];
 
 			// Find landlord's services
-			const property = (
+			const propertyOwner = (
 				await tx
 					.select({ landlordId: properties.landlordId })
 					.from(properties)
 					.where(eq(properties.id, propertyId))
 			)[0];
 
-			if (property) {
+			if (propertyOwner) {
 				const activeServices = await tx
 					.select()
 					.from(services)
-					.where(and(eq(services.landlordId, property.landlordId), eq(services.isActive, true)));
+					.where(
+						and(eq(services.landlordId, propertyOwner.landlordId), eq(services.isActive, true))
+					);
 				// Map room to all active services with default rates
 				if (activeServices.length > 0) {
 					await tx.insert(roomServiceConfigs).values(
@@ -276,8 +329,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				}
 			}
 
-			return r;
+			return { room: r };
 		});
+		if ('error' in createResult) return json({ error: createResult.error }, { status: 403 });
+		const room = createResult.room;
 
 		const fullRoom = await db.query.rooms.findFirst({
 			where: eq(rooms.id, room.id),
