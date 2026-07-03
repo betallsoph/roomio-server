@@ -1,0 +1,1 @@
+ALTER TABLE "MeterReading" ADD COLUMN "submittedValue" double precision;

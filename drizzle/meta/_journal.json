@@ -85,6 +85,13 @@
 			"when": 1783052430292,
 			"tag": "0011_unify_coliving_into_apartment",
 			"breakpoints": true
+		},
+		{
+			"idx": 12,
+			"version": "7",
+			"when": 1783099514368,
+			"tag": "0012_big_meteorite",
+			"breakpoints": true
 		}
 	]
 }

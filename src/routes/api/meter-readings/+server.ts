@@ -73,6 +73,7 @@ export const GET: RequestHandler = async ({ url }) => {
 				serviceId: meterReadings.serviceId,
 				month: meterReadings.month,
 				prevValue: meterReadings.prevValue,
+				submittedValue: meterReadings.submittedValue,
 				currValue: meterReadings.currValue,
 				recordedAt: meterReadings.recordedAt,
 				photoUrl: meterReadings.photoUrl,
@@ -102,8 +103,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const body = await request.json();
 		const { roomId, serviceId, month, currValue, photoUrl } = body;
 
-		if (!roomId || !serviceId || !month || currValue === undefined) {
+		if (!roomId || !serviceId || !month || currValue === undefined || currValue === '') {
 			return json({ error: 'Thiếu thông tin chỉ số' }, { status: 400 });
+		}
+		if (locals.session?.role === 'TENANT' && (typeof photoUrl !== 'string' || !photoUrl.trim())) {
+			return json({ error: 'Khách thuê cần chụp ảnh đồng hồ trước khi gửi' }, { status: 400 });
 		}
 
 		const room = await db.query.rooms.findFirst({ where: eq(rooms.id, roomId) });
@@ -140,6 +144,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const prevValue = latest ? latest.currValue : 0;
 		const curr = Number(currValue);
 
+		if (!Number.isFinite(curr)) {
+			return json({ error: 'Chỉ số mới không hợp lệ' }, { status: 400 });
+		}
 		if (curr < prevValue) {
 			return json(
 				{ error: `Chỉ số mới (${curr}) không được nhỏ hơn chỉ số cũ (${prevValue})` },
@@ -178,11 +185,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			serviceId,
 			month,
 			prevValue,
+			submittedValue: curr,
 			currValue: curr,
 			recordedAt: new Date().toISOString().split('T')[0],
 			photoUrl: photoUrl || null,
 			status: 'pending',
-			submittedBy: 'TENANT',
+			submittedBy: locals.session?.role === 'TENANT' ? 'TENANT' : 'LANDLORD',
 			isAnomalous
 		};
 
@@ -210,7 +218,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		}
 
 		const body = await request.json();
-		const { id, action, prevValue, currValue } = body;
+		const { id, action, currValue } = body;
 
 		if (!id || !['approve', 'reject'].includes(action)) {
 			return json({ error: 'Thiếu ID hoặc hành động không hợp lệ' }, { status: 400 });
@@ -223,13 +231,57 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (!(await actorOwnsReading(locals.session, id))) {
 			return forbidden();
 		}
+		if (reading.status !== 'pending') {
+			return json({ error: 'Bản ghi này đã được xử lý' }, { status: 409 });
+		}
 
 		const updateData: Record<string, unknown> = {
 			status: action === 'approve' ? 'approved' : 'rejected'
 		};
 		if (action === 'approve') {
-			if (prevValue !== undefined) updateData.prevValue = Number(prevValue);
-			if (currValue !== undefined) updateData.currValue = Number(currValue);
+			if (reading.submittedBy === 'TENANT' && !reading.photoUrl) {
+				return json(
+					{ error: 'Không thể duyệt chỉ số khách gửi khi chưa có ảnh đồng hồ' },
+					{ status: 400 }
+				);
+			}
+
+			const approvedValue = currValue === undefined ? reading.currValue : Number(currValue);
+			if (!Number.isFinite(approvedValue)) {
+				return json({ error: 'Chỉ số duyệt không hợp lệ' }, { status: 400 });
+			}
+			if (approvedValue < reading.prevValue) {
+				return json(
+					{
+						error: `Chỉ số duyệt (${approvedValue}) không được nhỏ hơn chỉ số cũ (${reading.prevValue})`
+					},
+					{ status: 400 }
+				);
+			}
+
+			const history = await db
+				.select()
+				.from(meterReadings)
+				.where(
+					and(
+						eq(meterReadings.roomId, reading.roomId),
+						eq(meterReadings.serviceId, reading.serviceId),
+						eq(meterReadings.status, 'approved')
+					)
+				)
+				.orderBy(desc(meterReadings.month))
+				.limit(3);
+			const usages = history
+				.map((item) => item.currValue - item.prevValue)
+				.filter((usage) => usage > 0);
+			const average = usages.length
+				? usages.reduce((total, usage) => total + usage, 0) / usages.length
+				: 0;
+			const usage = approvedValue - reading.prevValue;
+
+			updateData.currValue = approvedValue;
+			updateData.isAnomalous =
+				average > 0 && Math.abs(usage - average) / average > ANOMALY_THRESHOLD;
 		}
 
 		const updated = await db

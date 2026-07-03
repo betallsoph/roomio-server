@@ -160,6 +160,7 @@ export const meterReadings = pgTable('MeterReading', {
 	serviceId: text('serviceId').notNull(), // Chỉ số đo lường cho dịch vụ nào (Ví dụ dịch vụ Điện / Nước)
 	month: text('month').notNull(), // Định dạng YYYY-MM
 	prevValue: doublePrecision('prevValue').notNull(),
+	submittedValue: doublePrecision('submittedValue'), // Số khách gửi ban đầu, giữ lại khi chủ nhà chỉnh
 	currValue: doublePrecision('currValue').notNull(),
 	recordedAt: text('recordedAt').notNull(), // YYYY-MM-DD
 	photoUrl: text('photoUrl'), // Lưu trữ ảnh chụp đồng hồ đối chiếu
