@@ -13,7 +13,7 @@ Phí SaaS được tính theo tổng số phòng đang được quản lý trong
 | 51–100   |    1.399.000đ |
 | Trên 100 |       Liên hệ |
 
-## Co-living / share căn
+## Chung cư / Co-living (share phòng)
 
 Co-living vẫn tính theo **số phòng**, không tính theo giường.
 
@@ -31,7 +31,7 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - Gói được lưu theo sức chứa: `FREE`, `ROOMS_4_10`, `ROOMS_11_25`, `ROOMS_26_50`, `ROOMS_51_100`, `ROOMS_101_PLUS`.
 - Không còn khái niệm Premium hay Enterprise.
 - Các loại hình phòng trọ, CHDV và KTX/Sleepbox dùng bảng giá chuẩn.
-- `APARTMENT` (chung cư chia phòng) và `COLIVING` cùng dùng bảng giá co-living.
+- `APARTMENT` là chung cư chia sẻ phòng (co-living) và dùng bảng giá co-living. `COLIVING` cũ được tự động quy về `APARTMENT`.
 - Khi tạo tài khoản lần đầu, Super Admin nhập số phòng đã thương lượng theo nhóm, tự chọn gói rồi cấp gói và hạn mức ban đầu.
 - Với danh mục kết hợp chuẩn + co-living, hệ thống tính cả hai phương án rồi tự lấy giá thấp hơn:
   - `Gộp`: gom toàn bộ phòng, dùng bảng chuẩn nếu có ít nhất một phòng chuẩn.

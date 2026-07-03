@@ -74,7 +74,14 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 				tier: activeTier,
 				period: activePeriod,
 				validUntil: landlord.subValidUntil,
-				enabledRentalTypes: landlord.enabledRentalTypes.split(',').filter(Boolean),
+				enabledRentalTypes: [
+					...new Set(
+						landlord.enabledRentalTypes
+							.split(',')
+							.filter(Boolean)
+							.map((type) => (type === 'COLIVING' ? 'APARTMENT' : type))
+					)
+				],
 				standardRoomLimit: landlord.subscribedStandardRoomLimit,
 				colivingRoomLimit: landlord.subscribedColivingRoomLimit
 			},

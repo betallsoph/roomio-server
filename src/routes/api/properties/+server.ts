@@ -7,10 +7,11 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 import { pricingGroupForRentalType } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM', 'COLIVING'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM'] as const;
 
 function normalizeRentalType(value: unknown): (typeof RENTAL_TYPES)[number] {
 	const normalized = typeof value === 'string' ? value.trim().toUpperCase() : 'APARTMENT';
+	if (normalized === 'COLIVING') return 'APARTMENT';
 	return RENTAL_TYPES.includes(normalized as (typeof RENTAL_TYPES)[number])
 		? (normalized as (typeof RENTAL_TYPES)[number])
 		: 'APARTMENT';
@@ -21,9 +22,9 @@ async function landlordAllowsRentalType(landlordId: string, rentalType: string) 
 		where: (landlordProfiles, { eq }) => eq(landlordProfiles.id, landlordId),
 		columns: { enabledRentalTypes: true }
 	});
-	const enabled = profile?.enabledRentalTypes?.split(',').map((type) => type.trim()) ?? [
-		'APARTMENT'
-	];
+	const enabled = profile?.enabledRentalTypes
+		?.split(',')
+		.map((type) => (type.trim() === 'COLIVING' ? 'APARTMENT' : type.trim())) ?? ['APARTMENT'];
 	return enabled.includes(rentalType);
 }
 

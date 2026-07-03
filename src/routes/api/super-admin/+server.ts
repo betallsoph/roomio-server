@@ -23,7 +23,7 @@ import {
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM', 'COLIVING'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM'] as const;
 
 const DEFAULT_SERVICES = [
 	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },
@@ -37,7 +37,10 @@ function normalizeRentalTypes(value: unknown): string {
 	if (value === undefined || value === null) return 'APARTMENT';
 	const rawTypes = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
 	const normalized = rawTypes
-		.map((type) => String(type).trim().toUpperCase())
+		.map((type) => {
+			const normalizedType = String(type).trim().toUpperCase();
+			return normalizedType === 'COLIVING' ? 'APARTMENT' : normalizedType;
+		})
 		.filter((type): type is (typeof RENTAL_TYPES)[number] =>
 			RENTAL_TYPES.includes(type as (typeof RENTAL_TYPES)[number])
 		);
@@ -164,7 +167,7 @@ export const GET: RequestHandler = async () => {
 					subscribedStandardRoomLimit: landlord.subscribedStandardRoomLimit,
 					subscribedColivingRoomLimit: landlord.subscribedColivingRoomLimit,
 					companyName: landlord.companyName,
-					enabledRentalTypes: landlord.enabledRentalTypes,
+					enabledRentalTypes: normalizeRentalTypes(landlord.enabledRentalTypes),
 					user: landlord.user,
 					properties: landlord.properties.map((property) => ({
 						id: property.id,

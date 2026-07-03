@@ -19,7 +19,12 @@ import {
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM', 'COLIVING'];
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM'];
+
+function canonicalRentalType(value: unknown) {
+	const type = String(value).trim().toUpperCase();
+	return type === 'COLIVING' ? 'APARTMENT' : type;
+}
 
 async function roomCounts(landlordId: string) {
 	const rows = await db
@@ -94,7 +99,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			}
 		});
 		if (!landlord) return json({ error: 'Không tìm thấy tài khoản chủ trọ' }, { status: 404 });
-		const currentRentalTypes = new Set(landlord.enabledRentalTypes.split(',').filter(Boolean));
+		const currentRentalTypes = new Set(
+			landlord.enabledRentalTypes.split(',').filter(Boolean).map(canonicalRentalType)
+		);
 		const roomAdditions: Record<string, number> = {};
 		if (
 			body.roomAdditions &&
@@ -102,15 +109,15 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			!Array.isArray(body.roomAdditions)
 		) {
 			for (const [rawType, rawCount] of Object.entries(body.roomAdditions)) {
-				const type = rawType.trim().toUpperCase();
+				const type = canonicalRentalType(rawType);
 				const count = Math.floor(Number(rawCount));
 				if (RENTAL_TYPES.includes(type) && Number.isFinite(count) && count > 0) {
-					roomAdditions[type] = count;
+					roomAdditions[type] = (roomAdditions[type] ?? 0) + count;
 				}
 			}
 		}
 		const legacyRequestedTypes = Array.isArray(body.addRentalTypes)
-			? body.addRentalTypes.map((type: unknown) => String(type).trim().toUpperCase())
+			? body.addRentalTypes.map(canonicalRentalType)
 			: [];
 		const requestedRentalTypes = [
 			...new Set([...Object.keys(roomAdditions), ...legacyRequestedTypes])

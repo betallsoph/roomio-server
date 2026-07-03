@@ -30,7 +30,7 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 	subscribedStandardRoomLimit: integer('subscribedStandardRoomLimit'),
 	subscribedColivingRoomLimit: integer('subscribedColivingRoomLimit'),
 	companyName: text('companyName'),
-	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, SERVICED_APARTMENT, DORM, COLIVING
+	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, SERVICED_APARTMENT, DORM
 
 	// Thông tin ngân hàng nhận tiền chuyển khoản (Cấu hình riêng của mỗi chủ trọ)
 	bankName: text('bankName').notNull().default('Vietcombank'),
@@ -100,7 +100,7 @@ export const properties = pgTable('Property', {
 	name: text('name').notNull(),
 	shortName: text('shortName').notNull(),
 	address: text('address').notNull(),
-	rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL | SERVICED_APARTMENT | DORM | COLIVING
+	rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL | SERVICED_APARTMENT | DORM
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 
