@@ -53,13 +53,30 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+function normalizeAccountId(value: string): string {
+	if (!/^[a-f0-9]{32}$/i.test(value)) {
+		throw new Error('R2_ACCOUNT_ID không hợp lệ; chỉ nhập Account ID, không nhập URL endpoint');
+	}
+	return value;
+}
+
+function normalizePublicBaseUrl(value: string): string {
+	try {
+		const url = new URL(value);
+		if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error();
+		return url.toString().replace(/\/+$/, '');
+	} catch {
+		throw new Error('R2_PUBLIC_BASE_URL phải là URL http/https hợp lệ');
+	}
+}
+
 function r2Config(): R2Config {
 	return {
-		accountId: requiredEnv('R2_ACCOUNT_ID'),
+		accountId: normalizeAccountId(requiredEnv('R2_ACCOUNT_ID')),
 		accessKeyId: requiredEnv('R2_ACCESS_KEY_ID'),
 		secretAccessKey: requiredEnv('R2_SECRET_ACCESS_KEY'),
 		bucket: requiredEnv('R2_BUCKET'),
-		publicBaseUrl: requiredEnv('R2_PUBLIC_BASE_URL').replace(/\/+$/, ''),
+		publicBaseUrl: normalizePublicBaseUrl(requiredEnv('R2_PUBLIC_BASE_URL')),
 		maxUploadBytes: parsePositiveInt(process.env.R2_UPLOAD_MAX_BYTES, DEFAULT_MAX_UPLOAD_BYTES),
 		expiresIn: Math.min(
 			parsePositiveInt(process.env.R2_PRESIGN_EXPIRES_SECONDS, DEFAULT_EXPIRES_SECONDS),
@@ -139,15 +156,11 @@ export async function createR2PresignedUpload(input: CreatePresignedUploadInput)
 	const command = new PutObjectCommand({
 		Bucket: config.bucket,
 		Key: objectKey,
-		ContentType: contentType,
-		Metadata: {
-			purpose,
-			actor: input.actorId,
-			role: input.actorRole
-		}
+		ContentType: contentType
 	});
 
 	const uploadUrl = await getSignedUrl(r2Client(config), command, { expiresIn: config.expiresIn });
+	new URL(uploadUrl);
 	const publicUrl = `${config.publicBaseUrl}/${objectKey}`;
 
 	return {
