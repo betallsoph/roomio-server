@@ -44,7 +44,7 @@ Lịch sử automation được tự dọn khi chạy tác vụ: log job giữ 9
 
 ## Biến môi trường
 
-Xem `.env.example`. Bắt buộc cả local lẫn production: `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `SUPER_ADMIN_ACCOUNTS`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed. Có thể khai báo nhiều thông tin đăng nhập, phân cách bằng dấu phẩy; tất cả cùng đại diện cho một Super Admin và dùng chung quyền quản trị.
+Xem `.env.example`. Bắt buộc cả local lẫn production: `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `SUPER_ADMIN_ACCOUNTS`. Khi bật Telegram Mini App, bắt buộc thêm `BOT_TOKEN`, `BOT_USERNAME`, `MINIAPP_SHORT_NAME`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed. Có thể khai báo nhiều thông tin đăng nhập, phân cách bằng dấu phẩy; tất cả cùng đại diện cho một Super Admin và dùng chung quyền quản trị.
 
 ## Đồng bộ production về local
 

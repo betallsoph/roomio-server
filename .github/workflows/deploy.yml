@@ -44,6 +44,12 @@ jobs:
             if [ ! -f .env ] || ! grep -q '^SUPER_ADMIN_ACCOUNTS=' .env; then
               echo "::warning::SUPER_ADMIN_ACCOUNTS is not set on VPS. Deploy can continue, but env SuperAdmin login will not work until .env is configured."
             fi
+            for name in BOT_TOKEN BOT_USERNAME MINIAPP_SHORT_NAME; do
+              if [ ! -f .env ] || ! grep -Eq "^${name}=.+$" .env; then
+                echo "::error::${name} is missing in the VPS .env. Telegram Mini App authentication cannot work."
+                exit 1
+              fi
+            done
             docker compose up -d --build --remove-orphans
 
             echo "==> Wait for API healthy"

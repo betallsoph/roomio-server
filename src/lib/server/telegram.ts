@@ -48,12 +48,13 @@ export function verifyInitData(initData: string): VerifiedInitData {
 		throw new TelegramAuthError('initData thiếu hash');
 	}
 
-	// data_check_string: tất cả các cặp TRỪ `hash`/`signature`, sort theo key, nối bằng '\n'.
+	// data_check_string: tất cả các cặp TRỪ `hash`, sort theo key, nối bằng '\n'.
+	// Telegram mới có thêm `signature`; trường này vẫn thuộc chuỗi HMAC khi verify bằng bot token.
 	// URLSearchParams trả về value đã URL-decode — dùng đúng chuỗi này, KHÔNG parse rồi stringify
 	// lại `user` (sẽ làm đổi hash → verify fail). Đây là lỗi kinh điển khi tự code.
 	const pairs: string[] = [];
 	for (const [key, value] of params.entries()) {
-		if (key === 'hash' || key === 'signature') continue;
+		if (key === 'hash') continue;
 		pairs.push(`${key}=${value}`);
 	}
 	pairs.sort();
