@@ -5,6 +5,8 @@ node_modules
 build
 pgdata
 uploads
+!src/routes/api/uploads/
+!src/routes/api/uploads/**
 .env
 .env.*
 !.env.example
