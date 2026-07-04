@@ -8,11 +8,12 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR ?? 'uploads';
 const CONTENT_TYPES: Record<string, string> = {
 	jpg: 'image/jpeg',
 	png: 'image/png',
-	webp: 'image/webp'
+	webp: 'image/webp',
+	pdf: 'application/pdf'
 };
 
 // Tên file do server sinh ra (uuid.ext) — regex này đồng thời chặn path traversal
-const NAME_PATTERN = /^[a-f0-9-]+\.(jpg|png|webp)$/;
+const NAME_PATTERN = /^[a-f0-9-]+\.(jpg|png|webp|pdf)$/;
 
 export const GET: RequestHandler = async ({ params }) => {
 	const { name } = params;

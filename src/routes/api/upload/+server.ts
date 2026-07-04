@@ -11,7 +11,8 @@ const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 const EXT_BY_TYPE: Record<string, string> = {
 	'image/jpeg': 'jpg',
 	'image/png': 'png',
-	'image/webp': 'webp'
+	'image/webp': 'webp',
+	'application/pdf': 'pdf'
 };
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -25,11 +26,11 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		const ext = EXT_BY_TYPE[file.type];
 		if (!ext) {
-			return json({ error: 'Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP' }, { status: 400 });
+			return json({ error: 'Chỉ chấp nhận ảnh JPEG, PNG, WebP hoặc file PDF' }, { status: 400 });
 		}
 
 		if (file.size > MAX_SIZE) {
-			return json({ error: 'Ảnh vượt quá 5MB. Vui lòng nén ảnh trước khi gửi.' }, { status: 400 });
+			return json({ error: 'File vượt quá 5MB.' }, { status: 400 });
 		}
 
 		const name = `${crypto.randomUUID()}.${ext}`;
