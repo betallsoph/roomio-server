@@ -321,11 +321,15 @@ export const notificationQueue = pgTable('NotificationQueue', {
 		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
 	tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'cascade' }),
 	recipientUserId: text('recipientUserId').references(() => users.id, { onDelete: 'set null' }),
-	type: text('type').notNull(), // 'invoice_reminder' | 'meter_reminder' | 'contract_reminder' | 'maintenance_sla'
-	channel: text('channel').notNull().default('in_app'), // 'in_app' | 'email' | 'sms' | 'zalo'
+	type: text('type').notNull(), // 'invoice_reminder' | 'meter_reminder' | 'contract_reminder' | 'maintenance_sla' | 'direct_message'
+	channel: text('channel').notNull().default('in_app'), // 'in_app' | 'telegram' | 'email' | 'sms' | 'zalo'
 	title: text('title').notNull(),
 	content: text('content').notNull(),
 	status: text('status').notNull().default('queued'), // 'queued' | 'sent' | 'failed' | 'dismissed'
+	attemptCount: integer('attemptCount').notNull().default(0),
+	lastError: text('lastError'),
+	providerMessageId: text('providerMessageId'),
+	nextAttemptAt: datetime('nextAttemptAt'),
 	relatedType: text('relatedType'), // 'invoice' | 'contract' | 'meter' | 'request'
 	relatedId: text('relatedId'),
 	scheduledFor: text('scheduledFor').notNull(), // YYYY-MM-DD
