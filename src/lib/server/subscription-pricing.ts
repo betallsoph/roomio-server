@@ -3,8 +3,10 @@ export type SubscriptionTier =
 	| 'ROOMS_4_10'
 	| 'ROOMS_11_25'
 	| 'ROOMS_26_50'
-	| 'ROOMS_51_100'
-	| 'ROOMS_101_PLUS';
+	| 'ROOMS_51_80'
+	| 'ROOMS_81_100'
+	| 'ROOMS_101_150'
+	| 'ROOMS_151_PLUS';
 export type SubscriptionPeriod = 'MONTHLY' | 'YEARLY';
 export type PricingGroup = 'STANDARD' | 'COLIVING';
 export type PricingStrategy = 'POOLED' | 'SPLIT';
@@ -14,8 +16,10 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
 	'ROOMS_4_10',
 	'ROOMS_11_25',
 	'ROOMS_26_50',
-	'ROOMS_51_100',
-	'ROOMS_101_PLUS'
+	'ROOMS_51_80',
+	'ROOMS_81_100',
+	'ROOMS_101_150',
+	'ROOMS_151_PLUS'
 ];
 export const SUBSCRIPTION_PERIODS: SubscriptionPeriod[] = ['MONTHLY', 'YEARLY'];
 
@@ -28,8 +32,10 @@ const TIER_LIMITS: Record<SubscriptionTier, { minRooms: number; maxRooms: number
 	ROOMS_4_10: { minRooms: 4, maxRooms: 10 },
 	ROOMS_11_25: { minRooms: 11, maxRooms: 25 },
 	ROOMS_26_50: { minRooms: 26, maxRooms: 50 },
-	ROOMS_51_100: { minRooms: 51, maxRooms: 100 },
-	ROOMS_101_PLUS: { minRooms: 101, maxRooms: null }
+	ROOMS_51_80: { minRooms: 51, maxRooms: 80 },
+	ROOMS_81_100: { minRooms: 81, maxRooms: 100 },
+	ROOMS_101_150: { minRooms: 101, maxRooms: 150 },
+	ROOMS_151_PLUS: { minRooms: 151, maxRooms: null }
 };
 
 export function subscriptionTierLimits(tier: SubscriptionTier) {
@@ -42,16 +48,20 @@ const MONTHLY_PRICES: Record<PricingGroup, Record<SubscriptionTier, number | nul
 		ROOMS_4_10: 149_000,
 		ROOMS_11_25: 349_000,
 		ROOMS_26_50: 699_000,
-		ROOMS_51_100: 1_399_000,
-		ROOMS_101_PLUS: null
+		ROOMS_51_80: 1_119_000,
+		ROOMS_81_100: 1_399_000,
+		ROOMS_101_150: 2_099_000,
+		ROOMS_151_PLUS: null
 	},
 	COLIVING: {
 		FREE: 0,
 		ROOMS_4_10: 129_000,
 		ROOMS_11_25: 319_000,
 		ROOMS_26_50: 629_000,
-		ROOMS_51_100: 1_199_000,
-		ROOMS_101_PLUS: null
+		ROOMS_51_80: 959_000,
+		ROOMS_81_100: 1_199_000,
+		ROOMS_101_150: 1_799_000,
+		ROOMS_151_PLUS: null
 	}
 };
 
@@ -90,7 +100,7 @@ export function subscriptionTierForRoomCount(roomCount: number): SubscriptionTie
 			return (
 				normalized >= limits.minRooms && (limits.maxRooms === null || normalized <= limits.maxRooms)
 			);
-		}) ?? 'ROOMS_101_PLUS'
+		}) ?? 'ROOMS_151_PLUS'
 	);
 }
 

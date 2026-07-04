@@ -10,8 +10,10 @@ Phí SaaS được tính theo tổng số phòng đang được quản lý trong
 | 4–10     |      149.000đ |
 | 11–25    |      349.000đ |
 | 26–50    |      699.000đ |
-| 51–100   |    1.399.000đ |
-| Trên 100 |       Liên hệ |
+| 51–80    |    1.119.000đ |
+| 81–100   |    1.399.000đ |
+| 101–150  |    2.099.000đ |
+| Trên 150 |       Liên hệ |
 
 ## Chung cư / Co-living (share phòng)
 
@@ -23,12 +25,14 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 | 4–10     |      129.000đ |
 | 11–25    |      319.000đ |
 | 26–50    |      629.000đ |
-| 51–100   |    1.199.000đ |
-| Trên 100 |       Liên hệ |
+| 51–80    |      959.000đ |
+| 81–100   |    1.199.000đ |
+| 101–150  |    1.799.000đ |
+| Trên 150 |       Liên hệ |
 
 ## Quy ước hệ thống
 
-- Gói được lưu theo sức chứa: `FREE`, `ROOMS_4_10`, `ROOMS_11_25`, `ROOMS_26_50`, `ROOMS_51_100`, `ROOMS_101_PLUS`.
+- Gói được lưu theo sức chứa: `FREE`, `ROOMS_4_10`, `ROOMS_11_25`, `ROOMS_26_50`, `ROOMS_51_80`, `ROOMS_81_100`, `ROOMS_101_150`, `ROOMS_151_PLUS`.
 - Không còn khái niệm Premium hay Enterprise.
 - Các loại hình phòng trọ, CHDV và KTX/Sleepbox dùng bảng giá chuẩn.
 - `APARTMENT` là chung cư chia sẻ phòng (co-living) và dùng bảng giá co-living. `COLIVING` cũ được tự động quy về `APARTMENT`.
@@ -44,7 +48,7 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - `MONTHLY` có hạn một tháng. `YEARLY` có hạn một năm và giá hiện bằng đúng 12 tháng, chưa áp dụng chiết khấu.
 - Phòng trống vẫn được tính vào số phòng đang quản lý.
 - Khi Super Admin duyệt, hệ thống lưu riêng hạn mức phòng chuẩn và co-living. API tạo phòng chặn cả tổng sức chứa của gói lẫn hạn mức từng nhóm; gói trả phí hết hạn cũng không được tạo thêm phòng.
-- Gói trên 100 phòng chưa có giá tự động và hiển thị `Liên hệ`.
+- Gói trên 150 phòng chưa có giá tự động và hiển thị `Liên hệ`.
 
 Code nguồn của bảng giá nằm tại `src/lib/server/subscription-pricing.ts`. Endpoint `GET /api/subscription/quote` trả về báo giá hiện tại của chủ trọ đang đăng nhập.
 

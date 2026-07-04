@@ -24,7 +24,7 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 		.notNull()
 		.unique()
 		.references(() => users.id, { onDelete: 'cascade' }),
-	subscriptionType: text('subscriptionType').notNull().default('FREE'), // FREE | ROOMS_4_10 | ... | ROOMS_101_PLUS
+	subscriptionType: text('subscriptionType').notNull().default('FREE'), // FREE | ROOMS_4_10 | ... | ROOMS_151_PLUS
 	subscriptionPeriod: text('subscriptionPeriod').notNull().default('MONTHLY'), // MONTHLY | YEARLY
 	subValidUntil: datetime('subValidUntil'),
 	subscribedStandardRoomLimit: integer('subscribedStandardRoomLimit'),
