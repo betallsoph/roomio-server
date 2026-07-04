@@ -46,6 +46,15 @@ export function buildTenantDirectMessageText(content: string) {
 	return trimTelegramText(parts.join('\n'));
 }
 
+export function buildTenantAnnouncementText(title: string, content: string) {
+	const miniAppUrl = buildMiniAppUrl();
+	const parts = ['Thông báo từ chủ trọ', '', title.trim(), '', content.trim()];
+	if (miniAppUrl) {
+		parts.push('', `Mở Roomio để xem chi tiết: ${miniAppUrl}`);
+	}
+	return trimTelegramText(parts.join('\n'));
+}
+
 export async function sendTelegramMessage(
 	chatId: string,
 	text: string

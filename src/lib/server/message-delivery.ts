@@ -1,6 +1,7 @@
 import { db } from '$lib/server/db';
-import { notificationQueue, tenantProfiles } from '$lib/server/db/schema';
+import { notificationQueue, properties, rooms, tenantProfiles } from '$lib/server/db/schema';
 import {
+	buildTenantAnnouncementText,
 	buildTenantDirectMessageText,
 	sendTelegramMessage,
 	type TelegramSendResult
@@ -21,6 +22,20 @@ function nextAttemptAt(result: Extract<TelegramSendResult, { ok: false }>) {
 
 type TelegramFailureCode = Extract<TelegramSendResult, { ok: false }>['code'] | 'delivery_error';
 type NotificationDelivery = typeof notificationQueue.$inferSelect;
+type AnnouncementTargetType = 'ALL' | 'PROPERTY' | 'BLOCK' | 'ROOM' | 'TENANT';
+
+interface TelegramRecipient {
+	tenantId: string;
+	userId: string;
+	telegramUserId: string | null;
+}
+
+export interface TelegramDeliveryBatch {
+	status: 'queued';
+	totalRecipients: number;
+	queued: number;
+	skippedUnlinked: number;
+}
 
 export type TelegramDelivery =
 	| {
@@ -110,7 +125,105 @@ function buildTelegramText(notification: NotificationDelivery) {
 	if (notification.type === 'direct_message') {
 		return buildTenantDirectMessageText(notification.content);
 	}
+	if (notification.type === 'announcement') {
+		return buildTenantAnnouncementText(notification.title, notification.content);
+	}
 	return buildTenantDirectMessageText(notification.content);
+}
+
+function uniqueRecipients(rows: TelegramRecipient[]) {
+	const seen = new Set<string>();
+	const recipients: TelegramRecipient[] = [];
+	for (const row of rows) {
+		if (seen.has(row.tenantId)) continue;
+		seen.add(row.tenantId);
+		recipients.push(row);
+	}
+	return recipients;
+}
+
+async function findAnnouncementRecipients(
+	landlordId: string,
+	targetType: AnnouncementTargetType,
+	targetId: string | null
+) {
+	const conditions = [eq(properties.landlordId, landlordId)];
+	if (targetType === 'PROPERTY' && targetId) conditions.push(eq(rooms.propertyId, targetId));
+	if (targetType === 'BLOCK' && targetId) conditions.push(eq(rooms.blockId, targetId));
+	if (targetType === 'ROOM' && targetId) conditions.push(eq(rooms.id, targetId));
+	if (targetType === 'TENANT' && targetId) conditions.push(eq(tenantProfiles.id, targetId));
+
+	const rowsToNotify = await db
+		.select({
+			tenantId: tenantProfiles.id,
+			userId: tenantProfiles.userId,
+			telegramUserId: tenantProfiles.telegramUserId
+		})
+		.from(tenantProfiles)
+		.innerJoin(rooms, eq(tenantProfiles.id, rooms.tenantId))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(and(...conditions));
+
+	return uniqueRecipients(rowsToNotify);
+}
+
+export async function queueAnnouncementTelegramDeliveries(args: {
+	landlordId: string;
+	announcementId: string;
+	title: string;
+	content: string;
+	isImportant: boolean;
+	targetType: string;
+	targetId: string | null;
+}): Promise<TelegramDeliveryBatch> {
+	const targetType = (
+		['ALL', 'PROPERTY', 'BLOCK', 'ROOM', 'TENANT'].includes(args.targetType)
+			? args.targetType
+			: 'ALL'
+	) as AnnouncementTargetType;
+	const recipients = await findAnnouncementRecipients(args.landlordId, targetType, args.targetId);
+	const linkedRecipients = recipients.filter((recipient) => recipient.telegramUserId);
+
+	if (linkedRecipients.length === 0) {
+		return {
+			status: 'queued',
+			totalRecipients: recipients.length,
+			queued: 0,
+			skippedUnlinked: recipients.length
+		};
+	}
+
+	const deliveryTitle = args.isImportant ? `Thông báo quan trọng: ${args.title}` : args.title;
+	const queued = await db
+		.insert(notificationQueue)
+		.values(
+			linkedRecipients.map((recipient) => ({
+				landlordId: args.landlordId,
+				tenantId: recipient.tenantId,
+				recipientUserId: recipient.userId,
+				type: 'announcement',
+				channel: 'telegram',
+				title: deliveryTitle,
+				content: args.content,
+				status: 'queued',
+				attemptCount: 0,
+				relatedType: 'announcement',
+				relatedId: args.announcementId,
+				scheduledFor: today()
+			}))
+		)
+		.returning();
+
+	for (const row of queued) {
+		queueTelegramNotificationSend(row);
+	}
+
+	return {
+		status: 'queued',
+		totalRecipients: recipients.length,
+		queued: queued.length,
+		skippedUnlinked: recipients.length - queued.length
+	};
 }
 
 async function markTelegramDeliveryFailed(

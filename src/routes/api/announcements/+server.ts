@@ -11,6 +11,7 @@ import {
 	landlordOwnsTenant,
 	requireLandlord
 } from '$lib/server/authz';
+import { queueAnnouncementTelegramDeliveries } from '$lib/server/message-delivery';
 
 async function landlordOwnsBlock(landlordId: string, blockId: string) {
 	const row = await db.query.blocks.findFirst({
@@ -133,7 +134,32 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			})
 			.returning();
 
-		return json(created[0]);
+		let telegramDelivery = null;
+		try {
+			telegramDelivery = await queueAnnouncementTelegramDeliveries({
+				landlordId: auth.value,
+				announcementId: created[0].id,
+				title,
+				content,
+				isImportant: !!isImportant,
+				targetType: targetType || 'ALL',
+				targetId: targetId || null
+			});
+		} catch (deliveryError) {
+			console.error(
+				'Telegram announcement delivery failed after announcement was saved',
+				deliveryError
+			);
+			telegramDelivery = {
+				status: 'failed',
+				totalRecipients: 0,
+				queued: 0,
+				skippedUnlinked: 0,
+				message: 'Đã đăng thông báo nhưng không tạo được queue Telegram'
+			};
+		}
+
+		return json({ ...created[0], telegramDelivery });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
