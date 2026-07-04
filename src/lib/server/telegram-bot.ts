@@ -39,7 +39,7 @@ export function buildMiniAppUrl() {
 
 export function buildTenantDirectMessageText(content: string) {
 	const miniAppUrl = buildMiniAppUrl();
-	const parts = ['Roomio - bạn có tin nhắn mới từ chủ trọ:', '', content.trim()];
+	const parts = ['Bạn có tin nhắn mới từ chủ trọ', '', content.trim()];
 	if (miniAppUrl) {
 		parts.push('', `Mở Roomio để trả lời: ${miniAppUrl}`);
 	}
