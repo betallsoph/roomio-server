@@ -2,13 +2,13 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { messages } from '$lib/server/db/schema';
+import { messages, notificationQueue } from '$lib/server/db/schema';
 import { forbidden, landlordOwnsTenant } from '$lib/server/authz';
 import {
 	deliverLandlordMessageToTelegram,
 	type TelegramDelivery
 } from '$lib/server/message-delivery';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 
 // Hội thoại 1-1 giữa chủ nhà và khách thuê
 function conversationId(landlordId: string, tenantId: string) {
@@ -69,7 +69,48 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			.orderBy(asc(messages.createdAt))
 			.limit(500);
 
-		return json(result);
+		const messageIds = result.map((message) => message.id);
+		const deliveries =
+			messageIds.length === 0
+				? []
+				: await db
+						.select({
+							id: notificationQueue.id,
+							relatedId: notificationQueue.relatedId,
+							status: notificationQueue.status,
+							attemptCount: notificationQueue.attemptCount,
+							lastError: notificationQueue.lastError,
+							sentAt: notificationQueue.sentAt
+						})
+						.from(notificationQueue)
+						.where(
+							and(
+								eq(notificationQueue.channel, 'telegram'),
+								eq(notificationQueue.relatedType, 'message'),
+								inArray(notificationQueue.relatedId, messageIds)
+							)
+						);
+		const deliveryByMessageId = new Map(
+			deliveries.map((delivery) => [delivery.relatedId, delivery])
+		);
+
+		return json(
+			result.map((message) => {
+				const delivery = deliveryByMessageId.get(message.id);
+				return {
+					...message,
+					telegramDelivery: delivery
+						? {
+								notificationId: delivery.id,
+								status: delivery.status,
+								attemptCount: delivery.attemptCount,
+								lastError: delivery.lastError,
+								sentAt: delivery.sentAt
+							}
+						: null
+				};
+			})
+		);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
