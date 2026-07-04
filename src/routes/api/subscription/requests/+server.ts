@@ -19,11 +19,13 @@ import {
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM'];
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM'];
 
 function canonicalRentalType(value: unknown) {
 	const type = String(value).trim().toUpperCase();
-	return type === 'COLIVING' ? 'APARTMENT' : type;
+	if (type === 'COLIVING') return 'APARTMENT';
+	if (type === 'SERVICED_APARTMENT') return 'MOTEL';
+	return type;
 }
 
 async function roomCounts(landlordId: string) {

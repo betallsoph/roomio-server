@@ -2,7 +2,7 @@
 
 Phí SaaS được tính theo tổng số phòng đang được quản lý trong tài khoản chủ trọ. Phòng trống vẫn là một đơn vị tính phí vì hệ thống vẫn lưu và vận hành dữ liệu phòng đó.
 
-## Trọ / CHDV / Sleepbox
+## Phòng trọ truyền thống / Căn hộ dịch vụ / KTX / Sleepbox
 
 | Số phòng | Phí mỗi tháng |
 | -------- | ------------: |
@@ -32,6 +32,8 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - Không còn khái niệm Premium hay Enterprise.
 - Các loại hình phòng trọ, CHDV và KTX/Sleepbox dùng bảng giá chuẩn.
 - `APARTMENT` là chung cư chia sẻ phòng (co-living) và dùng bảng giá co-living. `COLIVING` cũ được tự động quy về `APARTMENT`.
+- `MOTEL` đại diện chung cho phòng trọ truyền thống và căn hộ dịch vụ. `SERVICED_APARTMENT` cũ được tự động quy về `MOTEL`.
+- `DORM` đại diện chung cho KTX và Sleepbox.
 - Khi tạo tài khoản lần đầu, Super Admin nhập số phòng đã thương lượng theo nhóm, tự chọn gói rồi cấp gói và hạn mức ban đầu.
 - Với danh mục kết hợp chuẩn + co-living, hệ thống tính cả hai phương án rồi tự lấy giá thấp hơn:
   - `Gộp`: gom toàn bộ phòng, dùng bảng chuẩn nếu có ít nhất một phòng chuẩn.

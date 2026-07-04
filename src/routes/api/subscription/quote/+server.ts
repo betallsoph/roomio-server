@@ -79,7 +79,11 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 						landlord.enabledRentalTypes
 							.split(',')
 							.filter(Boolean)
-							.map((type) => (type === 'COLIVING' ? 'APARTMENT' : type))
+							.map((type) => {
+								if (type === 'COLIVING') return 'APARTMENT';
+								if (type === 'SERVICED_APARTMENT') return 'MOTEL';
+								return type;
+							})
 					)
 				],
 				standardRoomLimit: landlord.subscribedStandardRoomLimit,

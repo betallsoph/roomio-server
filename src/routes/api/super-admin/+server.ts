@@ -23,7 +23,7 @@ import {
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'SERVICED_APARTMENT', 'DORM'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM'] as const;
 
 const DEFAULT_SERVICES = [
 	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },
@@ -39,7 +39,9 @@ function normalizeRentalTypes(value: unknown): string {
 	const normalized = rawTypes
 		.map((type) => {
 			const normalizedType = String(type).trim().toUpperCase();
-			return normalizedType === 'COLIVING' ? 'APARTMENT' : normalizedType;
+			if (normalizedType === 'COLIVING') return 'APARTMENT';
+			if (normalizedType === 'SERVICED_APARTMENT') return 'MOTEL';
+			return normalizedType;
 		})
 		.filter((type): type is (typeof RENTAL_TYPES)[number] =>
 			RENTAL_TYPES.includes(type as (typeof RENTAL_TYPES)[number])
