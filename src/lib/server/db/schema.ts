@@ -299,6 +299,24 @@ export const expenses = pgTable('Expense', {
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 
+export const supportContacts = pgTable('SupportContact', {
+	id: text('id').primaryKey().$defaultFn(uuid),
+	landlordId: text('landlordId')
+		.notNull()
+		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+	category: text('category').notNull(), // repair | plumbing | electrical | cleaning | emergency | ambulance | fire | security | other
+	name: text('name').notNull(),
+	phone: text('phone').notNull(),
+	secondaryPhone: text('secondaryPhone'),
+	company: text('company'),
+	serviceArea: text('serviceArea'), // ví dụ: "Quận 7", "Tòa A", "Toàn hệ thống"
+	notes: text('notes'),
+	isPinned: boolean('isPinned').notNull().default(false),
+	isActive: boolean('isActive').notNull().default(true),
+	createdAt: datetime('createdAt').notNull().$defaultFn(now),
+	updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now)
+});
+
 export const automationJobs = pgTable('AutomationJob', {
 	id: text('id').primaryKey().$defaultFn(uuid),
 	landlordId: text('landlordId')
@@ -389,6 +407,7 @@ export const landlordProfilesRelations = relations(landlordProfiles, ({ one, man
 	services: many(services),
 	staffs: many(staffProfiles),
 	expenses: many(expenses),
+	supportContacts: many(supportContacts),
 	automationJobs: many(automationJobs),
 	notificationQueue: many(notificationQueue),
 	paymentTransactions: many(paymentTransactions),
@@ -517,6 +536,13 @@ export const expensesRelations = relations(expenses, ({ one }) => ({
 		references: [landlordProfiles.id]
 	}),
 	property: one(properties, { fields: [expenses.propertyId], references: [properties.id] })
+}));
+
+export const supportContactsRelations = relations(supportContacts, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [supportContacts.landlordId],
+		references: [landlordProfiles.id]
+	})
 }));
 
 export const automationJobsRelations = relations(automationJobs, ({ one }) => ({
