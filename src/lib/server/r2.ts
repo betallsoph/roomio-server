@@ -8,7 +8,8 @@ const DEFAULT_EXPIRES_SECONDS = 5 * 60;
 const EXT_BY_TYPE: Record<string, string> = {
 	'image/jpeg': 'jpg',
 	'image/png': 'png',
-	'image/webp': 'webp'
+	'image/webp': 'webp',
+	'application/pdf': 'pdf'
 };
 
 const PURPOSE_PREFIX: Record<string, string> = {
@@ -111,7 +112,7 @@ function normalizePurpose(value: unknown): string {
 function normalizeContentType(value: unknown): string {
 	const contentType = typeof value === 'string' ? value.trim().toLowerCase() : '';
 	if (!EXT_BY_TYPE[contentType]) {
-		throw new Error('Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP');
+		throw new Error('Chỉ chấp nhận ảnh JPEG, PNG, WebP hoặc file PDF');
 	}
 	return contentType;
 }

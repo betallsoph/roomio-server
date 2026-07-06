@@ -1,0 +1,25 @@
+CREATE INDEX "Contract_tenantId_idx" ON "Contract" USING btree ("tenantId");--> statement-breakpoint
+CREATE INDEX "Contract_roomId_idx" ON "Contract" USING btree ("roomId");--> statement-breakpoint
+CREATE INDEX "Expense_landlordId_idx" ON "Expense" USING btree ("landlordId");--> statement-breakpoint
+CREATE INDEX "Expense_propertyId_idx" ON "Expense" USING btree ("propertyId");--> statement-breakpoint
+CREATE INDEX "InvoiceItem_invoiceId_idx" ON "InvoiceItem" USING btree ("invoiceId");--> statement-breakpoint
+CREATE INDEX "Invoice_roomId_idx" ON "Invoice" USING btree ("roomId");--> statement-breakpoint
+CREATE INDEX "Invoice_payosOrderCode_idx" ON "Invoice" USING btree ("payosOrderCode");--> statement-breakpoint
+CREATE INDEX "Invoice_payosPaymentLinkId_idx" ON "Invoice" USING btree ("payosPaymentLinkId");--> statement-breakpoint
+CREATE INDEX "MaintenanceRequest_tenantId_idx" ON "MaintenanceRequest" USING btree ("tenantId");--> statement-breakpoint
+CREATE INDEX "MaintenanceRequest_assignedToId_idx" ON "MaintenanceRequest" USING btree ("assignedToId");--> statement-breakpoint
+CREATE INDEX "MeterReading_roomId_idx" ON "MeterReading" USING btree ("roomId");--> statement-breakpoint
+CREATE INDEX "MeterReading_room_service_month_idx" ON "MeterReading" USING btree ("roomId","serviceId","month");--> statement-breakpoint
+CREATE INDEX "NotificationQueue_landlordId_idx" ON "NotificationQueue" USING btree ("landlordId");--> statement-breakpoint
+CREATE INDEX "NotificationQueue_status_idx" ON "NotificationQueue" USING btree ("status");--> statement-breakpoint
+CREATE INDEX "PaymentTransaction_providerTransactionId_idx" ON "PaymentTransaction" USING btree ("providerTransactionId");--> statement-breakpoint
+CREATE INDEX "PaymentTransaction_landlordId_idx" ON "PaymentTransaction" USING btree ("landlordId");--> statement-breakpoint
+CREATE INDEX "PaymentTransaction_invoiceId_idx" ON "PaymentTransaction" USING btree ("invoiceId");--> statement-breakpoint
+CREATE INDEX "Property_landlordId_idx" ON "Property" USING btree ("landlordId");--> statement-breakpoint
+CREATE INDEX "RoomServiceConfig_roomId_idx" ON "RoomServiceConfig" USING btree ("roomId");--> statement-breakpoint
+CREATE INDEX "RoomServiceConfig_serviceId_idx" ON "RoomServiceConfig" USING btree ("serviceId");--> statement-breakpoint
+CREATE INDEX "Room_propertyId_idx" ON "Room" USING btree ("propertyId");--> statement-breakpoint
+CREATE INDEX "Room_tenantId_idx" ON "Room" USING btree ("tenantId");--> statement-breakpoint
+CREATE INDEX "Service_landlordId_idx" ON "Service" USING btree ("landlordId");--> statement-breakpoint
+CREATE INDEX "SubscriptionChangeRequest_landlordId_idx" ON "SubscriptionChangeRequest" USING btree ("landlordId");--> statement-breakpoint
+CREATE INDEX "SubscriptionChangeRequest_status_idx" ON "SubscriptionChangeRequest" USING btree ("status");

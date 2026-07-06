@@ -1,4 +1,12 @@
-import { pgTable, text, integer, boolean, timestamp, doublePrecision } from 'drizzle-orm/pg-core';
+import {
+	pgTable,
+	text,
+	integer,
+	boolean,
+	timestamp,
+	doublePrecision,
+	index
+} from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 const uuid = () => crypto.randomUUID();
@@ -30,7 +38,7 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 	subscribedStandardRoomLimit: integer('subscribedStandardRoomLimit'),
 	subscribedColivingRoomLimit: integer('subscribedColivingRoomLimit'),
 	companyName: text('companyName'),
-	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, DORM
+	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, DORM, WHOLE_UNIT
 
 	// Thông tin ngân hàng nhận tiền chuyển khoản (Cấu hình riêng của mỗi chủ trọ)
 	bankName: text('bankName').notNull().default('Vietcombank'),
@@ -92,17 +100,23 @@ export const tenantInvites = pgTable('TenantInvite', {
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 
-export const properties = pgTable('Property', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	landlordId: text('landlordId')
-		.notNull()
-		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
-	name: text('name').notNull(),
-	shortName: text('shortName').notNull(),
-	address: text('address').notNull(),
-	rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL | DORM
-	createdAt: datetime('createdAt').notNull().$defaultFn(now)
-});
+export const properties = pgTable(
+	'Property',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		shortName: text('shortName').notNull(),
+		address: text('address').notNull(),
+		rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL | DORM | WHOLE_UNIT
+		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		landlordIdx: index('Property_landlordId_idx').on(t.landlordId)
+	})
+);
 
 export const blocks = pgTable('Block', {
 	id: text('id').primaryKey().$defaultFn(uuid),
@@ -112,118 +126,170 @@ export const blocks = pgTable('Block', {
 	name: text('name').notNull() // ví dụ: "Block A", "Khu nhà cấp 4"
 });
 
-export const services = pgTable('Service', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	landlordId: text('landlordId')
-		.notNull()
-		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
-	name: text('name').notNull(), // ví dụ: "Điện", "Nước", "Wifi", "Gửi xe máy"
-	type: text('type').notNull(), // "METERED" | "MANUAL_AMOUNT" | "FLAT_ROOM" | "FLAT_PERSON" | "FLAT_VEHICLE"
-	defaultRate: doublePrecision('defaultRate').notNull(), // Đơn giá chuẩn áp dụng cho toàn bộ cơ sở
-	isActive: boolean('isActive').notNull().default(true)
-});
+export const services = pgTable(
+	'Service',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(), // ví dụ: "Điện", "Nước", "Wifi", "Gửi xe máy"
+		type: text('type').notNull(), // "METERED" | "MANUAL_AMOUNT" | "FLAT_ROOM" | "FLAT_PERSON" | "FLAT_VEHICLE"
+		defaultRate: doublePrecision('defaultRate').notNull(), // Đơn giá chuẩn áp dụng cho toàn bộ cơ sở
+		isActive: boolean('isActive').notNull().default(true)
+	},
+	(t) => ({
+		landlordIdx: index('Service_landlordId_idx').on(t.landlordId)
+	})
+);
 
-export const rooms = pgTable('Room', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	propertyId: text('propertyId')
-		.notNull()
-		.references(() => properties.id, { onDelete: 'cascade' }),
-	blockId: text('blockId').references(() => blocks.id, { onDelete: 'set null' }),
-	roomNumber: text('roomNumber').notNull(),
-	roomCode: text('roomCode'), // Mã căn hộ
-	roomType: text('roomType').notNull(), // 'standard' | 'master' | 'balcony'
-	floor: integer('floor'),
-	status: text('status').notNull(), // 'empty' | 'paid' | 'debt'
-	monthlyRent: doublePrecision('monthlyRent').notNull(),
-	area: doublePrecision('area'),
-	debtAmount: doublePrecision('debtAmount').default(0),
-	tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'set null' })
-});
+export const rooms = pgTable(
+	'Room',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		propertyId: text('propertyId')
+			.notNull()
+			.references(() => properties.id, { onDelete: 'cascade' }),
+		blockId: text('blockId').references(() => blocks.id, { onDelete: 'set null' }),
+		roomNumber: text('roomNumber').notNull(),
+		roomCode: text('roomCode'), // Mã căn hộ
+		roomType: text('roomType').notNull(), // 'standard' | 'master' | 'balcony'
+		floor: integer('floor'),
+		status: text('status').notNull(), // 'empty' | 'paid' | 'debt'
+		monthlyRent: doublePrecision('monthlyRent').notNull(),
+		area: doublePrecision('area'),
+		debtAmount: doublePrecision('debtAmount').default(0),
+		tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'set null' })
+	},
+	(t) => ({
+		propertyIdx: index('Room_propertyId_idx').on(t.propertyId),
+		tenantIdx: index('Room_tenantId_idx').on(t.tenantId)
+	})
+);
 
-export const roomServiceConfigs = pgTable('RoomServiceConfig', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	roomId: text('roomId')
-		.notNull()
-		.references(() => rooms.id, { onDelete: 'cascade' }),
-	serviceId: text('serviceId')
-		.notNull()
-		.references(() => services.id, { onDelete: 'cascade' }),
-	customRate: doublePrecision('customRate'), // Nếu không null, ghi đè đơn giá defaultRate của Service
-	quantity: integer('quantity').notNull().default(1) // Số lượng đăng ký (áp dụng cho xe máy, số người)
-});
+export const roomServiceConfigs = pgTable(
+	'RoomServiceConfig',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		roomId: text('roomId')
+			.notNull()
+			.references(() => rooms.id, { onDelete: 'cascade' }),
+		serviceId: text('serviceId')
+			.notNull()
+			.references(() => services.id, { onDelete: 'cascade' }),
+		customRate: doublePrecision('customRate'), // Nếu không null, ghi đè đơn giá defaultRate của Service
+		quantity: integer('quantity').notNull().default(1) // Số lượng đăng ký (áp dụng cho xe máy, số người)
+	},
+	(t) => ({
+		roomIdx: index('RoomServiceConfig_roomId_idx').on(t.roomId),
+		serviceIdx: index('RoomServiceConfig_serviceId_idx').on(t.serviceId)
+	})
+);
 
-export const meterReadings = pgTable('MeterReading', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	roomId: text('roomId')
-		.notNull()
-		.references(() => rooms.id, { onDelete: 'cascade' }),
-	serviceId: text('serviceId').notNull(), // Chỉ số đo lường cho dịch vụ nào (Ví dụ dịch vụ Điện / Nước)
-	month: text('month').notNull(), // Định dạng YYYY-MM
-	prevValue: doublePrecision('prevValue').notNull(),
-	submittedValue: doublePrecision('submittedValue'), // Số khách gửi ban đầu, giữ lại khi chủ nhà chỉnh
-	currValue: doublePrecision('currValue').notNull(),
-	recordedAt: text('recordedAt').notNull(), // YYYY-MM-DD
-	photoUrl: text('photoUrl'), // Lưu trữ ảnh chụp đồng hồ đối chiếu
-	status: text('status').notNull().default('approved'), // 'pending' | 'approved' | 'rejected'
-	submittedBy: text('submittedBy').notNull().default('LANDLORD'), // 'LANDLORD' | 'TENANT'
-	isAnomalous: boolean('isAnomalous').notNull().default(false) // Lệch quá ngưỡng so với trung bình 3 tháng
-});
+export const meterReadings = pgTable(
+	'MeterReading',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		roomId: text('roomId')
+			.notNull()
+			.references(() => rooms.id, { onDelete: 'cascade' }),
+		serviceId: text('serviceId').notNull(), // Chỉ số đo lường cho dịch vụ nào (Ví dụ dịch vụ Điện / Nước)
+		month: text('month').notNull(), // Định dạng YYYY-MM
+		prevValue: doublePrecision('prevValue').notNull(),
+		submittedValue: doublePrecision('submittedValue'), // Số khách gửi ban đầu, giữ lại khi chủ nhà chỉnh
+		currValue: doublePrecision('currValue').notNull(),
+		recordedAt: text('recordedAt').notNull(), // YYYY-MM-DD
+		photoUrl: text('photoUrl'), // Lưu trữ ảnh chụp đồng hồ đối chiếu
+		status: text('status').notNull().default('approved'), // 'pending' | 'approved' | 'rejected'
+		submittedBy: text('submittedBy').notNull().default('LANDLORD'), // 'LANDLORD' | 'TENANT'
+		isAnomalous: boolean('isAnomalous').notNull().default(false) // Lệch quá ngưỡng so với trung bình 3 tháng
+	},
+	(t) => ({
+		roomIdx: index('MeterReading_roomId_idx').on(t.roomId),
+		roomServiceMonthIdx: index('MeterReading_room_service_month_idx').on(
+			t.roomId,
+			t.serviceId,
+			t.month
+		)
+	})
+);
 
-export const invoices = pgTable('Invoice', {
-	id: text('id').primaryKey(),
-	roomId: text('roomId')
-		.notNull()
-		.references(() => rooms.id, { onDelete: 'cascade' }),
-	roomNumber: text('roomNumber').notNull(),
-	tenantName: text('tenantName').notNull(),
-	tenantPhone: text('tenantPhone').notNull(),
-	month: text('month').notNull(), // YYYY-MM
-	rentAmount: doublePrecision('rentAmount').notNull(),
-	totalAmount: doublePrecision('totalAmount').notNull(),
-	dueDate: text('dueDate').notNull(), // YYYY-MM-DD
-	paidDate: text('paidDate'), // YYYY-MM-DD
-	status: text('status').notNull(), // 'paid' | 'pending' | 'overdue' | 'partial'
-	paidAmount: doublePrecision('paidAmount').notNull().default(0), // Số tiền đã trả
-	paymentProofImage: text('paymentProofImage'), // Ảnh chụp hóa đơn/bill chuyển khoản
-	paymentMethod: text('paymentMethod'), // 'manual' | 'payos_webhook' — cách xác nhận thanh toán
-	paymentProvider: text('paymentProvider'),
-	payosOrderCode: text('payosOrderCode'),
-	payosPaymentLinkId: text('payosPaymentLinkId'),
-	payosCheckoutUrl: text('payosCheckoutUrl'),
-	payosQrCode: text('payosQrCode'),
-	payosStatus: text('payosStatus'),
-	createdAt: text('createdAt').notNull(), // YYYY-MM-DD
-	notes: text('notes')
-});
+export const invoices = pgTable(
+	'Invoice',
+	{
+		id: text('id').primaryKey(),
+		roomId: text('roomId')
+			.notNull()
+			.references(() => rooms.id, { onDelete: 'cascade' }),
+		roomNumber: text('roomNumber').notNull(),
+		tenantName: text('tenantName').notNull(),
+		tenantPhone: text('tenantPhone').notNull(),
+		month: text('month').notNull(), // YYYY-MM
+		rentAmount: doublePrecision('rentAmount').notNull(),
+		totalAmount: doublePrecision('totalAmount').notNull(),
+		dueDate: text('dueDate').notNull(), // YYYY-MM-DD
+		paidDate: text('paidDate'), // YYYY-MM-DD
+		status: text('status').notNull(), // 'paid' | 'pending' | 'overdue' | 'partial'
+		paidAmount: doublePrecision('paidAmount').notNull().default(0), // Số tiền đã trả
+		paymentProofImage: text('paymentProofImage'), // Ảnh chụp hóa đơn/bill chuyển khoản
+		paymentMethod: text('paymentMethod'), // 'manual' | 'payos_webhook' — cách xác nhận thanh toán
+		paymentProvider: text('paymentProvider'),
+		payosOrderCode: text('payosOrderCode'),
+		payosPaymentLinkId: text('payosPaymentLinkId'),
+		payosCheckoutUrl: text('payosCheckoutUrl'),
+		payosQrCode: text('payosQrCode'),
+		payosStatus: text('payosStatus'),
+		createdAt: text('createdAt').notNull(), // YYYY-MM-DD
+		notes: text('notes')
+	},
+	(t) => ({
+		roomIdx: index('Invoice_roomId_idx').on(t.roomId),
+		orderCodeIdx: index('Invoice_payosOrderCode_idx').on(t.payosOrderCode),
+		paymentLinkIdx: index('Invoice_payosPaymentLinkId_idx').on(t.payosPaymentLinkId)
+	})
+);
 
-export const invoiceItems = pgTable('InvoiceItem', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	invoiceId: text('invoiceId')
-		.notNull()
-		.references(() => invoices.id, { onDelete: 'cascade' }),
-	name: text('name').notNull(), // ví dụ: "Tiền phòng", "Tiền điện tháng 5", "Wifi"
-	amount: doublePrecision('amount').notNull(),
-	details: text('details') // ví dụ: "Chỉ số: 1025 -> 1205 (180 kWh) x 3.500đ"
-});
+export const invoiceItems = pgTable(
+	'InvoiceItem',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		invoiceId: text('invoiceId')
+			.notNull()
+			.references(() => invoices.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(), // ví dụ: "Tiền phòng", "Tiền điện tháng 5", "Wifi"
+		amount: doublePrecision('amount').notNull(),
+		details: text('details') // ví dụ: "Chỉ số: 1025 -> 1205 (180 kWh) x 3.500đ"
+	},
+	(t) => ({
+		invoiceIdx: index('InvoiceItem_invoiceId_idx').on(t.invoiceId)
+	})
+);
 
-export const maintenanceRequests = pgTable('MaintenanceRequest', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	tenantId: text('tenantId')
-		.notNull()
-		.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
-	roomNumber: text('roomNumber').notNull(),
-	buildingName: text('buildingName').notNull(),
-	category: text('category').notNull(), // 'maintenance' | 'plumbing' | 'electrical' | 'internet' | 'other'
-	title: text('title').notNull(),
-	description: text('description').notNull(),
-	imageUrl: text('imageUrl'), // Ảnh sự cố
-	status: text('status').notNull(), // 'pending' | 'in_progress' | 'completed' | 'rejected'
-	priority: text('priority').notNull(), // 'important' | 'normal'
-	createdAt: datetime('createdAt').notNull().$defaultFn(now),
-	updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now),
-	response: text('response'),
-	assignedToId: text('assignedToId').references(() => staffProfiles.id, { onDelete: 'set null' })
-});
+export const maintenanceRequests = pgTable(
+	'MaintenanceRequest',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		tenantId: text('tenantId')
+			.notNull()
+			.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+		roomNumber: text('roomNumber').notNull(),
+		buildingName: text('buildingName').notNull(),
+		category: text('category').notNull(), // 'maintenance' | 'plumbing' | 'electrical' | 'internet' | 'other'
+		title: text('title').notNull(),
+		description: text('description').notNull(),
+		imageUrl: text('imageUrl'), // Ảnh sự cố
+		status: text('status').notNull(), // 'pending' | 'in_progress' | 'completed' | 'rejected'
+		priority: text('priority').notNull(), // 'important' | 'normal'
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now),
+		response: text('response'),
+		assignedToId: text('assignedToId').references(() => staffProfiles.id, { onDelete: 'set null' })
+	},
+	(t) => ({
+		tenantIdx: index('MaintenanceRequest_tenantId_idx').on(t.tenantId),
+		assignedToIdx: index('MaintenanceRequest_assignedToId_idx').on(t.assignedToId)
+	})
+);
 
 export const specialNotes = pgTable('SpecialNote', {
 	id: text('id').primaryKey().$defaultFn(uuid),
@@ -267,37 +333,51 @@ export const messages = pgTable('Message', {
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 
-export const contracts = pgTable('Contract', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	tenantId: text('tenantId')
-		.notNull()
-		.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
-	roomId: text('roomId')
-		.notNull()
-		.references(() => rooms.id, { onDelete: 'cascade' }),
-	startDate: text('startDate').notNull(), // YYYY-MM-DD
-	endDate: text('endDate').notNull(), // YYYY-MM-DD
-	monthlyRent: doublePrecision('monthlyRent').notNull(),
-	deposit: doublePrecision('deposit').notNull().default(0),
-	fileUrl: text('fileUrl'), // Ảnh/scan hợp đồng đã ký
-	status: text('status').notNull().default('active'), // 'active' | 'expired' | 'terminated'
-	notes: text('notes'),
-	createdAt: datetime('createdAt').notNull().$defaultFn(now)
-});
+export const contracts = pgTable(
+	'Contract',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		tenantId: text('tenantId')
+			.notNull()
+			.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+		roomId: text('roomId')
+			.notNull()
+			.references(() => rooms.id, { onDelete: 'cascade' }),
+		startDate: text('startDate').notNull(), // YYYY-MM-DD
+		endDate: text('endDate').notNull(), // YYYY-MM-DD
+		monthlyRent: doublePrecision('monthlyRent').notNull(),
+		deposit: doublePrecision('deposit').notNull().default(0),
+		fileUrl: text('fileUrl'), // Ảnh/scan hợp đồng đã ký
+		status: text('status').notNull().default('active'), // 'active' | 'expired' | 'terminated'
+		notes: text('notes'),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		tenantIdx: index('Contract_tenantId_idx').on(t.tenantId),
+		roomIdx: index('Contract_roomId_idx').on(t.roomId)
+	})
+);
 
-export const expenses = pgTable('Expense', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	landlordId: text('landlordId')
-		.notNull()
-		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
-	propertyId: text('propertyId').references(() => properties.id, { onDelete: 'set null' }), // Để trống nếu là chi phí chung
-	category: text('category').notNull(), // 'electricity' | 'water' | 'internet' | 'maintenance' | 'cleaning' | 'tax' | 'other'
-	description: text('description').notNull(),
-	amount: doublePrecision('amount').notNull(),
-	date: text('date').notNull(), // YYYY-MM-DD
-	notes: text('notes'),
-	createdAt: datetime('createdAt').notNull().$defaultFn(now)
-});
+export const expenses = pgTable(
+	'Expense',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		propertyId: text('propertyId').references(() => properties.id, { onDelete: 'set null' }), // Để trống nếu là chi phí chung
+		category: text('category').notNull(), // 'electricity' | 'water' | 'internet' | 'maintenance' | 'cleaning' | 'tax' | 'other'
+		description: text('description').notNull(),
+		amount: doublePrecision('amount').notNull(),
+		date: text('date').notNull(), // YYYY-MM-DD
+		notes: text('notes'),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		landlordIdx: index('Expense_landlordId_idx').on(t.landlordId),
+		propertyIdx: index('Expense_propertyId_idx').on(t.propertyId)
+	})
+);
 
 export const supportContacts = pgTable('SupportContact', {
 	id: text('id').primaryKey().$defaultFn(uuid),
@@ -332,66 +412,90 @@ export const automationJobs = pgTable('AutomationJob', {
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
 });
 
-export const notificationQueue = pgTable('NotificationQueue', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	landlordId: text('landlordId')
-		.notNull()
-		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
-	tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'cascade' }),
-	recipientUserId: text('recipientUserId').references(() => users.id, { onDelete: 'set null' }),
-	type: text('type').notNull(), // 'invoice_reminder' | 'meter_reminder' | 'contract_reminder' | 'maintenance_sla' | 'direct_message'
-	channel: text('channel').notNull().default('in_app'), // 'in_app' | 'telegram' | 'email' | 'sms' | 'zalo'
-	title: text('title').notNull(),
-	content: text('content').notNull(),
-	status: text('status').notNull().default('queued'), // 'queued' | 'sent' | 'failed' | 'dismissed'
-	attemptCount: integer('attemptCount').notNull().default(0),
-	lastError: text('lastError'),
-	providerMessageId: text('providerMessageId'),
-	nextAttemptAt: datetime('nextAttemptAt'),
-	relatedType: text('relatedType'), // 'invoice' | 'contract' | 'meter' | 'request'
-	relatedId: text('relatedId'),
-	scheduledFor: text('scheduledFor').notNull(), // YYYY-MM-DD
-	sentAt: datetime('sentAt'),
-	createdAt: datetime('createdAt').notNull().$defaultFn(now)
-});
+export const notificationQueue = pgTable(
+	'NotificationQueue',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+		recipientUserId: text('recipientUserId').references(() => users.id, { onDelete: 'set null' }),
+		type: text('type').notNull(), // 'invoice_reminder' | 'meter_reminder' | 'contract_reminder' | 'maintenance_sla' | 'direct_message'
+		channel: text('channel').notNull().default('in_app'), // 'in_app' | 'telegram' | 'email' | 'sms' | 'zalo'
+		title: text('title').notNull(),
+		content: text('content').notNull(),
+		status: text('status').notNull().default('queued'), // 'queued' | 'sent' | 'failed' | 'dismissed'
+		attemptCount: integer('attemptCount').notNull().default(0),
+		lastError: text('lastError'),
+		providerMessageId: text('providerMessageId'),
+		nextAttemptAt: datetime('nextAttemptAt'),
+		relatedType: text('relatedType'), // 'invoice' | 'contract' | 'meter' | 'request'
+		relatedId: text('relatedId'),
+		scheduledFor: text('scheduledFor').notNull(), // YYYY-MM-DD
+		sentAt: datetime('sentAt'),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		landlordIdx: index('NotificationQueue_landlordId_idx').on(t.landlordId),
+		statusIdx: index('NotificationQueue_status_idx').on(t.status)
+	})
+);
 
-export const paymentTransactions = pgTable('PaymentTransaction', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'set null' }),
-	invoiceId: text('invoiceId').references(() => invoices.id, { onDelete: 'set null' }),
-	provider: text('provider').notNull().default('payos'),
-	providerTransactionId: text('providerTransactionId'),
-	invoiceCode: text('invoiceCode'),
-	amount: doublePrecision('amount').notNull(),
-	transferType: text('transferType').notNull(),
-	content: text('content'),
-	status: text('status').notNull(), // 'applied' | 'ignored' | 'unmatched' | 'duplicate'
-	rawPayload: text('rawPayload').notNull(),
-	receivedAt: datetime('receivedAt').notNull().$defaultFn(now)
-});
+export const paymentTransactions = pgTable(
+	'PaymentTransaction',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'set null' }),
+		invoiceId: text('invoiceId').references(() => invoices.id, { onDelete: 'set null' }),
+		provider: text('provider').notNull().default('payos'),
+		providerTransactionId: text('providerTransactionId'),
+		invoiceCode: text('invoiceCode'),
+		amount: doublePrecision('amount').notNull(),
+		transferType: text('transferType').notNull(),
+		content: text('content'),
+		status: text('status').notNull(), // 'applied' | 'ignored' | 'unmatched' | 'duplicate'
+		rawPayload: text('rawPayload').notNull(),
+		receivedAt: datetime('receivedAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		providerTxnIdx: index('PaymentTransaction_providerTransactionId_idx').on(
+			t.providerTransactionId
+		),
+		landlordIdx: index('PaymentTransaction_landlordId_idx').on(t.landlordId),
+		invoiceIdx: index('PaymentTransaction_invoiceId_idx').on(t.invoiceId)
+	})
+);
 
-export const subscriptionChangeRequests = pgTable('SubscriptionChangeRequest', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	landlordId: text('landlordId')
-		.notNull()
-		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
-	requestedTier: text('requestedTier').notNull(),
-	requestedPeriod: text('requestedPeriod').notNull(),
-	currentTier: text('currentTier').notNull(),
-	currentPeriod: text('currentPeriod').notNull(),
-	requestedRentalTypes: text('requestedRentalTypes'), // comma list các loại hình muốn bật thêm
-	requestedRoomAdditions: text('requestedRoomAdditions'), // JSON map loại hình -> số phòng muốn thêm
-	standardRoomCount: integer('standardRoomCount').notNull(),
-	colivingRoomCount: integer('colivingRoomCount').notNull(),
-	quotedMonthlyPrice: doublePrecision('quotedMonthlyPrice'),
-	quotedPeriodPrice: doublePrecision('quotedPeriodPrice'),
-	pricingStrategy: text('pricingStrategy').notNull(),
-	status: text('status').notNull().default('pending'), // pending | approved | rejected | cancelled
-	note: text('note'),
-	adminNote: text('adminNote'),
-	createdAt: datetime('createdAt').notNull().$defaultFn(now),
-	reviewedAt: datetime('reviewedAt')
-});
+export const subscriptionChangeRequests = pgTable(
+	'SubscriptionChangeRequest',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		requestedTier: text('requestedTier').notNull(),
+		requestedPeriod: text('requestedPeriod').notNull(),
+		currentTier: text('currentTier').notNull(),
+		currentPeriod: text('currentPeriod').notNull(),
+		requestedRentalTypes: text('requestedRentalTypes'), // comma list các loại hình muốn bật thêm
+		requestedRoomAdditions: text('requestedRoomAdditions'), // JSON map loại hình -> số phòng muốn thêm
+		standardRoomCount: integer('standardRoomCount').notNull(),
+		colivingRoomCount: integer('colivingRoomCount').notNull(),
+		quotedMonthlyPrice: doublePrecision('quotedMonthlyPrice'),
+		quotedPeriodPrice: doublePrecision('quotedPeriodPrice'),
+		pricingStrategy: text('pricingStrategy').notNull(),
+		status: text('status').notNull().default('pending'), // pending | approved | rejected | cancelled
+		note: text('note'),
+		adminNote: text('adminNote'),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		reviewedAt: datetime('reviewedAt')
+	},
+	(t) => ({
+		landlordIdx: index('SubscriptionChangeRequest_landlordId_idx').on(t.landlordId),
+		statusIdx: index('SubscriptionChangeRequest_status_idx').on(t.status)
+	})
+);
 
 // Quan hệ giữa các bảng (dùng cho db.query relational API)
 
