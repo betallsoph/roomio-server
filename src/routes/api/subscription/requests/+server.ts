@@ -19,7 +19,7 @@ import {
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM'];
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM', 'WHOLE_UNIT'];
 
 function canonicalRentalType(value: unknown) {
 	const type = String(value).trim().toUpperCase();

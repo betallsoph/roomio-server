@@ -1,8 +1,8 @@
 # Cách tính phí Roomio
 
-Phí SaaS được tính theo tổng số phòng đang được quản lý trong tài khoản chủ trọ. Phòng trống vẫn là một đơn vị tính phí vì hệ thống vẫn lưu và vận hành dữ liệu phòng đó.
+Phí SaaS được tính theo tổng số đơn vị cho thuê đang được quản lý trong tài khoản chủ trọ. Phòng/căn trống vẫn là một đơn vị tính phí vì hệ thống vẫn lưu và vận hành dữ liệu đó.
 
-## Phòng trọ truyền thống / Căn hộ dịch vụ / KTX / Sleepbox
+## Phòng trọ truyền thống / Căn hộ dịch vụ / KTX / Sleepbox / Nguyên căn
 
 | Số phòng | Phí mỗi tháng |
 | -------- | ------------: |
@@ -34,10 +34,11 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 
 - Gói được lưu theo sức chứa: `FREE`, `ROOMS_4_10`, `ROOMS_11_25`, `ROOMS_26_50`, `ROOMS_51_80`, `ROOMS_81_100`, `ROOMS_101_150`, `ROOMS_151_PLUS`.
 - Không còn khái niệm Premium hay Enterprise.
-- Các loại hình phòng trọ, CHDV và KTX/Sleepbox dùng bảng giá chuẩn.
+- Các loại hình phòng trọ, CHDV, KTX/Sleepbox và nguyên căn dùng bảng giá chuẩn.
 - `APARTMENT` là chung cư chia sẻ phòng (co-living) và dùng bảng giá co-living. `COLIVING` cũ được tự động quy về `APARTMENT`.
 - `MOTEL` đại diện chung cho phòng trọ truyền thống và căn hộ dịch vụ. `SERVICED_APARTMENT` cũ được tự động quy về `MOTEL`.
 - `DORM` đại diện chung cho KTX và Sleepbox.
+- `WHOLE_UNIT` đại diện cho căn hộ chung cư nguyên căn hoặc nhà nguyên căn; mỗi căn/nhà được tính là 1 đơn vị cho thuê trong hạn mức/gói.
 - Khi tạo tài khoản lần đầu, Super Admin nhập số phòng đã thương lượng theo nhóm, tự chọn gói rồi cấp gói và hạn mức ban đầu.
 - Với danh mục kết hợp chuẩn + co-living, hệ thống tính cả hai phương án rồi tự lấy giá thấp hơn:
   - `Gộp`: gom toàn bộ phòng, dùng bảng chuẩn nếu có ít nhất một phòng chuẩn.

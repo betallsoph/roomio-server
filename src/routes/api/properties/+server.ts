@@ -7,7 +7,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 import { pricingGroupForRentalType } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM', 'WHOLE_UNIT'] as const;
 
 function normalizeRentalType(value: unknown): (typeof RENTAL_TYPES)[number] {
 	const normalized = typeof value === 'string' ? value.trim().toUpperCase() : 'APARTMENT';

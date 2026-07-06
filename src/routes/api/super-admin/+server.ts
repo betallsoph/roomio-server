@@ -23,7 +23,7 @@ import {
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM'] as const;
+const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM', 'WHOLE_UNIT'] as const;
 
 const DEFAULT_SERVICES = [
 	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },

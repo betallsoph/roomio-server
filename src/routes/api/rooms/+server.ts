@@ -279,7 +279,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			const groupLimit = isColivingGroup ? profile?.colivingLimit : profile?.standardLimit;
 			if (groupLimit !== null && groupLimit !== undefined && groupCount >= groupLimit) {
 				return {
-					error: `Đã đạt hạn mức ${groupLimit} phòng ${isColivingGroup ? 'chung cư / co-living' : 'trọ / CHDV / Sleepbox'} đã đăng ký`
+					error: `Đã đạt hạn mức ${groupLimit} đơn vị ${isColivingGroup ? 'share phòng chung cư / co-living' : 'trọ / CHDV / Sleepbox / nguyên căn'} đã đăng ký`
 				};
 			}
 
