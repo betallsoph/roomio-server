@@ -2,7 +2,13 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { meterReadings, rooms, properties, services } from '$lib/server/db/schema';
+import {
+	meterReadings,
+	rooms,
+	properties,
+	services,
+	roomServiceConfigs
+} from '$lib/server/db/schema';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { forbidden, landlordOwnsRoom } from '$lib/server/authz';
 
@@ -124,6 +130,33 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			!(await landlordOwnsRoom(locals.session.landlordProfileId!, roomId))
 		) {
 			return forbidden();
+		}
+
+		const serviceConfig = (
+			await db
+				.select({
+					name: services.name,
+					type: services.type,
+					isActive: services.isActive
+				})
+				.from(roomServiceConfigs)
+				.innerJoin(services, eq(roomServiceConfigs.serviceId, services.id))
+				.where(
+					and(eq(roomServiceConfigs.roomId, roomId), eq(roomServiceConfigs.serviceId, serviceId))
+				)
+				.limit(1)
+		)[0];
+
+		if (!serviceConfig || !serviceConfig.isActive) {
+			return json({ error: 'Dịch vụ này không còn áp dụng cho phòng' }, { status: 400 });
+		}
+		if (serviceConfig.type !== 'METERED') {
+			return json(
+				{
+					error: `${serviceConfig.name} đang tính khoán hàng tháng, không cần gửi chỉ số đồng hồ`
+				},
+				{ status: 400 }
+			);
 		}
 
 		// Lấy lịch sử đã duyệt để tính chỉ số đầu kỳ và mức tiêu thụ trung bình
