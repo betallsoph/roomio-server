@@ -16,8 +16,6 @@ type EnvSuperAdmin = {
 };
 
 const ENV_SUPER_ADMIN_ID = 'env-super-admin';
-const DEMO_LOGIN_DISABLED_MESSAGE = 'Demo login chưa được bật';
-const DEMO_LOGIN_NOT_READY_MESSAGE = 'Demo account chưa sẵn sàng';
 
 function getEnvSuperAdmins(): EnvSuperAdmin[] {
 	const accounts = process.env.SUPER_ADMIN_ACCOUNTS?.split(',')
@@ -54,50 +52,6 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		} else if (action === 'logout') {
 			destroySession(cookies);
 			return json({ success: true });
-		} else if (action === 'demo-login') {
-			const demoEmail = process.env.DEMO_LOGIN_EMAIL?.trim();
-			if (!demoEmail) {
-				return json({ error: DEMO_LOGIN_DISABLED_MESSAGE }, { status: 403 });
-			}
-
-			const user = await db.query.users.findFirst({
-				where: eq(users.email, requiredEmail(demoEmail))
-			});
-
-			if (!user || user.role !== 'LANDLORD' || !user.isActive) {
-				return json({ error: DEMO_LOGIN_NOT_READY_MESSAGE }, { status: 404 });
-			}
-
-			const landlordProfile = await db.query.landlordProfiles.findFirst({
-				where: eq(landlordProfiles.userId, user.id)
-			});
-
-			if (!landlordProfile) {
-				return json({ error: DEMO_LOGIN_NOT_READY_MESSAGE }, { status: 404 });
-			}
-
-			createSession(cookies, {
-				userId: user.id,
-				role: user.role,
-				landlordProfileId: landlordProfile.id,
-				enabledRentalTypes: landlordProfile.enabledRentalTypes || null,
-				tenantProfileId: null,
-				staffProfileId: null,
-				staffLandlordId: null
-			});
-
-			return json({
-				id: user.id,
-				email: user.email,
-				phone: user.phone,
-				name: user.name,
-				role: user.role,
-				landlordProfileId: landlordProfile.id,
-				enabledRentalTypes: landlordProfile.enabledRentalTypes || null,
-				tenantProfileId: null,
-				staffProfileId: null,
-				staffLandlordId: null
-			});
 		} else if (action === 'login') {
 			if ((!email && !phone) || !password) {
 				return json({ error: 'Thiếu tài khoản hoặc mật khẩu' }, { status: 400 });
