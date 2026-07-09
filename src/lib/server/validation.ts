@@ -69,32 +69,5 @@ export function requiredPhone(value: unknown): string {
 	if (!/^[0-9+\-\s.()]{8,20}$/.test(phone)) {
 		throw new ValidationError('Số điện thoại không hợp lệ');
 	}
-	if (phone.replace(/\D/g, '').length < 8) {
-		throw new ValidationError('Số điện thoại không hợp lệ');
-	}
 	return phone;
-}
-
-export function phoneLookupDigits(value: unknown): string[] {
-	const phone = requiredPhone(value);
-	const digits = phone.replace(/\D/g, '');
-	const variants = new Set<string>([digits]);
-
-	if (digits.startsWith('0084') && digits.length > 4) {
-		const local = `0${digits.slice(4)}`;
-		variants.add(`84${digits.slice(4)}`);
-		variants.add(local);
-	}
-
-	if (digits.startsWith('84') && digits.length > 2) {
-		variants.add(`0${digits.slice(2)}`);
-		variants.add(`0084${digits.slice(2)}`);
-	}
-
-	if (digits.startsWith('0') && digits.length > 1) {
-		variants.add(`84${digits.slice(1)}`);
-		variants.add(`0084${digits.slice(1)}`);
-	}
-
-	return [...variants];
 }
