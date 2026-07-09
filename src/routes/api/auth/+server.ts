@@ -2,11 +2,18 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { landlordProfiles, staffProfiles, tenantProfiles, users } from '$lib/server/db/schema';
-import { eq, or } from 'drizzle-orm';
+import {
+	landlordProfiles,
+	services,
+	staffProfiles,
+	tenantProfiles,
+	users
+} from '$lib/server/db/schema';
+import { eq, inArray, or, sql } from 'drizzle-orm';
 import { createSession, destroySession } from '$lib/server/session';
 import { hashPassword, verifyPassword } from '$lib/server/password';
-import { requiredEmail, requiredPhone, ValidationError } from '$lib/server/validation';
+import { phoneLookupDigits, requiredEmail, ValidationError } from '$lib/server/validation';
+import crypto from 'crypto';
 
 type EnvSuperAdmin = {
 	id: string;
@@ -18,6 +25,13 @@ type EnvSuperAdmin = {
 const ENV_SUPER_ADMIN_ID = 'env-super-admin';
 const DEMO_LOGIN_DISABLED_MESSAGE = 'Demo login chưa được bật';
 const DEMO_LOGIN_NOT_READY_MESSAGE = 'Demo account chưa sẵn sàng';
+const DEMO_DEFAULT_SERVICES = [
+	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },
+	{ name: 'Nước', type: 'METERED', defaultRate: 15000 },
+	{ name: 'Wifi', type: 'FLAT_ROOM', defaultRate: 100000 },
+	{ name: 'Rác sinh hoạt', type: 'FLAT_PERSON', defaultRate: 30000 },
+	{ name: 'Gửi xe máy', type: 'FLAT_VEHICLE', defaultRate: 100000 }
+];
 
 function getEnvSuperAdmins(): EnvSuperAdmin[] {
 	const accounts = process.env.SUPER_ADMIN_ACCOUNTS?.split(',')
@@ -41,6 +55,66 @@ function getEnvSuperAdmins(): EnvSuperAdmin[] {
 	});
 }
 
+function demoSubscriptionExpiry() {
+	const expiresAt = new Date();
+	expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+	return expiresAt;
+}
+
+async function createDemoLandlord(email: string) {
+	return db.transaction(async (tx) => {
+		const name = process.env.DEMO_LOGIN_NAME?.trim() || 'Roomio Demo';
+		const companyName = process.env.DEMO_LOGIN_COMPANY?.trim() || 'Roomio Demo House';
+		const phone = process.env.DEMO_LOGIN_PHONE?.trim() || '0900000001';
+		const passwordHash = await hashPassword(crypto.randomUUID());
+
+		const user = (
+			await tx
+				.insert(users)
+				.values({
+					email,
+					phone,
+					passwordHash,
+					name,
+					role: 'LANDLORD',
+					isActive: true
+				})
+				.returning()
+		)[0];
+
+		const landlordProfile = (
+			await tx
+				.insert(landlordProfiles)
+				.values({
+					userId: user.id,
+					companyName,
+					subscriptionType: 'ROOMS_4_10',
+					subscriptionPeriod: 'MONTHLY',
+					subValidUntil: demoSubscriptionExpiry(),
+					subscribedStandardRoomLimit: 10,
+					subscribedColivingRoomLimit: 0,
+					enabledRentalTypes: 'MOTEL,APARTMENT',
+					bankName: 'Vietcombank',
+					bankCode: 'VCB',
+					accountNumber: '1234567890',
+					accountName: name.toUpperCase(),
+					bankBranch: 'Chi nhánh TP.HCM'
+				})
+				.returning()
+		)[0];
+
+		await tx.insert(services).values(
+			DEMO_DEFAULT_SERVICES.map((service) => ({
+				...service,
+				landlordId: landlordProfile.id,
+				isActive: true
+			}))
+		);
+
+		return { user, landlordProfile };
+	});
+}
+
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	try {
 		const body = await request.json();
@@ -60,19 +134,26 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: DEMO_LOGIN_DISABLED_MESSAGE }, { status: 403 });
 			}
 
-			const user = await db.query.users.findFirst({
+			let user = await db.query.users.findFirst({
 				where: eq(users.email, requiredEmail(demoEmail))
 			});
 
-			if (!user || user.role !== 'LANDLORD' || !user.isActive) {
-				return json({ error: DEMO_LOGIN_NOT_READY_MESSAGE }, { status: 404 });
+			let landlordProfile = user
+				? await db.query.landlordProfiles.findFirst({
+						where: eq(landlordProfiles.userId, user.id)
+					})
+				: null;
+
+			if (!user) {
+				if (process.env.DEMO_LOGIN_AUTOPROVISION !== 'true') {
+					return json({ error: DEMO_LOGIN_NOT_READY_MESSAGE }, { status: 404 });
+				}
+				const created = await createDemoLandlord(requiredEmail(demoEmail));
+				user = created.user;
+				landlordProfile = created.landlordProfile;
 			}
 
-			const landlordProfile = await db.query.landlordProfiles.findFirst({
-				where: eq(landlordProfiles.userId, user.id)
-			});
-
-			if (!landlordProfile) {
+			if (user.role !== 'LANDLORD' || !user.isActive || !landlordProfile) {
 				return json({ error: DEMO_LOGIN_NOT_READY_MESSAGE }, { status: 404 });
 			}
 
@@ -136,7 +217,14 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 			const conditions = [];
 			if (email) conditions.push(eq(users.email, requiredEmail(email)));
-			if (phone) conditions.push(eq(users.phone, requiredPhone(phone)));
+			if (phone) {
+				conditions.push(
+					inArray(
+						sql<string>`regexp_replace(${users.phone}, '[^0-9]', '', 'g')`,
+						phoneLookupDigits(phone)
+					)
+				);
+			}
 
 			const user = await db.query.users.findFirst({ where: or(...conditions) });
 
