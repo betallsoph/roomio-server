@@ -2,10 +2,11 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { invoices, landlordProfiles } from '$lib/server/db/schema';
+import { invoices } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { forbidden, landlordOwnsInvoice, tenantOwnsInvoice } from '$lib/server/authz';
 import { createPayOSPaymentLink, makePayOSOrderCode, resolvePayOSConfig } from '$lib/server/payos';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 function paymentDescription(invoiceId: string) {
 	const compact = invoiceId
@@ -46,6 +47,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			where: eq(invoices.id, id),
 			with: {
 				items: true,
+				paymentAccount: true,
 				room: { with: { property: { columns: { landlordId: true } } } }
 			}
 		});
@@ -74,6 +76,10 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		}
 
 		const landlordId = invoice.room.property.landlordId;
+		const paymentAccount = await getPaymentAccountForLandlord(
+			landlordId,
+			invoice.paymentAccountId || null
+		);
 		const amountDue = Math.max(invoice.totalAmount - invoice.paidAmount, 0);
 		const description = paymentDescription(invoice.id);
 
@@ -93,29 +99,31 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			});
 		}
 
-		const config = await resolvePayOSConfig({ scope: 'rent', landlordId });
+		const config = await resolvePayOSConfig({
+			scope: 'rent',
+			landlordId,
+			paymentAccountId: paymentAccount.id
+		});
 
 		// Chủ trọ CHƯA kết nối PayOS riêng → VietQR + xác nhận thủ công
 		if (!config) {
-			const profile = await db.query.landlordProfiles.findFirst({
-				where: eq(landlordProfiles.id, landlordId),
-				columns: { bankName: true, bankCode: true, accountNumber: true, accountName: true }
-			});
-			if (!profile?.accountNumber || !profile.bankCode) {
+			if (!paymentAccount.accountNumber || !paymentAccount.bankCode) {
 				return json({ error: 'Chủ trọ chưa cấu hình tài khoản nhận tiền' }, { status: 400 });
 			}
 			return json({
 				provider: 'vietqr',
-				bankName: profile.bankName,
-				bankCode: profile.bankCode,
-				accountNumber: profile.accountNumber,
-				accountName: profile.accountName,
+				paymentAccountId: paymentAccount.id,
+				paymentAccountName: paymentAccount.name,
+				bankName: paymentAccount.bankName,
+				bankCode: paymentAccount.bankCode,
+				accountNumber: paymentAccount.accountNumber,
+				accountName: paymentAccount.accountName,
 				amount: amountDue,
 				description,
 				qrImageUrl: buildVietQRImageUrl({
-					bankCode: profile.bankCode,
-					accountNumber: profile.accountNumber,
-					accountName: profile.accountName,
+					bankCode: paymentAccount.bankCode,
+					accountNumber: paymentAccount.accountNumber,
+					accountName: paymentAccount.accountName,
 					amount: amountDue,
 					description
 				})
@@ -146,6 +154,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			.update(invoices)
 			.set({
 				paymentProvider: 'payos',
+				paymentAccountId: paymentAccount.id,
 				payosOrderCode: String(paymentLink.orderCode),
 				payosPaymentLinkId: paymentLink.paymentLinkId,
 				payosCheckoutUrl: paymentLink.checkoutUrl,
@@ -156,6 +165,8 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 
 		return json({
 			provider: 'payos',
+			paymentAccountId: paymentAccount.id,
+			paymentAccountName: paymentAccount.name,
 			orderCode: paymentLink.orderCode,
 			paymentLinkId: paymentLink.paymentLinkId,
 			checkoutUrl: paymentLink.checkoutUrl,

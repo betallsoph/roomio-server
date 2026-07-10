@@ -18,6 +18,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 			where: eq(invoices.id, id),
 			with: {
 				items: true,
+				paymentAccount: true,
 				room: {
 					with: {
 						property: {
@@ -121,6 +122,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 				await tx.insert(paymentTransactions).values({
 					landlordId: locals.session!.landlordProfileId,
 					invoiceId: id,
+					paymentAccountId: invoice.paymentAccountId,
 					provider: 'manual',
 					providerTransactionId: `manual:${id}:${Date.now()}`,
 					invoiceCode: id,

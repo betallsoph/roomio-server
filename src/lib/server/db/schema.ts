@@ -56,6 +56,37 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 	payosConnectedAt: datetime('payosConnectedAt') // null = chưa kết nối PayOS riêng
 });
 
+export const paymentAccounts = pgTable(
+	'PaymentAccount',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		provider: text('provider').notNull().default('vietqr'), // 'vietqr' | 'payos'
+		isDefault: boolean('isDefault').notNull().default(false),
+		isActive: boolean('isActive').notNull().default(true),
+		bankName: text('bankName').notNull().default('Vietcombank'),
+		bankCode: text('bankCode').notNull().default('VCB'),
+		accountNumber: text('accountNumber').notNull().default(''),
+		accountName: text('accountName').notNull().default(''),
+		bankBranch: text('bankBranch'),
+		momoNumber: text('momoNumber'),
+		payosClientId: text('payosClientId'),
+		payosApiKeyEnc: text('payosApiKeyEnc'),
+		payosChecksumKeyEnc: text('payosChecksumKeyEnc'),
+		payosConnectedAt: datetime('payosConnectedAt'),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now)
+	},
+	(t) => ({
+		landlordIdx: index('PaymentAccount_landlordId_idx').on(t.landlordId),
+		defaultIdx: index('PaymentAccount_default_idx').on(t.landlordId, t.isDefault),
+		activeIdx: index('PaymentAccount_active_idx').on(t.landlordId, t.isActive)
+	})
+);
+
 export const staffProfiles = pgTable('StaffProfile', {
 	id: text('id').primaryKey().$defaultFn(uuid),
 	userId: text('userId')
@@ -159,11 +190,15 @@ export const rooms = pgTable(
 		monthlyRent: doublePrecision('monthlyRent').notNull(),
 		area: doublePrecision('area'),
 		debtAmount: doublePrecision('debtAmount').default(0),
+		paymentAccountId: text('paymentAccountId').references(() => paymentAccounts.id, {
+			onDelete: 'set null'
+		}),
 		tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'set null' })
 	},
 	(t) => ({
 		propertyIdx: index('Room_propertyId_idx').on(t.propertyId),
-		tenantIdx: index('Room_tenantId_idx').on(t.tenantId)
+		tenantIdx: index('Room_tenantId_idx').on(t.tenantId),
+		paymentAccountIdx: index('Room_paymentAccountId_idx').on(t.paymentAccountId)
 	})
 );
 
@@ -234,6 +269,9 @@ export const invoices = pgTable(
 		paymentProofImage: text('paymentProofImage'), // Ảnh chụp hóa đơn/bill chuyển khoản
 		paymentMethod: text('paymentMethod'), // 'manual' | 'payos_webhook' — cách xác nhận thanh toán
 		paymentProvider: text('paymentProvider'),
+		paymentAccountId: text('paymentAccountId').references(() => paymentAccounts.id, {
+			onDelete: 'set null'
+		}),
 		payosOrderCode: text('payosOrderCode'),
 		payosPaymentLinkId: text('payosPaymentLinkId'),
 		payosCheckoutUrl: text('payosCheckoutUrl'),
@@ -244,6 +282,7 @@ export const invoices = pgTable(
 	},
 	(t) => ({
 		roomIdx: index('Invoice_roomId_idx').on(t.roomId),
+		paymentAccountIdx: index('Invoice_paymentAccountId_idx').on(t.paymentAccountId),
 		orderCodeIdx: index('Invoice_payosOrderCode_idx').on(t.payosOrderCode),
 		paymentLinkIdx: index('Invoice_payosPaymentLinkId_idx').on(t.payosPaymentLinkId)
 	})
@@ -349,12 +388,16 @@ export const contracts = pgTable(
 		deposit: doublePrecision('deposit').notNull().default(0),
 		fileUrl: text('fileUrl'), // Ảnh/scan hợp đồng đã ký
 		status: text('status').notNull().default('active'), // 'active' | 'expired' | 'terminated'
+		paymentAccountId: text('paymentAccountId').references(() => paymentAccounts.id, {
+			onDelete: 'set null'
+		}),
 		notes: text('notes'),
 		createdAt: datetime('createdAt').notNull().$defaultFn(now)
 	},
 	(t) => ({
 		tenantIdx: index('Contract_tenantId_idx').on(t.tenantId),
-		roomIdx: index('Contract_roomId_idx').on(t.roomId)
+		roomIdx: index('Contract_roomId_idx').on(t.roomId),
+		paymentAccountIdx: index('Contract_paymentAccountId_idx').on(t.paymentAccountId)
 	})
 );
 
@@ -448,6 +491,9 @@ export const paymentTransactions = pgTable(
 		id: text('id').primaryKey().$defaultFn(uuid),
 		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'set null' }),
 		invoiceId: text('invoiceId').references(() => invoices.id, { onDelete: 'set null' }),
+		paymentAccountId: text('paymentAccountId').references(() => paymentAccounts.id, {
+			onDelete: 'set null'
+		}),
 		provider: text('provider').notNull().default('payos'),
 		providerTransactionId: text('providerTransactionId'),
 		invoiceCode: text('invoiceCode'),
@@ -463,7 +509,8 @@ export const paymentTransactions = pgTable(
 			t.providerTransactionId
 		),
 		landlordIdx: index('PaymentTransaction_landlordId_idx').on(t.landlordId),
-		invoiceIdx: index('PaymentTransaction_invoiceId_idx').on(t.invoiceId)
+		invoiceIdx: index('PaymentTransaction_invoiceId_idx').on(t.invoiceId),
+		paymentAccountIdx: index('PaymentTransaction_paymentAccountId_idx').on(t.paymentAccountId)
 	})
 );
 
@@ -515,7 +562,19 @@ export const landlordProfilesRelations = relations(landlordProfiles, ({ one, man
 	automationJobs: many(automationJobs),
 	notificationQueue: many(notificationQueue),
 	paymentTransactions: many(paymentTransactions),
+	paymentAccounts: many(paymentAccounts),
 	subscriptionChangeRequests: many(subscriptionChangeRequests)
+}));
+
+export const paymentAccountsRelations = relations(paymentAccounts, ({ one, many }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [paymentAccounts.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	rooms: many(rooms),
+	contracts: many(contracts),
+	invoices: many(invoices),
+	paymentTransactions: many(paymentTransactions)
 }));
 
 export const staffProfilesRelations = relations(staffProfiles, ({ one, many }) => ({
@@ -574,6 +633,10 @@ export const roomsRelations = relations(rooms, ({ one, many }) => ({
 	property: one(properties, { fields: [rooms.propertyId], references: [properties.id] }),
 	block: one(blocks, { fields: [rooms.blockId], references: [blocks.id] }),
 	tenant: one(tenantProfiles, { fields: [rooms.tenantId], references: [tenantProfiles.id] }),
+	paymentAccount: one(paymentAccounts, {
+		fields: [rooms.paymentAccountId],
+		references: [paymentAccounts.id]
+	}),
 	services: many(roomServiceConfigs),
 	meterReadings: many(meterReadings),
 	invoices: many(invoices),
@@ -592,6 +655,10 @@ export const meterReadingsRelations = relations(meterReadings, ({ one }) => ({
 
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
 	room: one(rooms, { fields: [invoices.roomId], references: [rooms.id] }),
+	paymentAccount: one(paymentAccounts, {
+		fields: [invoices.paymentAccountId],
+		references: [paymentAccounts.id]
+	}),
 	items: many(invoiceItems),
 	payments: many(paymentTransactions)
 }));
@@ -631,7 +698,11 @@ export const roomAssetsRelations = relations(roomAssets, ({ one }) => ({
 
 export const contractsRelations = relations(contracts, ({ one }) => ({
 	tenant: one(tenantProfiles, { fields: [contracts.tenantId], references: [tenantProfiles.id] }),
-	room: one(rooms, { fields: [contracts.roomId], references: [rooms.id] })
+	room: one(rooms, { fields: [contracts.roomId], references: [rooms.id] }),
+	paymentAccount: one(paymentAccounts, {
+		fields: [contracts.paymentAccountId],
+		references: [paymentAccounts.id]
+	})
 }));
 
 export const expensesRelations = relations(expenses, ({ one }) => ({
@@ -679,5 +750,9 @@ export const paymentTransactionsRelations = relations(paymentTransactions, ({ on
 	invoice: one(invoices, {
 		fields: [paymentTransactions.invoiceId],
 		references: [invoices.id]
+	}),
+	paymentAccount: one(paymentAccounts, {
+		fields: [paymentTransactions.paymentAccountId],
+		references: [paymentAccounts.id]
 	})
 }));

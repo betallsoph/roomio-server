@@ -2,9 +2,10 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { landlordProfiles } from '$lib/server/db/schema';
+import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { requireLandlord } from '$lib/server/authz';
+import { ensureDefaultPaymentAccount } from '$lib/server/payment-accounts';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -59,6 +60,27 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			.set(updateData)
 			.where(eq(landlordProfiles.id, landlordId))
 			.returning();
+		if (
+			bankName !== undefined ||
+			bankCode !== undefined ||
+			accountNumber !== undefined ||
+			accountName !== undefined ||
+			bankBranch !== undefined ||
+			momoNumber !== undefined
+		) {
+			const account = await ensureDefaultPaymentAccount(landlordId);
+			await db
+				.update(paymentAccounts)
+				.set({
+					...(bankName !== undefined ? { bankName } : {}),
+					...(bankCode !== undefined ? { bankCode } : {}),
+					...(accountNumber !== undefined ? { accountNumber } : {}),
+					...(accountName ? { accountName: accountName.toUpperCase() } : {}),
+					...(bankBranch !== undefined ? { bankBranch } : {}),
+					...(momoNumber !== undefined ? { momoNumber: momoNumber || null } : {})
+				})
+				.where(eq(paymentAccounts.id, account.id));
+		}
 
 		return json(updated[0]);
 	} catch (error) {

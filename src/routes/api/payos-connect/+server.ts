@@ -3,10 +3,11 @@ import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import type { SessionData } from '$lib/server/session';
 import { db } from '$lib/server/db';
-import { landlordProfiles } from '$lib/server/db/schema';
+import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { encryptSecret } from '$lib/server/secrets';
 import { confirmPayOSWebhook } from '$lib/server/payos';
+import { ensureDefaultPaymentAccount } from '$lib/server/payment-accounts';
 
 // URL webhook tiền thuê — phải trỏ về box API (không phải frontend). PayOS sẽ ping thử URL này.
 function apiWebhookUrl() {
@@ -61,15 +62,28 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!target.ok) return target.response;
 
 		if (action === 'disconnect') {
-			await db
-				.update(landlordProfiles)
-				.set({
-					payosClientId: null,
-					payosApiKeyEnc: null,
-					payosChecksumKeyEnc: null,
-					payosConnectedAt: null
-				})
-				.where(eq(landlordProfiles.id, target.id));
+			const account = await ensureDefaultPaymentAccount(target.id);
+			await db.transaction(async (tx) => {
+				await tx
+					.update(landlordProfiles)
+					.set({
+						payosClientId: null,
+						payosApiKeyEnc: null,
+						payosChecksumKeyEnc: null,
+						payosConnectedAt: null
+					})
+					.where(eq(landlordProfiles.id, target.id));
+				await tx
+					.update(paymentAccounts)
+					.set({
+						provider: 'vietqr',
+						payosClientId: null,
+						payosApiKeyEnc: null,
+						payosChecksumKeyEnc: null,
+						payosConnectedAt: null
+					})
+					.where(eq(paymentAccounts.id, account.id));
+			});
 			return json({ connected: false });
 		}
 
@@ -80,15 +94,31 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Cần đủ clientId, apiKey và checksumKey' }, { status: 400 });
 		}
 
-		await db
-			.update(landlordProfiles)
-			.set({
-				payosClientId: clientId,
-				payosApiKeyEnc: encryptSecret(apiKey),
-				payosChecksumKeyEnc: encryptSecret(checksumKey),
-				payosConnectedAt: new Date()
-			})
-			.where(eq(landlordProfiles.id, target.id));
+		const apiKeyEnc = encryptSecret(apiKey);
+		const checksumKeyEnc = encryptSecret(checksumKey);
+		const connectedAt = new Date();
+		const account = await ensureDefaultPaymentAccount(target.id);
+		await db.transaction(async (tx) => {
+			await tx
+				.update(landlordProfiles)
+				.set({
+					payosClientId: clientId,
+					payosApiKeyEnc: apiKeyEnc,
+					payosChecksumKeyEnc: checksumKeyEnc,
+					payosConnectedAt: connectedAt
+				})
+				.where(eq(landlordProfiles.id, target.id));
+			await tx
+				.update(paymentAccounts)
+				.set({
+					provider: 'payos',
+					payosClientId: clientId,
+					payosApiKeyEnc: apiKeyEnc,
+					payosChecksumKeyEnc: checksumKeyEnc,
+					payosConnectedAt: connectedAt
+				})
+				.where(eq(paymentAccounts.id, account.id));
+		});
 
 		// Đăng ký webhook (vừa validate key vừa set URL). Ở dev localhost PayOS không gọi tới được
 		// → cảnh báo chứ không chặn; key vẫn lưu để lên prod test lại.

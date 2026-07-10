@@ -19,6 +19,7 @@ import {
 	landlordOwnsTenant,
 	requireLandlord
 } from '$lib/server/authz';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -46,7 +47,8 @@ export const GET: RequestHandler = async ({ locals }) => {
 				rooms: {
 					with: {
 						property: true,
-						block: true
+						block: true,
+						paymentAccount: true
 					}
 				}
 			}
@@ -77,7 +79,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			deposit,
 			notes,
 			initialElectricity,
-			initialWater
+			initialWater,
+			paymentAccountId
 		} = body;
 
 		if (
@@ -94,6 +97,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 		if (!(await landlordOwnsRoom(auth.value, roomId))) {
 			return forbidden();
+		}
+		const selectedPaymentAccount = await getPaymentAccountForLandlord(
+			auth.value,
+			paymentAccountId || null
+		);
+		if (!selectedPaymentAccount.isActive) {
+			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
 		}
 
 		// 1. Check if user already exists
@@ -143,7 +153,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					.set({
 						tenantId: tenantProfile.id,
 						status: 'paid', // Mark as active/paid initially
-						debtAmount: 0
+						debtAmount: 0,
+						paymentAccountId: selectedPaymentAccount.id
 					})
 					.where(eq(rooms.id, roomId))
 					.returning()
@@ -208,6 +219,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				endDate: end.toISOString().split('T')[0],
 				monthlyRent: room.monthlyRent,
 				deposit: Number(deposit),
+				paymentAccountId: selectedPaymentAccount.id,
 				notes: notes || null,
 				status: 'active'
 			});
@@ -220,7 +232,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			with: {
 				user: true,
 				rooms: {
-					with: { property: true }
+					with: { property: true, paymentAccount: true }
 				}
 			}
 		});
@@ -267,7 +279,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			with: {
 				user: true,
 				rooms: {
-					with: { property: true }
+					with: { property: true, paymentAccount: true }
 				}
 			}
 		});

@@ -1,7 +1,8 @@
 import crypto from 'crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '$lib/server/db';
-import { landlordProfiles } from '$lib/server/db/schema';
+import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import { tryDecryptSecret } from '$lib/server/secrets';
 
 const PAYOS_API_BASE = process.env.PAYOS_API_BASE ?? 'https://api-merchant.payos.vn';
@@ -41,9 +42,45 @@ export function getPlatformPayOSConfig(): PayOSConfig | null {
 //  - rent (khách thuê trả tiền thuê cho chủ trọ)  → key RIÊNG của chủ trọ (giải mã từ DB);
 //    trả null nếu chủ trọ chưa kết nối PayOS → caller rơi về VietQR + xác nhận thủ công.
 export async function resolvePayOSConfig(
-	ctx: { scope: 'subscription' } | { scope: 'rent'; landlordId: string }
+	ctx:
+		| { scope: 'subscription' }
+		| { scope: 'rent'; landlordId: string; paymentAccountId?: string | null }
 ): Promise<PayOSConfig | null> {
 	if (ctx.scope === 'subscription') return getPlatformPayOSConfig();
+
+	if (ctx.paymentAccountId) {
+		const account = await getPaymentAccountForLandlord(ctx.landlordId, ctx.paymentAccountId);
+		if (
+			account.provider === 'payos' &&
+			account.payosClientId &&
+			account.payosApiKeyEnc &&
+			account.payosChecksumKeyEnc
+		) {
+			const apiKey = tryDecryptSecret(account.payosApiKeyEnc);
+			const checksumKey = tryDecryptSecret(account.payosChecksumKeyEnc);
+			if (apiKey && checksumKey) return { clientId: account.payosClientId, apiKey, checksumKey };
+		}
+		return null;
+	}
+
+	const defaultAccount = await db.query.paymentAccounts.findFirst({
+		where: and(
+			eq(paymentAccounts.landlordId, ctx.landlordId),
+			eq(paymentAccounts.isDefault, true),
+			eq(paymentAccounts.isActive, true)
+		)
+	});
+	if (
+		defaultAccount?.provider === 'payos' &&
+		defaultAccount.payosClientId &&
+		defaultAccount.payosApiKeyEnc &&
+		defaultAccount.payosChecksumKeyEnc
+	) {
+		const apiKey = tryDecryptSecret(defaultAccount.payosApiKeyEnc);
+		const checksumKey = tryDecryptSecret(defaultAccount.payosChecksumKeyEnc);
+		if (apiKey && checksumKey)
+			return { clientId: defaultAccount.payosClientId, apiKey, checksumKey };
+	}
 
 	const profile = await db.query.landlordProfiles.findFirst({
 		where: eq(landlordProfiles.id, ctx.landlordId),

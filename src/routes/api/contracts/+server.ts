@@ -11,6 +11,7 @@ import {
 	landlordOwnsTenant,
 	requireLandlord
 } from '$lib/server/authz';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
@@ -50,7 +51,10 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			where: condition,
 			with: {
 				tenant: { with: { user: { columns: { name: true, phone: true } } } },
-				room: { with: { property: { columns: { name: true, shortName: true } } } }
+				paymentAccount: true,
+				room: {
+					with: { property: { columns: { name: true, shortName: true } }, paymentAccount: true }
+				}
 			},
 			orderBy: desc(contracts.createdAt)
 		});
@@ -67,7 +71,17 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!auth.ok) return auth.response;
 
 		const body = await request.json();
-		const { tenantId, roomId, startDate, endDate, monthlyRent, deposit, fileUrl, notes } = body;
+		const {
+			tenantId,
+			roomId,
+			startDate,
+			endDate,
+			monthlyRent,
+			deposit,
+			fileUrl,
+			notes,
+			paymentAccountId
+		} = body;
 
 		if (!tenantId || !roomId || !startDate || !endDate || monthlyRent === undefined) {
 			return json({ error: 'Thiếu thông tin hợp đồng bắt buộc' }, { status: 400 });
@@ -77,6 +91,17 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			!(await landlordOwnsTenant(auth.value, tenantId))
 		) {
 			return forbidden();
+		}
+		const room = await db.query.rooms.findFirst({
+			where: eq(rooms.id, roomId),
+			columns: { paymentAccountId: true }
+		});
+		const selectedPaymentAccount = await getPaymentAccountForLandlord(
+			auth.value,
+			paymentAccountId || room?.paymentAccountId || null
+		);
+		if (!selectedPaymentAccount.isActive) {
+			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
 		}
 
 		const created = await db
@@ -89,6 +114,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				monthlyRent: Number(monthlyRent),
 				deposit: deposit !== undefined ? Number(deposit) : 0,
 				fileUrl: fileUrl || null,
+				paymentAccountId: selectedPaymentAccount.id,
 				notes: notes || null,
 				status: 'active'
 			})
@@ -106,7 +132,17 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (!auth.ok) return auth.response;
 
 		const body = await request.json();
-		const { id, startDate, endDate, monthlyRent, deposit, fileUrl, notes, status } = body;
+		const {
+			id,
+			startDate,
+			endDate,
+			monthlyRent,
+			deposit,
+			fileUrl,
+			notes,
+			status,
+			paymentAccountId
+		} = body;
 
 		if (!id) {
 			return json({ error: 'Missing contract ID' }, { status: 400 });
@@ -123,6 +159,16 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (fileUrl !== undefined) updateData.fileUrl = fileUrl;
 		if (notes !== undefined) updateData.notes = notes;
 		if (status !== undefined) updateData.status = status; // 'active' | 'expired' | 'terminated'
+		if (paymentAccountId !== undefined) {
+			const selectedPaymentAccount = await getPaymentAccountForLandlord(
+				auth.value,
+				paymentAccountId || null
+			);
+			if (!selectedPaymentAccount.isActive) {
+				return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
+			}
+			updateData.paymentAccountId = selectedPaymentAccount.id;
+		}
 
 		if (Object.keys(updateData).length === 0) {
 			return json({ error: 'No fields to update' }, { status: 400 });

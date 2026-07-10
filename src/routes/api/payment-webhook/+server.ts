@@ -63,7 +63,11 @@ export const POST: RequestHandler = async ({ request }) => {
 		const landlordId = invoice.room.property.landlordId;
 
 		// Verify bằng checksumKey RIÊNG của chủ trọ sở hữu hóa đơn này
-		const config = await resolvePayOSConfig({ scope: 'rent', landlordId });
+		const config = await resolvePayOSConfig({
+			scope: 'rent',
+			landlordId,
+			paymentAccountId: invoice.paymentAccountId
+		});
 		if (!config) {
 			return json({ error: 'Chủ trọ chưa kết nối PayOS để nhận webhook' }, { status: 400 });
 		}
@@ -85,6 +89,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			await db.insert(paymentTransactions).values({
 				landlordId,
 				invoiceId: invoice.id,
+				paymentAccountId: invoice.paymentAccountId,
 				provider: 'payos',
 				providerTransactionId,
 				invoiceCode: orderCode,
@@ -101,6 +106,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			await db.insert(paymentTransactions).values({
 				landlordId,
 				invoiceId: invoice.id,
+				paymentAccountId: invoice.paymentAccountId,
 				provider: 'payos',
 				providerTransactionId,
 				invoiceCode: orderCode,
@@ -121,6 +127,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			await tx.insert(paymentTransactions).values({
 				landlordId,
 				invoiceId: invoice.id,
+				paymentAccountId: invoice.paymentAccountId,
 				provider: 'payos',
 				providerTransactionId,
 				invoiceCode: orderCode,

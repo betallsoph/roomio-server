@@ -17,7 +17,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 		const result = await db.query.paymentTransactions.findMany({
 			where: and(...conditions),
-			with: { invoice: true },
+			with: { invoice: true, paymentAccount: true },
 			orderBy: desc(paymentTransactions.receivedAt),
 			limit: 200
 		});

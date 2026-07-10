@@ -19,6 +19,7 @@ import {
 	requireLandlord
 } from '$lib/server/authz';
 import { normalizeRoomTextKey } from '$lib/server/room-code';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import {
 	SUBSCRIPTION_TIERS,
 	pricingGroupForRentalType,
@@ -142,6 +143,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			with: {
 				block: true,
 				property: true,
+				paymentAccount: true,
 				tenant: {
 					with: { user: true }
 				},
@@ -177,7 +179,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			roomType,
 			floor,
 			monthlyRent,
-			area
+			area,
+			paymentAccountId
 		} = body;
 
 		if (!propertyId || !roomNumber || !roomType || !monthlyRent) {
@@ -193,6 +196,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		});
 		if (!property) {
 			return json({ error: 'Property not found' }, { status: 404 });
+		}
+		const selectedPaymentAccount = await getPaymentAccountForLandlord(
+			auth.value,
+			paymentAccountId || null
+		);
+		if (!selectedPaymentAccount.isActive) {
+			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
 		}
 
 		const nextRoomNumber = String(roomNumber).trim();
@@ -297,6 +307,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						status: 'empty',
 						monthlyRent: Number(monthlyRent),
 						area: area ? Number(area) : null,
+						paymentAccountId: selectedPaymentAccount.id,
 						debtAmount: 0
 					})
 					.returning()
@@ -339,6 +350,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			where: eq(rooms.id, room.id),
 			with: {
 				tenant: { with: { user: true } },
+				paymentAccount: true,
 				services: { with: { service: true } },
 				assets: true,
 				meterReadings: true
@@ -558,6 +570,16 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			if (data.status !== undefined) updateData.status = data.status;
 			if (data.debtAmount !== undefined) updateData.debtAmount = Number(data.debtAmount);
 			if (data.blockId !== undefined) updateData.blockId = data.blockId || null;
+			if (data.paymentAccountId !== undefined) {
+				const selectedPaymentAccount = await getPaymentAccountForLandlord(
+					auth.value,
+					data.paymentAccountId || null
+				);
+				if (!selectedPaymentAccount.isActive) {
+					return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
+				}
+				updateData.paymentAccountId = selectedPaymentAccount.id;
+			}
 
 			if (Object.keys(updateData).length > 0) {
 				await db.update(rooms).set(updateData).where(eq(rooms.id, id));
@@ -568,6 +590,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			where: eq(rooms.id, id),
 			with: {
 				tenant: { with: { user: true } },
+				paymentAccount: true,
 				services: { with: { service: true } },
 				assets: true,
 				meterReadings: {

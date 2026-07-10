@@ -2,9 +2,10 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { invoices, invoiceItems, rooms, properties } from '$lib/server/db/schema';
+import { contracts, invoices, invoiceItems, rooms, properties } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
@@ -72,7 +73,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 						property: true,
 						block: true
 					}
-				}
+				},
+				paymentAccount: true
 			},
 			orderBy: [desc(invoices.month), desc(invoices.createdAt)]
 		});
@@ -89,7 +91,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!auth.ok) return auth.response;
 
 		const body = await request.json();
-		const { roomId, month, rentAmount, dueDate, items, notes } = body;
+		const { roomId, month, rentAmount, dueDate, items, notes, paymentAccountId } = body;
 
 		if (
 			!roomId ||
@@ -117,7 +119,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const room = await db.query.rooms.findFirst({
 			where: eq(rooms.id, roomId),
 			with: {
-				tenant: { with: { user: true } }
+				tenant: { with: { user: true } },
+				paymentAccount: true
 			}
 		});
 
@@ -131,6 +134,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const tenantName = room.tenant.user.name;
 		const tenantPhone = room.tenant.user.phone;
+		const activeContract = await db.query.contracts.findFirst({
+			where: and(eq(contracts.roomId, roomId), eq(contracts.status, 'active')),
+			columns: { paymentAccountId: true },
+			orderBy: desc(contracts.createdAt)
+		});
+		const selectedPaymentAccount = await getPaymentAccountForLandlord(
+			auth.value,
+			paymentAccountId || activeContract?.paymentAccountId || room.paymentAccountId || null
+		);
+		if (!selectedPaymentAccount.isActive) {
+			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
+		}
 
 		// Calculate total amount from items
 		const invoiceItemList: { name: string; amount: number; details?: string }[] = items;
@@ -157,6 +172,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						dueDate,
 						status: 'pending',
 						paidAmount: 0,
+						paymentAccountId: selectedPaymentAccount.id,
 						createdAt: new Date().toISOString().split('T')[0],
 						notes
 					})
@@ -187,7 +203,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const fullInvoice = await db.query.invoices.findFirst({
 			where: eq(invoices.id, invoice.id),
-			with: { items: true }
+			with: { items: true, paymentAccount: true }
 		});
 
 		return json(fullInvoice);

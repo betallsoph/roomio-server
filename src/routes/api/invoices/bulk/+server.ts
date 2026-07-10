@@ -5,6 +5,7 @@ import { db } from '$lib/server/db';
 import { rooms, invoices, invoiceItems, meterReadings } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
@@ -13,7 +14,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const landlordId = auth.value;
 
 		const body = await request.json();
-		const { propertyId, month, dueDate, readings, manualAmounts = {} } = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
+		const { propertyId, month, dueDate, readings, manualAmounts = {}, paymentAccountId } = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
 
 		if (!landlordId || !propertyId || !month || !dueDate || !readings) {
 			return json({ error: 'Missing required parameters' }, { status: 400 });
@@ -21,13 +22,21 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!(await landlordOwnsProperty(landlordId, propertyId))) {
 			return forbidden();
 		}
+		const defaultPaymentAccount = await getPaymentAccountForLandlord(
+			landlordId,
+			paymentAccountId || null
+		);
+		if (!defaultPaymentAccount.isActive) {
+			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
+		}
 
 		// Fetch all occupied rooms for this property
 		const occupiedRooms = await db.query.rooms.findMany({
 			where: and(eq(rooms.propertyId, propertyId), isNotNull(rooms.tenantId)),
 			with: {
 				tenant: { with: { user: true } },
-				services: { with: { service: true } }
+				services: { with: { service: true } },
+				paymentAccount: true
 			}
 		});
 
@@ -146,6 +155,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							dueDate,
 							status: 'pending',
 							paidAmount: 0,
+							paymentAccountId: room.paymentAccountId || defaultPaymentAccount.id,
 							createdAt: today,
 							notes: `Hóa đơn tự động tháng ${month}`
 						})
@@ -197,7 +207,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			where: and(eq(rooms.propertyId, propertyId), isNotNull(rooms.tenantId)),
 			with: {
 				tenant: { with: { user: { columns: { name: true, phone: true } } } },
-				services: { with: { service: true } }
+				services: { with: { service: true } },
+				paymentAccount: true
 			}
 		});
 
