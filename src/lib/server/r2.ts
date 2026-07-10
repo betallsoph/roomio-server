@@ -41,6 +41,10 @@ interface CreatePresignedUploadInput {
 	actorRole: string;
 }
 
+interface UploadR2ObjectInput extends CreatePresignedUploadInput {
+	body: Uint8Array;
+}
+
 let cachedClient: S3Client | null = null;
 
 function requiredEnv(name: string): string {
@@ -175,5 +179,36 @@ export async function createR2PresignedUpload(input: CreatePresignedUploadInput)
 		url: publicUrl,
 		expiresIn: config.expiresIn,
 		maxSize: config.maxUploadBytes
+	};
+}
+
+export async function uploadR2Object(input: UploadR2ObjectInput) {
+	const config = r2Config();
+	const purpose = normalizePurpose(input.purpose);
+	const contentType = normalizeContentType(input.contentType);
+	const byteSize = Number(input.byteSize);
+
+	if (!Number.isFinite(byteSize) || byteSize <= 0 || byteSize !== input.body.byteLength) {
+		throw new Error('Dung lượng file không hợp lệ');
+	}
+	if (byteSize > config.maxUploadBytes) {
+		throw new Error(`Ảnh vượt quá ${Math.round(config.maxUploadBytes / 1024 / 1024)}MB`);
+	}
+
+	const objectKey = createObjectKey(purpose, input.actorRole, input.actorId, contentType);
+	const command = new PutObjectCommand({
+		Bucket: config.bucket,
+		Key: objectKey,
+		ContentType: contentType,
+		Body: input.body
+	});
+
+	await r2Client(config).send(command);
+	const publicUrl = `${config.publicBaseUrl}/${objectKey}`;
+
+	return {
+		objectKey,
+		publicUrl,
+		url: publicUrl
 	};
 }

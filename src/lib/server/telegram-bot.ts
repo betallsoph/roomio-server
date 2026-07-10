@@ -21,10 +21,15 @@ interface TelegramApiResponse {
 	description?: string;
 	result?: {
 		message_id?: number;
+		file_path?: string;
 	};
 	parameters?: {
 		retry_after?: number;
 	};
+}
+
+interface TelegramMessageOptions {
+	replyMarkup?: unknown;
 }
 
 function trimTelegramText(text: string) {
@@ -57,7 +62,8 @@ export function buildTenantAnnouncementText(title: string, content: string) {
 
 export async function sendTelegramMessage(
 	chatId: string,
-	text: string
+	text: string,
+	options: TelegramMessageOptions = {}
 ): Promise<TelegramSendResult> {
 	if (!BOT_TOKEN) {
 		return {
@@ -85,7 +91,8 @@ export async function sendTelegramMessage(
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				chat_id: chatId,
-				text: trimTelegramText(text)
+				text: trimTelegramText(text),
+				...(options.replyMarkup ? { reply_markup: options.replyMarkup } : {})
 			}),
 			signal: controller.signal
 		});
@@ -149,4 +156,42 @@ export async function sendTelegramMessage(
 	} finally {
 		clearTimeout(timeout);
 	}
+}
+
+export async function answerTelegramCallbackQuery(callbackQueryId: string) {
+	if (!BOT_TOKEN || !callbackQueryId.trim()) return;
+
+	await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ callback_query_id: callbackQueryId })
+	}).catch(() => null);
+}
+
+export async function getTelegramFilePath(fileId: string) {
+	if (!BOT_TOKEN) throw new Error('Server chưa cấu hình BOT_TOKEN');
+	if (!fileId.trim()) throw new Error('Thiếu Telegram file ID');
+
+	const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ file_id: fileId })
+	});
+	const payload = (await res.json().catch(() => null)) as TelegramApiResponse | null;
+	if (!res.ok || !payload?.ok || !payload.result?.file_path) {
+		throw new Error(payload?.description || `Telegram trả về HTTP ${res.status}`);
+	}
+	return payload.result.file_path;
+}
+
+export async function downloadTelegramFile(filePath: string) {
+	if (!BOT_TOKEN) throw new Error('Server chưa cấu hình BOT_TOKEN');
+	if (!filePath.trim()) throw new Error('Thiếu Telegram file path');
+
+	const res = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+	if (!res.ok) throw new Error(`Không tải được ảnh Telegram: HTTP ${res.status}`);
+
+	const contentType = res.headers.get('content-type')?.split(';')[0]?.toLowerCase() || 'image/jpeg';
+	const body = new Uint8Array(await res.arrayBuffer());
+	return { body, contentType };
 }

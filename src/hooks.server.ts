@@ -6,7 +6,12 @@ import { eq } from 'drizzle-orm';
 import { rateLimit } from '$lib/server/rate-limit';
 
 // Các API không cần đăng nhập
-const PUBLIC_API = ['/api/auth', '/api/payment-webhook', '/api/payos-webhook'];
+const PUBLIC_API = [
+	'/api/auth',
+	'/api/payment-webhook',
+	'/api/payos-webhook',
+	'/api/telegram/webhook'
+];
 
 function isEnvSuperAdminSession(session: NonNullable<ReturnType<typeof readSession>>) {
 	return (
@@ -60,6 +65,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	if (pathname === '/api/payos-webhook' && event.request.method === 'POST') {
 		const limited = rateLimit(`payos-webhook:${event.getClientAddress()}`, 180, 60 * 1000);
+		if (limited) return limited;
+	}
+
+	if (pathname === '/api/telegram/webhook' && event.request.method === 'POST') {
+		const limited = rateLimit(`telegram-webhook:${event.getClientAddress()}`, 600, 60 * 1000);
 		if (limited) return limited;
 	}
 

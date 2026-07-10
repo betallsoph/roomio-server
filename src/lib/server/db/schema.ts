@@ -485,6 +485,24 @@ export const notificationQueue = pgTable(
 	})
 );
 
+export const telegramBotSessions = pgTable(
+	'TelegramBotSession',
+	{
+		telegramUserId: text('telegramUserId').primaryKey(),
+		tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+		flow: text('flow').notNull(),
+		step: text('step').notNull(),
+		payload: text('payload').notNull().default('{}'),
+		expiresAt: datetime('expiresAt').notNull(),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now)
+	},
+	(t) => ({
+		tenantIdx: index('TelegramBotSession_tenantId_idx').on(t.tenantId),
+		expiresAtIdx: index('TelegramBotSession_expiresAt_idx').on(t.expiresAt)
+	})
+);
+
 export const paymentTransactions = pgTable(
 	'PaymentTransaction',
 	{
@@ -592,7 +610,8 @@ export const tenantProfilesRelations = relations(tenantProfiles, ({ one, many })
 	requests: many(maintenanceRequests),
 	specialNotes: many(specialNotes),
 	contracts: many(contracts),
-	notifications: many(notificationQueue)
+	notifications: many(notificationQueue),
+	botSessions: many(telegramBotSessions)
 }));
 
 export const tenantInvitesRelations = relations(tenantInvites, ({ one }) => ({
@@ -739,6 +758,13 @@ export const notificationQueueRelations = relations(notificationQueue, ({ one })
 	recipientUser: one(users, {
 		fields: [notificationQueue.recipientUserId],
 		references: [users.id]
+	})
+}));
+
+export const telegramBotSessionsRelations = relations(telegramBotSessions, ({ one }) => ({
+	tenant: one(tenantProfiles, {
+		fields: [telegramBotSessions.tenantId],
+		references: [tenantProfiles.id]
 	})
 }));
 
