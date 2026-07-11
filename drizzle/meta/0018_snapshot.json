@@ -1,6 +1,6 @@
 {
-  "id": "d9ca9119-6c4c-49e7-98aa-9e03a98dfec4",
-  "prevId": "d37d024a-ac1c-4fd2-8727-7e7802d8bc9f",
+  "id": "88b0111e-8145-436e-8781-d0ae840d6706",
+  "prevId": "d9ca9119-6c4c-49e7-98aa-9e03a98dfec4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2817,6 +2817,113 @@
           "tableTo": "LandlordProfile",
           "columnsFrom": [
             "landlordId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.TelegramBotSession": {
+      "name": "TelegramBotSession",
+      "schema": "",
+      "columns": {
+        "telegramUserId": {
+          "name": "telegramUserId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenantId": {
+          "name": "tenantId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "flow": {
+          "name": "flow",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "step": {
+          "name": "step",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
+        },
+        "expiresAt": {
+          "name": "expiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "TelegramBotSession_tenantId_idx": {
+          "name": "TelegramBotSession_tenantId_idx",
+          "columns": [
+            {
+              "expression": "tenantId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "TelegramBotSession_expiresAt_idx": {
+          "name": "TelegramBotSession_expiresAt_idx",
+          "columns": [
+            {
+              "expression": "expiresAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "TelegramBotSession_tenantId_TenantProfile_id_fk": {
+          "name": "TelegramBotSession_tenantId_TenantProfile_id_fk",
+          "tableFrom": "TelegramBotSession",
+          "tableTo": "TenantProfile",
+          "columnsFrom": [
+            "tenantId"
           ],
           "columnsTo": [
             "id"
