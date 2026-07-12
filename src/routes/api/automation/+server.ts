@@ -12,6 +12,7 @@ const ALLOWED_ACTIONS = [
 	'invoice_reminder',
 	'meter_reminder',
 	'contract_reminder',
+	'auto_draft',
 	'run_all'
 ] as const;
 
@@ -57,8 +58,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const month =
 			typeof body.month === 'string' ? body.month : new Date().toISOString().slice(0, 7);
+		// run_all chỉ chạy nhắc/quét; auto_draft phải bấm riêng để tránh tự soạn nháp ngoài ý muốn
 		const actions =
-			action === 'run_all' ? ALLOWED_ACTIONS.filter((item) => item !== 'run_all') : [action];
+			action === 'run_all'
+				? ALLOWED_ACTIONS.filter((item) => item !== 'run_all' && item !== 'auto_draft')
+				: [action];
 
 		await cleanupAutomationHistory(landlordId);
 

@@ -3,6 +3,7 @@ import {
 	automationJobs,
 	contracts,
 	invoices,
+	invoiceItems,
 	maintenanceRequests,
 	meterReadings,
 	notificationQueue,
@@ -11,6 +12,8 @@ import {
 	services
 } from '$lib/server/db/schema';
 import { and, desc, eq, gte, inArray, isNotNull, lt, lte, ne, sql } from 'drizzle-orm';
+import { buildInvoiceItems, roomReadyForAutoDraft } from '$lib/server/invoice-builder';
+import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 const today = () => new Date().toISOString().split('T')[0];
 const AUTOMATION_LOG_RETENTION_DAYS = 90;
@@ -260,6 +263,150 @@ export async function queueContractReminders(landlordId: string) {
 	return { queuedContractReminders: queued };
 }
 
+function defaultDueDateFor(month: string) {
+	const [y, m] = month.split('-').map(Number);
+	// new Date.UTC(y, m, 5): m (1-based) làm chỉ số 0-based = tháng kế tiếp → ngày 5 tháng sau
+	return new Date(Date.UTC(y, m, 5)).toISOString().split('T')[0];
+}
+
+// Tự soạn hóa đơn NHÁP (status 'draft') cho phòng đã sẵn sàng — KHÔNG đụng công nợ, khách KHÔNG thấy.
+// Chủ nhà vào "Nháp chờ duyệt" bấm duyệt để chuyển 'pending' + tăng nợ + gửi khách.
+export async function generateDraftInvoices(landlordId: string, month: string, dueDate?: string) {
+	const propertyRows = await db
+		.select({ id: properties.id })
+		.from(properties)
+		.where(eq(properties.landlordId, landlordId));
+	const propertyIds = propertyRows.map((p) => p.id);
+	if (propertyIds.length === 0) return { draftInvoices: 0 };
+
+	const occupiedRooms = await db.query.rooms.findMany({
+		where: and(isNotNull(rooms.tenantId), inArray(rooms.propertyId, propertyIds)),
+		with: {
+			tenant: { with: { user: { columns: { name: true, phone: true } } } },
+			services: { with: { service: true } }
+		}
+	});
+	if (occupiedRooms.length === 0) return { draftInvoices: 0 };
+
+	const roomIds = occupiedRooms.map((r) => r.id);
+
+	// Chỉ số ĐÃ DUYỆT của tháng cần lập
+	const monthApproved = await db
+		.select()
+		.from(meterReadings)
+		.where(
+			and(
+				inArray(meterReadings.roomId, roomIds),
+				eq(meterReadings.month, month),
+				eq(meterReadings.status, 'approved')
+			)
+		);
+	const readingByRoomService: Record<
+		string,
+		Record<string, { prevValue: number; currValue: number }>
+	> = {};
+	const anomalousByRoom: Record<string, Set<string>> = {};
+	for (const r of monthApproved) {
+		(readingByRoomService[r.roomId] ??= {})[r.serviceId] = {
+			prevValue: r.prevValue,
+			currValue: r.currValue
+		};
+		if (r.isAnomalous) (anomalousByRoom[r.roomId] ??= new Set()).add(r.serviceId);
+	}
+
+	// Phòng đã có hóa đơn (mọi trạng thái, kể cả nháp) cho tháng này → bỏ qua, tránh lập trùng
+	const invoicedRoomIds = new Set(
+		(
+			await db
+				.select({ roomId: invoices.roomId })
+				.from(invoices)
+				.where(and(inArray(invoices.roomId, roomIds), eq(invoices.month, month)))
+		).map((r) => r.roomId)
+	);
+
+	const account = await getPaymentAccountForLandlord(landlordId, null);
+	const due = dueDate || defaultDueDateFor(month);
+	const createdAt = today();
+	let draftInvoices = 0;
+
+	await db.transaction(async (tx) => {
+		for (const room of occupiedRooms) {
+			if (!room.tenant) continue;
+			if (invoicedRoomIds.has(room.id)) continue;
+
+			const approvedByService = readingByRoomService[room.id] ?? {};
+			const anomalous = anomalousByRoom[room.id] ?? new Set<string>();
+			if (!roomReadyForAutoDraft(room, approvedByService, anomalous)) continue;
+
+			let built: ReturnType<typeof buildInvoiceItems> | null = null;
+			try {
+				built = buildInvoiceItems(room, month, { readings: approvedByService });
+			} catch {
+				continue;
+			}
+			if (!built || built.totalAmount <= 0) continue;
+
+			const randomHex = Math.floor(1000 + Math.random() * 9000).toString();
+			const invoiceId = `INV-${month.replace('-', '')}-${randomHex}`;
+			const inv = (
+				await tx
+					.insert(invoices)
+					.values({
+						id: invoiceId,
+						roomId: room.id,
+						roomNumber: room.roomNumber,
+						tenantName: room.tenant.user.name,
+						tenantPhone: room.tenant.user.phone,
+						month,
+						rentAmount: built.rentAmount,
+						totalAmount: built.totalAmount,
+						dueDate: due,
+						status: 'draft',
+						paidAmount: 0,
+						paymentAccountId: account.id,
+						createdAt,
+						notes: `Hóa đơn nháp tự soạn tháng ${month}`
+					})
+					.returning()
+			)[0];
+			await tx
+				.insert(invoiceItems)
+				.values(built.items.map((item) => ({ ...item, invoiceId: inv.id })));
+			// KHÔNG tăng nợ, KHÔNG đổi status phòng — chờ chủ nhà duyệt mới tính tiền
+			draftInvoices += 1;
+		}
+	});
+
+	// Nhắc chủ nhà (gộp 1 thông báo/tháng, tránh spam khi cron chạy hằng ngày)
+	if (draftInvoices > 0) {
+		const existing = await db.query.notificationQueue.findFirst({
+			where: and(
+				eq(notificationQueue.landlordId, landlordId),
+				eq(notificationQueue.type, 'invoice_draft_ready'),
+				eq(notificationQueue.relatedType, 'month'),
+				eq(notificationQueue.relatedId, month),
+				ne(notificationQueue.status, 'dismissed')
+			),
+			columns: { id: true }
+		});
+		if (!existing) {
+			await db.insert(notificationQueue).values({
+				landlordId,
+				type: 'invoice_draft_ready',
+				channel: 'in_app',
+				title: `Đã soạn sẵn ${draftInvoices} hóa đơn nháp tháng ${monthLabel(month)}`,
+				content: `Có ${draftInvoices} hóa đơn nháp đã sẵn sàng cho tháng ${monthLabel(month)}. Vào "Nháp chờ duyệt" để kiểm tra và gửi khách.`,
+				status: 'queued',
+				relatedType: 'month',
+				relatedId: month,
+				scheduledFor: createdAt
+			});
+		}
+	}
+
+	return { draftInvoices };
+}
+
 export async function runAutomationJob(
 	landlordId: string,
 	type: string,
@@ -292,6 +439,12 @@ export async function runAutomationJob(
 			);
 		} else if (type === 'contract_reminder') {
 			result = await queueContractReminders(landlordId);
+		} else if (type === 'auto_draft') {
+			result = await generateDraftInvoices(
+				landlordId,
+				String(payload.month ?? new Date().toISOString().slice(0, 7)),
+				typeof payload.dueDate === 'string' ? payload.dueDate : undefined
+			);
 		} else {
 			throw new Error('Loại automation không hợp lệ');
 		}

@@ -3,7 +3,7 @@ import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { contracts, invoices, invoiceItems, rooms, properties } from '$lib/server/db/schema';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
@@ -60,8 +60,14 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			conditions.push(eq(invoices.roomId, roomId));
 		}
 
+		const isTenant = locals.session?.role === 'TENANT';
 		if (status) {
 			conditions.push(eq(invoices.status, status));
+			// Khách không bao giờ thấy hóa đơn nháp, kể cả khi cố lọc status=draft
+			if (isTenant) conditions.push(ne(invoices.status, 'draft'));
+		} else {
+			// Mặc định ẩn nháp khỏi danh sách chính (nháp nằm ở màn 'Nháp chờ duyệt')
+			conditions.push(ne(invoices.status, 'draft'));
 		}
 
 		const result = await db.query.invoices.findMany({
@@ -239,7 +245,8 @@ export const DELETE: RequestHandler = async ({ request, locals }) => {
 		await db.transaction(async (tx) => {
 			for (const invoice of ownedInvoices) {
 				await tx.delete(invoices).where(eq(invoices.id, invoice.id));
-				if (invoice.status !== 'paid') {
+				// Nháp chưa từng cộng nợ nên xóa nháp không được trừ nợ
+				if (invoice.status !== 'paid' && invoice.status !== 'draft') {
 					const outstanding = Math.max(invoice.totalAmount - invoice.paidAmount, 0);
 					await tx
 						.update(rooms)

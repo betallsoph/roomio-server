@@ -1,0 +1,65 @@
+# Cron hằng ngày → chạy nhắc/quét quá hạn + tự soạn hóa đơn NHÁP cho mọi chủ trọ.
+# SSH vào VPS rồi curl http://127.0.0.1:3000/api/cron/monthly (không phơi endpoint ra ngoài).
+# CRON_SECRET đọc thẳng từ .env trên VPS → secret chỉ nằm 1 chỗ, khỏi tạo GitHub secret riêng.
+#
+# YÊU CẦU 1 LẦN: thêm dòng  CRON_SECRET=<chuỗi ngẫu nhiên dài>  vào .env trên VPS
+# (cùng chỗ SESSION_SECRET). Dùng lại secrets deploy: DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY/DEPLOY_PATH.
+
+name: Cron Monthly
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # 01:00 UTC hằng ngày = 08:00 giờ VN
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Tháng YYYY-MM (bỏ trống = tháng hiện tại)'
+        required: false
+      draft:
+        description: 'Có tự soạn nháp không (true/false)'
+        required: false
+        default: 'true'
+
+concurrency:
+  group: cron-monthly
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Run monthly automation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger cron endpoint on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          INPUT_MONTH: ${{ github.event.inputs.month }}
+          INPUT_DRAFT: ${{ github.event.inputs.draft }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 22
+          command_timeout: 15m
+          envs: INPUT_MONTH,INPUT_DRAFT
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            if [ ! -f .env ] || ! grep -Eq '^CRON_SECRET=.+' .env; then
+              echo "::error::CRON_SECRET chưa có trong .env trên VPS. Thêm CRON_SECRET=<chuỗi dài> rồi chạy lại."
+              exit 1
+            fi
+            CRON_SECRET="$(grep -E '^CRON_SECRET=' .env | head -1 | cut -d= -f2-)"
+
+            BODY="{"
+            SEP=""
+            if [ -n "${INPUT_MONTH:-}" ]; then BODY="${BODY}\"month\":\"${INPUT_MONTH}\""; SEP=","; fi
+            if [ -n "${INPUT_DRAFT:-}" ]; then BODY="${BODY}${SEP}\"draft\":${INPUT_DRAFT}"; fi
+            BODY="${BODY}}"
+
+            echo "==> POST /api/cron/monthly body=${BODY}"
+            curl -fsS -X POST http://127.0.0.1:3000/api/cron/monthly \
+              -H "Content-Type: application/json" \
+              -H "x-cron-secret: ${CRON_SECRET}" \
+              -d "${BODY}"
+            echo ""

@@ -145,7 +145,9 @@ export const GET: RequestHandler = async () => {
 					colivingRoomCount
 				});
 				const allInvoices = allRooms.flatMap((room) => room.invoices);
-				const unpaidInvoices = allInvoices.filter((invoice) => invoice.status !== 'paid');
+				const unpaidInvoices = allInvoices.filter(
+					(invoice) => invoice.status !== 'paid' && invoice.status !== 'draft'
+				);
 				const paymentTransactions = landlord.paymentTransactions;
 				const payosTransactions = paymentTransactions.filter(
 					(payment) => payment.provider === 'payos'

@@ -10,7 +10,8 @@ const PUBLIC_API = [
 	'/api/auth',
 	'/api/payment-webhook',
 	'/api/payos-webhook',
-	'/api/telegram/webhook'
+	'/api/telegram/webhook',
+	'/api/cron' // tự bảo vệ bằng header x-cron-secret === CRON_SECRET, không dùng session
 ];
 
 function isEnvSuperAdminSession(session: NonNullable<ReturnType<typeof readSession>>) {

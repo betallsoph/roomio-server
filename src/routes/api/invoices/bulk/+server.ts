@@ -147,15 +147,31 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						amount = usage * rate;
 						details = `Chỉ số: ${prev} -> ${curr} (${usage} ${config.service.name === 'Điện' ? 'kWh' : 'm³'}) x ${new Intl.NumberFormat('vi-VN').format(rate)}đ`;
 
-						// Record this meter reading
-						await tx.insert(meterReadings).values({
-							roomId: room.id,
-							serviceId: config.serviceId,
-							month,
-							prevValue: prev,
-							currValue: curr,
-							recordedAt: today
+						// Ghi nhận chỉ số (upsert theo phòng+dịch vụ+tháng, tránh trùng bản khách đã gửi/duyệt)
+						const existingReading = await tx.query.meterReadings.findFirst({
+							where: and(
+								eq(meterReadings.roomId, room.id),
+								eq(meterReadings.serviceId, config.serviceId),
+								eq(meterReadings.month, month)
+							),
+							columns: { id: true }
 						});
+						if (existingReading) {
+							await tx
+								.update(meterReadings)
+								.set({ prevValue: prev, currValue: curr, status: 'approved' })
+								.where(eq(meterReadings.id, existingReading.id));
+						} else {
+							await tx.insert(meterReadings).values({
+								roomId: room.id,
+								serviceId: config.serviceId,
+								month,
+								prevValue: prev,
+								currValue: curr,
+								recordedAt: today,
+								status: 'approved'
+							});
+						}
 					} else if (config.service.type === 'FLAT_ROOM') {
 						amount = rate * config.quantity;
 						details = `Phí cố định x ${config.quantity} phòng`;
