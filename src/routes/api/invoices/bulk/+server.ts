@@ -2,7 +2,14 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { rooms, invoices, invoiceItems, meterReadings } from '$lib/server/db/schema';
+import {
+	contracts,
+	invoices,
+	invoiceItems,
+	meterReadings,
+	paymentAccounts,
+	rooms
+} from '$lib/server/db/schema';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
@@ -14,7 +21,17 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const landlordId = auth.value;
 
 		const body = await request.json();
-		const { propertyId, month, dueDate, readings, manualAmounts = {}, paymentAccountId } = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
+		const {
+			propertyId,
+			month,
+			dueDate,
+			readings,
+			manualAmounts = {},
+			adjustments = {}, // { [roomId]: [{ name, amount }] } — phụ thu/giảm 1 lần (amount âm = giảm)
+			prorate = {}, // { [roomId]: 0..1 } — tỉ lệ tiền phòng cho khách vào/ra giữa tháng
+			roomIds, // chỉ lập cho các phòng này (smart bulk duyệt phần sẵn sàng); bỏ trống = làm hết
+			paymentAccountId
+		} = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
 
 		if (!landlordId || !propertyId || !month || !dueDate || !readings) {
 			return json({ error: 'Missing required parameters' }, { status: 400 });
@@ -47,12 +64,19 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			);
 		}
 
+		// Chỉ lập cho các phòng được chọn (smart bulk: 'duyệt phần sẵn sàng'); bỏ trống = làm hết như cũ
+		const targetRoomIds =
+			Array.isArray(roomIds) && roomIds.length ? new Set(roomIds.map(String)) : null;
+		const roomsToInvoice = targetRoomIds
+			? occupiedRooms.filter((r) => targetRoomIds.has(r.id))
+			: occupiedRooms;
+
 		const today = new Date().toISOString().split('T')[0];
 
 		const createdInvoices = await db.transaction(async (tx) => {
 			const results = [];
 
-			for (const room of occupiedRooms) {
+			for (const room of roomsToInvoice) {
 				if (!room.tenant) continue;
 
 				const existingInvoice = await tx.query.invoices.findFirst({
@@ -65,15 +89,46 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				const tenantPhone = room.tenant.user.phone;
 				const roomReadings = readings[room.id] || {};
 				const roomManualAmounts = manualAmounts[room.id] || {};
+				const activeContract = await tx.query.contracts.findFirst({
+					where: and(eq(contracts.roomId, room.id), eq(contracts.status, 'active')),
+					columns: { paymentAccountId: true },
+					orderBy: desc(contracts.createdAt)
+				});
+				const selectedPaymentAccountId =
+					paymentAccountId ||
+					activeContract?.paymentAccountId ||
+					room.paymentAccountId ||
+					defaultPaymentAccount.id;
+				const selectedPaymentAccount = await tx.query.paymentAccounts.findFirst({
+					where: and(
+						eq(paymentAccounts.id, selectedPaymentAccountId),
+						eq(paymentAccounts.landlordId, landlordId)
+					)
+				});
+				if (!selectedPaymentAccount) {
+					throw new Error(`Không tìm thấy tài khoản nhận tiền cho phòng ${room.roomNumber}`);
+				}
+				if (!selectedPaymentAccount.isActive) {
+					throw new Error(`Tài khoản nhận tiền của phòng ${room.roomNumber} đã tắt`);
+				}
 
 				const items = [];
 				let totalServicesAmount = 0;
 
-				// Add room rent item
+				// Tiền phòng — hỗ trợ prorate cho khách vào/ra giữa tháng: prorate[roomId] = tỉ lệ 0..1
+				const rentFactorRaw = Number((prorate as Record<string, unknown>)?.[room.id]);
+				const rentFactor =
+					Number.isFinite(rentFactorRaw) && rentFactorRaw > 0 && rentFactorRaw < 1
+						? rentFactorRaw
+						: 1;
+				const rentAmount = Math.round(room.monthlyRent * rentFactor);
 				items.push({
 					name: 'Tiền phòng',
-					amount: room.monthlyRent,
-					details: `Tiền thuê phòng tháng ${month.split('-')[1]}/${month.split('-')[0]}`
+					amount: rentAmount,
+					details:
+						rentFactor < 1
+							? `Tiền thuê tháng ${month.split('-')[1]}/${month.split('-')[0]} (tính ${Math.round(rentFactor * 100)}%)`
+							: `Tiền thuê phòng tháng ${month.split('-')[1]}/${month.split('-')[0]}`
 				});
 
 				// Loop through each service configuration for this room
@@ -133,7 +188,23 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					}
 				}
 
-				const totalAmount = room.monthlyRent + totalServicesAmount;
+				// Phụ thu / giảm 1 lần: adjustments[roomId] = [{ name, amount }] (amount âm = giảm)
+				const roomAdjustments = Array.isArray((adjustments as Record<string, unknown>)?.[room.id])
+					? (adjustments as Record<string, { name?: unknown; amount?: unknown }[]>)[room.id]
+					: [];
+				let adjustmentsTotal = 0;
+				for (const adj of roomAdjustments) {
+					const name = typeof adj?.name === 'string' ? adj.name.trim() : '';
+					const amt = Number(adj?.amount);
+					if (!name || !Number.isFinite(amt) || amt === 0) continue;
+					items.push({ name, amount: amt, details: 'Điều chỉnh 1 lần' });
+					adjustmentsTotal += amt;
+				}
+
+				const totalAmount = rentAmount + totalServicesAmount + adjustmentsTotal;
+				if (totalAmount <= 0) {
+					throw new Error(`Tổng tiền hóa đơn phòng ${room.roomNumber} phải lớn hơn 0`);
+				}
 
 				// Generate Invoice ID
 				const randomHex = Math.floor(1000 + Math.random() * 9000).toString();
@@ -150,12 +221,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							tenantName,
 							tenantPhone,
 							month,
-							rentAmount: room.monthlyRent,
+							rentAmount,
 							totalAmount,
 							dueDate,
 							status: 'pending',
 							paidAmount: 0,
-							paymentAccountId: room.paymentAccountId || defaultPaymentAccount.id,
+							paymentAccountId: selectedPaymentAccount.id,
 							createdAt: today,
 							notes: `Hóa đơn tự động tháng ${month}`
 						})
@@ -252,7 +323,53 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			}
 		}
 
-		return json({ rooms: occupiedRooms, readings, prevValues });
+		// Xếp loại từng phòng cho smart bulk: SẴN SÀNG (đủ chỉ số ĐÃ DUYỆT, không bất thường, manual có
+		// mặc định) vs CẦN XEM (thiếu/chưa duyệt chỉ số, bất thường, số mới < số cũ, thiếu khoản tự nhập).
+		// Chỉ phân loại — KHÔNG đụng logic tính tiền; giúp UI cho phép 1-click duyệt phần sạch.
+		const invoicedRoomIds = new Set(
+			roomIds.length
+				? (
+						await db
+							.select({ roomId: invoices.roomId })
+							.from(invoices)
+							.where(and(inArray(invoices.roomId, roomIds), eq(invoices.month, month)))
+					).map((r) => r.roomId)
+				: []
+		);
+		const readiness: Record<
+			string,
+			{ state: 'ready' | 'needs_review' | 'invoiced'; reasons: string[] }
+		> = {};
+		for (const room of occupiedRooms) {
+			if (invoicedRoomIds.has(room.id)) {
+				readiness[room.id] = { state: 'invoiced', reasons: ['Đã có hoá đơn tháng này'] };
+				continue;
+			}
+			const roomReadings = (readings[room.id] || {}) as Record<
+				string,
+				{ status?: string; isAnomalous?: boolean; prevValue?: number; currValue?: number }
+			>;
+			const reasons: string[] = [];
+			for (const config of room.services) {
+				if (!config.service.isActive) continue;
+				if (config.service.type === 'METERED') {
+					const r = roomReadings[config.serviceId];
+					if (!r || r.status !== 'approved') {
+						reasons.push(`Chưa có/chưa duyệt chỉ số ${config.service.name}`);
+					} else if (r.isAnomalous) {
+						reasons.push(`Chỉ số ${config.service.name} bất thường`);
+					} else if (Number(r.currValue) < Number(r.prevValue)) {
+						reasons.push(`Số mới ${config.service.name} nhỏ hơn số cũ`);
+					}
+				} else if (config.service.type === 'MANUAL_AMOUNT') {
+					const hasDefault = (config.customRate ?? config.service.defaultRate ?? 0) > 0;
+					if (!hasDefault) reasons.push(`Cần nhập ${config.service.name}`);
+				}
+			}
+			readiness[room.id] = { state: reasons.length ? 'needs_review' : 'ready', reasons };
+		}
+
+		return json({ rooms: occupiedRooms, readings, prevValues, readiness });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
