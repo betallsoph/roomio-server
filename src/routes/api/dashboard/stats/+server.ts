@@ -3,8 +3,13 @@ import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { properties, rooms, invoices, contracts } from '$lib/server/db/schema';
-import { and, count, eq, gte, inArray, lte, sum } from 'drizzle-orm';
+import { and, count, eq, gte, inArray, lte, sql, sum } from 'drizzle-orm';
 import { requireLandlord } from '$lib/server/authz';
+import {
+	canonicalRentalType,
+	isValidRentalType,
+	type RentalType
+} from '$lib/server/rental-types';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
@@ -69,13 +74,29 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			);
 		const expiringContracts = expiringRows[0]?.value ?? 0;
 
+		const breakdownRows = await db
+			.select({ rentalType: properties.rentalType, count: sql<number>`count(${rooms.id})` })
+			.from(properties)
+			.leftJoin(rooms, eq(rooms.propertyId, properties.id))
+			.where(eq(properties.landlordId, landlordId))
+			.groupBy(properties.rentalType);
+
+		const roomBreakdownByRentalType: Partial<Record<RentalType, number>> = {};
+		for (const row of breakdownRows) {
+			const canonical = canonicalRentalType(row.rentalType);
+			if (!isValidRentalType(canonical)) continue;
+			roomBreakdownByRentalType[canonical] =
+				(roomBreakdownByRentalType[canonical] ?? 0) + Number(row.count);
+		}
+
 		return json({
 			totalRevenue,
 			emptyRooms,
 			unpaidInvoices: unpaidInvoicesCount,
 			expiringContracts,
 			totalRooms,
-			occupiedRooms
+			occupiedRooms,
+			roomBreakdownByRentalType
 		});
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
