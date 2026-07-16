@@ -6,6 +6,36 @@ REST API + cơ sở dữ liệu cho hệ thống quản lý nhà trọ Roomio. C
 
 MVP đang theo hướng **landlord-first**: API ưu tiên phục vụ dashboard chủ trọ, nhân viên hỗ trợ vận hành và super admin. Các endpoint/role liên quan khách thuê tự phục vụ vẫn tồn tại trong code để chuẩn bị Phase 2, nhưng không phải trọng tâm phát triển hiện tại.
 
+## Hai trục phân loại
+
+Roomio dùng hai trục độc lập ở cấp **Property** (cụm quản lý — không phải tòa nhà vật lý). Một tài khoản chủ trọ có thể sở hữu nhiều property; mỗi property mang một cặp giá trị riêng.
+
+### Trục A — `rentalType` (ảnh hưởng giá và hạn mức)
+
+| Mã DB | Nhãn tiếng Việt | Nhóm giá |
+| ----- | ---------------- | -------- |
+| `APARTMENT` | Share phòng chung cư / Co-living | Co-living |
+| `MOTEL` | Phòng trọ truyền thống / Căn hộ dịch vụ | Tiêu chuẩn |
+| `DORM` | KTX / Sleepbox | Tiêu chuẩn |
+| `WHOLE_UNIT` | Căn hộ chung cư nguyên căn / Nhà nguyên căn | Tiêu chuẩn |
+
+- **Allowlist loại hình:** `LandlordProfile.enabledRentalTypes` — Super Admin cấp danh sách loại hình chủ trọ được phép tạo (comma-separated).
+- **Hạn mức thương lượng:** `subscribedStandardRoomLimit` và `subscribedColivingRoomLimit` — số phòng tối đa theo từng nhóm giá đã thương lượng khi cấp/duyệt gói.
+- Pricing engine đếm phòng live theo `Property.rentalType`, gom về hai nhóm rồi chọn giá gộp hoặc tách (rẻ hơn). Chi tiết: [`docs/subscription-pricing.md`](docs/subscription-pricing.md).
+
+### Trục B — `operatingModel` (metadata, không ảnh hưởng giá)
+
+| Mã DB | Nhãn tiếng Việt |
+| ----- | ---------------- |
+| `UNSPECIFIED` | Chưa phân loại (mặc định) |
+| `OWNED` | Tự sở hữu |
+| `RENT_TO_RENT` | Thuê lại để cho thuê |
+| `MANAGED` | Quản lý hộ chủ nhà |
+
+Trục B chỉ phục vụ phân loại nội bộ và add-on tương lai — **không** thay đổi bảng giá subscription ở phase hiện tại.
+
+Cùng địa chỉ vật lý có thể có nhiều property (khác `rentalType`) thay vì thêm entity zone. Checklist regression sau migrate: [`docs/rental-type-regression-checklist.md`](docs/rental-type-regression-checklist.md).
+
 ## Công nghệ
 
 - SvelteKit server routes (`@sveltejs/adapter-node`) — chỉ phục vụ REST endpoint, không có UI

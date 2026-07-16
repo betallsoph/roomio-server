@@ -59,6 +59,24 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 - Chỉ xét phương án tách khi mỗi nhóm có ít nhất 4 phòng. Mức Free chỉ áp dụng một lần cho toàn tài khoản, không thể tách 3 + 3 phòng để hưởng hai lần Free.
 - Ví dụ 4 phòng chuẩn + 4 phòng co-living: giá gộp 149.000đ, giá tách 278.000đ nên lấy giá gộp.
 - Ví dụ 8 phòng chuẩn + 8 phòng co-living: giá gộp 349.000đ, giá tách 278.000đ nên lấy giá tách.
+
+## Ví dụ portfolio hỗn hợp (golden case)
+
+Chủ trọ quản lý **5 phòng trọ** (`MOTEL`) + **2 nguyên căn** (`WHOLE_UNIT`) + **10 phòng co-living** (`APARTMENT`):
+
+| Chỉ số | Giá trị |
+| ------ | ------- |
+| Nhóm tiêu chuẩn | 5 + 2 = **7 phòng** |
+| Nhóm co-living | **10 phòng** |
+| Tổng đơn vị | **17 phòng** |
+
+**Giá gộp (POOLED):** 17 phòng → tier `ROOMS_11_25`, bảng tiêu chuẩn (vì có ít nhất một phòng chuẩn) = **349.000đ/tháng**.
+
+**Giá tách (SPLIT):** đủ điều kiện vì mỗi nhóm ≥ 4 phòng — 7 phòng chuẩn → tier `ROOMS_4_10` = 149.000đ; 10 phòng co-living → tier `ROOMS_4_10` = 129.000đ → tổng **278.000đ/tháng**.
+
+Hệ thống chọn **SPLIT 278.000đ** (rẻ hơn). `recommendedTier` vẫn là `ROOMS_11_25` theo tổng 17 phòng — tier phản ánh sức chứa, không nhất thiết bằng cách tính giá đang được chọn.
+
+`operatingModel` trên từng property (`OWNED`, `RENT_TO_RENT`, `MANAGED`…) **không ảnh hưởng** số liệu trên.
 - `MONTHLY` có hạn một tháng. `YEARLY` có hạn một năm và giá hiện bằng đúng 12 tháng, chưa áp dụng chiết khấu.
 - Phòng trống vẫn được tính vào số phòng đang quản lý.
 - Khi Super Admin duyệt, hệ thống lưu riêng hạn mức phòng chuẩn và co-living. API tạo phòng chặn cả tổng sức chứa của gói lẫn hạn mức từng nhóm; gói trả phí hết hạn cũng không được tạo thêm phòng.
