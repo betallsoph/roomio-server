@@ -2,6 +2,19 @@
 
 Phí SaaS được tính theo tổng số đơn vị cho thuê đang được quản lý trong tài khoản chủ trọ. Phòng/căn trống vẫn là một đơn vị tính phí vì hệ thống vẫn lưu và vận hành dữ liệu đó.
 
+## Loại hình cho thuê (rental type)
+
+| Giá trị DB | Nhãn tiếng Việt | Ghi chú |
+| ---------- | --------------- | ------- |
+| `APARTMENT` | Share phòng chung cư / Co-living | Alias cũ `COLIVING` tự quy về `APARTMENT` |
+| `MOTEL` | Phòng trọ truyền thống / Căn hộ dịch vụ | Alias cũ `SERVICED_APARTMENT` tự quy về `MOTEL` |
+| `DORM` | KTX / Sleepbox | |
+| `WHOLE_UNIT` | Căn hộ chung cư nguyên căn / Nhà nguyên căn | Mỗi căn/nhà = 1 đơn vị tính phí |
+
+**Property (cụm quản lý):** một property là một cụm quản lý trong hệ thống. Cùng một địa chỉ vật lý có thể có nhiều property nếu chủ trọ tách theo loại hình hoặc cách vận hành khác nhau.
+
+**Operating model:** trường `operatingModel` (tự sở hữu, thuê lại, quản lý hộ…) chỉ phục vụ phân loại nội bộ ở phase này; **không ảnh hưởng** đến cách tính phí subscription.
+
 ## Phòng trọ truyền thống / Căn hộ dịch vụ / KTX / Sleepbox / Nguyên căn
 
 | Số phòng | Phí mỗi tháng |
