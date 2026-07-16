@@ -18,15 +18,7 @@ import {
 	type SubscriptionPeriod,
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
-
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM', 'WHOLE_UNIT'];
-
-function canonicalRentalType(value: unknown) {
-	const type = String(value).trim().toUpperCase();
-	if (type === 'COLIVING') return 'APARTMENT';
-	if (type === 'SERVICED_APARTMENT') return 'MOTEL';
-	return type;
-}
+import { canonicalRentalType, isValidRentalType } from '$lib/server/rental-types';
 
 async function roomCounts(landlordId: string) {
 	const rows = await db
@@ -113,7 +105,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			for (const [rawType, rawCount] of Object.entries(body.roomAdditions)) {
 				const type = canonicalRentalType(rawType);
 				const count = Math.floor(Number(rawCount));
-				if (RENTAL_TYPES.includes(type) && Number.isFinite(count) && count > 0) {
+				if (isValidRentalType(type) && Number.isFinite(count) && count > 0) {
 					roomAdditions[type] = (roomAdditions[type] ?? 0) + count;
 				}
 			}
@@ -123,7 +115,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			: [];
 		const requestedRentalTypes = [
 			...new Set([...Object.keys(roomAdditions), ...legacyRequestedTypes])
-		].filter((type) => RENTAL_TYPES.includes(type) && !currentRentalTypes.has(type));
+		].filter((type) => isValidRentalType(type) && !currentRentalTypes.has(type));
 		const actualCounts = await roomCounts(landlordId);
 		const baseStandardRoomCount =
 			landlord.subscribedStandardRoomLimit ?? actualCounts.standardRoomCount;

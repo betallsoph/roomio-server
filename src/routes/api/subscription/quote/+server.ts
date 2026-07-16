@@ -11,6 +11,7 @@ import {
 } from '$lib/server/subscription-pricing';
 import { eq, sql } from 'drizzle-orm';
 import { errorMessage } from '$lib/server/api';
+import { canonicalRentalType } from '$lib/server/rental-types';
 
 export const GET: RequestHandler = async ({ locals, url }) => {
 	try {
@@ -76,14 +77,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 				validUntil: landlord.subValidUntil,
 				enabledRentalTypes: [
 					...new Set(
-						landlord.enabledRentalTypes
-							.split(',')
-							.filter(Boolean)
-							.map((type) => {
-								if (type === 'COLIVING') return 'APARTMENT';
-								if (type === 'SERVICED_APARTMENT') return 'MOTEL';
-								return type;
-							})
+						landlord.enabledRentalTypes.split(',').filter(Boolean).map(canonicalRentalType)
 					)
 				],
 				standardRoomLimit: landlord.subscribedStandardRoomLimit,
