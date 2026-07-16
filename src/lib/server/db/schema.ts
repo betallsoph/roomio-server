@@ -142,6 +142,7 @@ export const properties = pgTable(
 		shortName: text('shortName').notNull(),
 		address: text('address').notNull(),
 		rentalType: text('rentalType').notNull().default('APARTMENT'), // APARTMENT | MOTEL | DORM | WHOLE_UNIT
+		operatingModel: text('operatingModel').notNull().default('UNSPECIFIED'), // UNSPECIFIED | OWNED | RENT_TO_RENT | MANAGED
 		createdAt: datetime('createdAt').notNull().$defaultFn(now)
 	},
 	(t) => ({

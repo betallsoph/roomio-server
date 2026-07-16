@@ -1,0 +1,1 @@
+ALTER TABLE "Property" ADD COLUMN "operatingModel" text DEFAULT 'UNSPECIFIED' NOT NULL;
