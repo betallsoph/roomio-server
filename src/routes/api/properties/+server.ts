@@ -6,16 +6,42 @@ import { properties, blocks, landlordProfiles, rooms } from '$lib/server/db/sche
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
 import { pricingGroupForRentalType } from '$lib/server/subscription-pricing';
+import {
+	canonicalRentalType,
+	isValidOperatingModel,
+	normalizeRentalTypeOr,
+	type OperatingModel
+} from '$lib/server/rental-types';
 
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM', 'WHOLE_UNIT'] as const;
+const INVALID_OPERATING_MODEL_ERROR = 'Mô hình vận hành không hợp lệ';
 
-function normalizeRentalType(value: unknown): (typeof RENTAL_TYPES)[number] {
-	const normalized = typeof value === 'string' ? value.trim().toUpperCase() : 'APARTMENT';
-	if (normalized === 'COLIVING') return 'APARTMENT';
-	if (normalized === 'SERVICED_APARTMENT') return 'MOTEL';
-	return RENTAL_TYPES.includes(normalized as (typeof RENTAL_TYPES)[number])
-		? (normalized as (typeof RENTAL_TYPES)[number])
-		: 'APARTMENT';
+function resolveOperatingModelForPost(
+	value: unknown
+): { ok: true; value: OperatingModel } | { ok: false } {
+	if (value === undefined || value === null) {
+		return { ok: true, value: 'UNSPECIFIED' };
+	}
+	const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
+	if (!isValidOperatingModel(normalized)) {
+		return { ok: false };
+	}
+	return { ok: true, value: normalized };
+}
+
+function resolveOperatingModelForPut(
+	value: unknown
+): { ok: true; value: OperatingModel } | { ok: true; skip: true } | { ok: false } {
+	if (value === undefined) {
+		return { ok: true, skip: true };
+	}
+	if (value === null) {
+		return { ok: true, value: 'UNSPECIFIED' };
+	}
+	const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
+	if (!isValidOperatingModel(normalized)) {
+		return { ok: false };
+	}
+	return { ok: true, value: normalized };
 }
 
 async function landlordAllowsRentalType(landlordId: string, rentalType: string) {
@@ -23,12 +49,7 @@ async function landlordAllowsRentalType(landlordId: string, rentalType: string) 
 		where: (landlordProfiles, { eq }) => eq(landlordProfiles.id, landlordId),
 		columns: { enabledRentalTypes: true }
 	});
-	const enabled = profile?.enabledRentalTypes?.split(',').map((type) => {
-		const normalized = type.trim();
-		if (normalized === 'COLIVING') return 'APARTMENT';
-		if (normalized === 'SERVICED_APARTMENT') return 'MOTEL';
-		return normalized;
-	}) ?? ['APARTMENT'];
+	const enabled = profile?.enabledRentalTypes?.split(',').map(canonicalRentalType) ?? ['APARTMENT'];
 	return enabled.includes(rentalType);
 }
 
@@ -66,7 +87,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const body = await request.json();
 		const { name, shortName, address, blocks: blockNames } = body;
-		const rentalType = normalizeRentalType(body.rentalType);
+		const rentalType = normalizeRentalTypeOr(body.rentalType);
+		const operatingModelResult = resolveOperatingModelForPost(body.operatingModel);
+		if (!operatingModelResult.ok) {
+			return json({ error: INVALID_OPERATING_MODEL_ERROR }, { status: 400 });
+		}
 
 		if (!landlordId || !name || !shortName || !address) {
 			return json({ error: 'Missing required property fields' }, { status: 400 });
@@ -87,7 +112,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			const prop = (
 				await tx
 					.insert(properties)
-					.values({ landlordId, name, shortName, address, rentalType })
+					.values({
+						landlordId,
+						name,
+						shortName,
+						address,
+						rentalType,
+						operatingModel: operatingModelResult.value
+					})
 					.returning()
 			)[0];
 
@@ -135,7 +167,11 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			return forbidden();
 		}
 		const requestedRentalType =
-			body.rentalType !== undefined ? normalizeRentalType(body.rentalType) : null;
+			body.rentalType !== undefined ? normalizeRentalTypeOr(body.rentalType) : null;
+		const operatingModelResult = resolveOperatingModelForPut(body.operatingModel);
+		if (!operatingModelResult.ok) {
+			return json({ error: INVALID_OPERATING_MODEL_ERROR }, { status: 400 });
+		}
 		if (requestedRentalType && !(await landlordAllowsRentalType(auth.value, requestedRentalType))) {
 			return json({ error: 'Tài khoản chủ trọ chưa được bật loại hình này' }, { status: 403 });
 		}
@@ -205,6 +241,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			if (shortName !== undefined) updateData.shortName = shortName;
 			if (address !== undefined) updateData.address = address;
 			if (requestedRentalType) updateData.rentalType = requestedRentalType;
+			if ('value' in operatingModelResult) {
+				updateData.operatingModel = operatingModelResult.value;
+			}
 
 			if (Object.keys(updateData).length > 0) {
 				await tx.update(properties).set(updateData).where(eq(properties.id, id));

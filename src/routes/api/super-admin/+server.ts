@@ -22,8 +22,7 @@ import {
 	type SubscriptionPeriod,
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
-
-const RENTAL_TYPES = ['APARTMENT', 'MOTEL', 'DORM', 'WHOLE_UNIT'] as const;
+import { canonicalRentalType, isValidRentalType, type RentalType } from '$lib/server/rental-types';
 
 const DEFAULT_SERVICES = [
 	{ name: 'Điện', type: 'METERED', defaultRate: 3500 },
@@ -37,15 +36,8 @@ function normalizeRentalTypes(value: unknown): string {
 	if (value === undefined || value === null) return 'APARTMENT';
 	const rawTypes = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
 	const normalized = rawTypes
-		.map((type) => {
-			const normalizedType = String(type).trim().toUpperCase();
-			if (normalizedType === 'COLIVING') return 'APARTMENT';
-			if (normalizedType === 'SERVICED_APARTMENT') return 'MOTEL';
-			return normalizedType;
-		})
-		.filter((type): type is (typeof RENTAL_TYPES)[number] =>
-			RENTAL_TYPES.includes(type as (typeof RENTAL_TYPES)[number])
-		);
+		.map((type) => canonicalRentalType(type))
+		.filter((type): type is RentalType => isValidRentalType(type));
 	const unique = [...new Set(normalized)];
 	if (unique.length === 0) throw new ValidationError('Phải chọn ít nhất một loại hình');
 	return unique.join(',');
@@ -100,7 +92,7 @@ export const GET: RequestHandler = async () => {
 					columns: { id: true, amount: true, status: true, receivedAt: true, provider: true }
 				},
 				properties: {
-					columns: { id: true, name: true, rentalType: true },
+					columns: { id: true, name: true, rentalType: true, operatingModel: true },
 					with: {
 						rooms: {
 							columns: { id: true, tenantId: true, status: true, debtAmount: true },
@@ -177,6 +169,7 @@ export const GET: RequestHandler = async () => {
 						id: property.id,
 						name: property.name,
 						rentalType: property.rentalType,
+						operatingModel: property.operatingModel,
 						_count: { rooms: property.rooms.length }
 					})),
 					subscriptionQuote,
