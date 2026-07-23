@@ -40,12 +40,12 @@ Nếu phát hiện alias cũ trên prod → viết migration guard (template: `0
 
 Tạo một property mỗi `rentalType` được cấp:
 
-| rentalType | Kiểm tra |
-| ---------- | -------- |
-| `MOTEL` | Form thêm phòng đơn giản; label "phòng". |
-| `DORM` | Form tương tự MOTEL; label KTX/Sleepbox. |
-| `APARTMENT` | Bắt buộc block + tầng + mã căn (`roomCode`); flow "thêm phòng vào căn" hoạt động. |
-| `WHOLE_UNIT` | Nút/label "căn/nhà"; **không** lộ flow thêm-vào-căn; 1 Room = 1 căn/nhà. |
+| rentalType   | Kiểm tra                                                                          |
+| ------------ | --------------------------------------------------------------------------------- |
+| `MOTEL`      | Form thêm phòng đơn giản; label "phòng".                                          |
+| `DORM`       | Form tương tự MOTEL; label KTX/Sleepbox.                                          |
+| `APARTMENT`  | Bắt buộc block + tầng + mã căn (`roomCode`); flow "thêm phòng vào căn" hoạt động. |
+| `WHOLE_UNIT` | Nút/label "căn/nhà"; **không** lộ flow thêm-vào-căn; 1 Room = 1 căn/nhà.          |
 
 - [ ] Cả 4 loại tạo property + thêm ít nhất 1 đơn vị cho thuê thành công.
 - [ ] Empty state copy đúng theo loại hình trên trang Phòng.

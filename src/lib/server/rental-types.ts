@@ -25,7 +25,10 @@ export function normalizeRentalTypeOr(
 
 /** Split comma list, canonicalize, dedupe, filter valid; default ['APARTMENT'] when empty. */
 export function parseEnabledRentalTypes(value: string | null | undefined): RentalType[] {
-	const raw = (value ?? 'APARTMENT').split(',').map((type) => canonicalRentalType(type)).filter(Boolean);
+	const raw = (value ?? 'APARTMENT')
+		.split(',')
+		.map((type) => canonicalRentalType(type))
+		.filter(Boolean);
 	const unique = [...new Set(raw)].filter(isValidRentalType);
 	return unique.length > 0 ? unique : ['APARTMENT'];
 }

@@ -4,12 +4,12 @@ Phí SaaS được tính theo tổng số đơn vị cho thuê đang được qu
 
 ## Loại hình cho thuê (rental type)
 
-| Giá trị DB | Nhãn tiếng Việt | Ghi chú |
-| ---------- | --------------- | ------- |
-| `APARTMENT` | Share phòng chung cư / Co-living | Alias cũ `COLIVING` tự quy về `APARTMENT` |
-| `MOTEL` | Phòng trọ truyền thống / Căn hộ dịch vụ | Alias cũ `SERVICED_APARTMENT` tự quy về `MOTEL` |
-| `DORM` | KTX / Sleepbox | |
-| `WHOLE_UNIT` | Căn hộ chung cư nguyên căn / Nhà nguyên căn | Mỗi căn/nhà = 1 đơn vị tính phí |
+| Giá trị DB   | Nhãn tiếng Việt                             | Ghi chú                                         |
+| ------------ | ------------------------------------------- | ----------------------------------------------- |
+| `APARTMENT`  | Share phòng chung cư / Co-living            | Alias cũ `COLIVING` tự quy về `APARTMENT`       |
+| `MOTEL`      | Phòng trọ truyền thống / Căn hộ dịch vụ     | Alias cũ `SERVICED_APARTMENT` tự quy về `MOTEL` |
+| `DORM`       | KTX / Sleepbox                              |                                                 |
+| `WHOLE_UNIT` | Căn hộ chung cư nguyên căn / Nhà nguyên căn | Mỗi căn/nhà = 1 đơn vị tính phí                 |
 
 **Property (cụm quản lý):** một property là một cụm quản lý trong hệ thống. Cùng một địa chỉ vật lý có thể có nhiều property nếu chủ trọ tách theo loại hình hoặc cách vận hành khác nhau.
 
@@ -64,11 +64,11 @@ Co-living vẫn tính theo **số phòng**, không tính theo giường.
 
 Chủ trọ quản lý **5 phòng trọ** (`MOTEL`) + **2 nguyên căn** (`WHOLE_UNIT`) + **10 phòng co-living** (`APARTMENT`):
 
-| Chỉ số | Giá trị |
-| ------ | ------- |
+| Chỉ số          | Giá trị             |
+| --------------- | ------------------- |
 | Nhóm tiêu chuẩn | 5 + 2 = **7 phòng** |
-| Nhóm co-living | **10 phòng** |
-| Tổng đơn vị | **17 phòng** |
+| Nhóm co-living  | **10 phòng**        |
+| Tổng đơn vị     | **17 phòng**        |
 
 **Giá gộp (POOLED):** 17 phòng → tier `ROOMS_11_25`, bảng tiêu chuẩn (vì có ít nhất một phòng chuẩn) = **349.000đ/tháng**.
 
@@ -77,6 +77,7 @@ Chủ trọ quản lý **5 phòng trọ** (`MOTEL`) + **2 nguyên căn** (`WHOLE
 Hệ thống chọn **SPLIT 278.000đ** (rẻ hơn). `recommendedTier` vẫn là `ROOMS_11_25` theo tổng 17 phòng — tier phản ánh sức chứa, không nhất thiết bằng cách tính giá đang được chọn.
 
 `operatingModel` trên từng property (`OWNED`, `RENT_TO_RENT`, `MANAGED`…) **không ảnh hưởng** số liệu trên.
+
 - `MONTHLY` có hạn một tháng. `YEARLY` có hạn một năm và giá hiện bằng đúng 12 tháng, chưa áp dụng chiết khấu.
 - Phòng trống vẫn được tính vào số phòng đang quản lý.
 - Khi Super Admin duyệt, hệ thống lưu riêng hạn mức phòng chuẩn và co-living. API tạo phòng chặn cả tổng sức chứa của gói lẫn hạn mức từng nhóm; gói trả phí hết hạn cũng không được tạo thêm phòng.

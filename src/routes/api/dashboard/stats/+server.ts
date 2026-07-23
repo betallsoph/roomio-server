@@ -5,11 +5,7 @@ import { db } from '$lib/server/db';
 import { properties, rooms, invoices, contracts } from '$lib/server/db/schema';
 import { and, count, eq, gte, inArray, lte, sql, sum } from 'drizzle-orm';
 import { requireLandlord } from '$lib/server/authz';
-import {
-	canonicalRentalType,
-	isValidRentalType,
-	type RentalType
-} from '$lib/server/rental-types';
+import { canonicalRentalType, isValidRentalType, type RentalType } from '$lib/server/rental-types';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {

@@ -12,11 +12,11 @@ Roomio dùng hai trục độc lập ở cấp **Property** (cụm quản lý �
 
 ### Trục A — `rentalType` (ảnh hưởng giá và hạn mức)
 
-| Mã DB | Nhãn tiếng Việt | Nhóm giá |
-| ----- | ---------------- | -------- |
-| `APARTMENT` | Share phòng chung cư / Co-living | Co-living |
-| `MOTEL` | Phòng trọ truyền thống / Căn hộ dịch vụ | Tiêu chuẩn |
-| `DORM` | KTX / Sleepbox | Tiêu chuẩn |
+| Mã DB        | Nhãn tiếng Việt                             | Nhóm giá   |
+| ------------ | ------------------------------------------- | ---------- |
+| `APARTMENT`  | Share phòng chung cư / Co-living            | Co-living  |
+| `MOTEL`      | Phòng trọ truyền thống / Căn hộ dịch vụ     | Tiêu chuẩn |
+| `DORM`       | KTX / Sleepbox                              | Tiêu chuẩn |
 | `WHOLE_UNIT` | Căn hộ chung cư nguyên căn / Nhà nguyên căn | Tiêu chuẩn |
 
 - **Allowlist loại hình:** `LandlordProfile.enabledRentalTypes` — Super Admin cấp danh sách loại hình chủ trọ được phép tạo (comma-separated).
@@ -25,12 +25,12 @@ Roomio dùng hai trục độc lập ở cấp **Property** (cụm quản lý �
 
 ### Trục B — `operatingModel` (metadata, không ảnh hưởng giá)
 
-| Mã DB | Nhãn tiếng Việt |
-| ----- | ---------------- |
-| `UNSPECIFIED` | Chưa phân loại (mặc định) |
-| `OWNED` | Tự sở hữu |
-| `RENT_TO_RENT` | Thuê lại để cho thuê |
-| `MANAGED` | Quản lý hộ chủ nhà |
+| Mã DB          | Nhãn tiếng Việt           |
+| -------------- | ------------------------- |
+| `UNSPECIFIED`  | Chưa phân loại (mặc định) |
+| `OWNED`        | Tự sở hữu                 |
+| `RENT_TO_RENT` | Thuê lại để cho thuê      |
+| `MANAGED`      | Quản lý hộ chủ nhà        |
 
 Trục B chỉ phục vụ phân loại nội bộ và add-on tương lai — **không** thay đổi bảng giá subscription ở phase hiện tại.
 

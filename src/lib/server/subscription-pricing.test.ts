@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { calculateSubscriptionQuote, subscriptionTierForRoomCount } = await import(
-	'./subscription-pricing.js'
-);
+const { calculateSubscriptionQuote, subscriptionTierForRoomCount } =
+	await import('./subscription-pricing.js');
 
 test('subscriptionTierForRoomCount maps room counts to tiers', () => {
 	const cases: Array<[number, string]> = [
@@ -25,11 +24,7 @@ test('subscriptionTierForRoomCount maps room counts to tiers', () => {
 	];
 
 	for (const [roomCount, expectedTier] of cases) {
-		assert.equal(
-			subscriptionTierForRoomCount(roomCount),
-			expectedTier,
-			`roomCount ${roomCount}`
-		);
+		assert.equal(subscriptionTierForRoomCount(roomCount), expectedTier, `roomCount ${roomCount}`);
 	}
 });
 
