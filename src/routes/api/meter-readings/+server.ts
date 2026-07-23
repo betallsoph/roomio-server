@@ -83,6 +83,7 @@ export const GET: RequestHandler = async ({ url }) => {
 				currValue: meterReadings.currValue,
 				recordedAt: meterReadings.recordedAt,
 				photoUrl: meterReadings.photoUrl,
+				ocrParsedValue: meterReadings.ocrParsedValue,
 				status: meterReadings.status,
 				submittedBy: meterReadings.submittedBy,
 				isAnomalous: meterReadings.isAnomalous,
@@ -107,7 +108,7 @@ export const GET: RequestHandler = async ({ url }) => {
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const body = await request.json();
-		const { roomId, serviceId, month, currValue, photoUrl } = body;
+		const { roomId, serviceId, month, currValue, photoUrl, ocrParsedValue } = body;
 
 		if (!roomId || !serviceId || !month || currValue === undefined || currValue === '') {
 			return json({ error: 'Thiếu thông tin chỉ số' }, { status: 400 });
@@ -222,10 +223,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			currValue: curr,
 			recordedAt: new Date().toISOString().split('T')[0],
 			photoUrl: photoUrl || null,
+			ocrParsedValue:
+				ocrParsedValue === undefined || ocrParsedValue === null || ocrParsedValue === ''
+					? null
+					: Number(ocrParsedValue),
 			status: 'pending',
 			submittedBy: locals.session?.role === 'TENANT' ? 'TENANT' : 'LANDLORD',
 			isAnomalous
 		};
+
+		if (values.ocrParsedValue !== null && !Number.isFinite(values.ocrParsedValue)) {
+			return json({ error: 'Chỉ số OCR không hợp lệ' }, { status: 400 });
+		}
 
 		const reading = existing
 			? (

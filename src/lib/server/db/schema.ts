@@ -236,6 +236,8 @@ export const meterReadings = pgTable(
 		currValue: doublePrecision('currValue').notNull(),
 		recordedAt: text('recordedAt').notNull(), // YYYY-MM-DD
 		photoUrl: text('photoUrl'), // Lưu trữ ảnh chụp đồng hồ đối chiếu
+		ocrParsedValue: doublePrecision('ocrParsedValue'), // Kết quả OCR lúc khách gửi (đối chiếu)
+		ocrRawText: text('ocrRawText'), // Phản hồi thô từ Gemini (debug)
 		status: text('status').notNull().default('approved'), // 'pending' | 'approved' | 'rejected'
 		submittedBy: text('submittedBy').notNull().default('LANDLORD'), // 'LANDLORD' | 'TENANT'
 		isAnomalous: boolean('isAnomalous').notNull().default(false) // Lệch quá ngưỡng so với trung bình 3 tháng
