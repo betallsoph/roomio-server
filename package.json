@@ -3,6 +3,9 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
+	"engines": {
+		"node": ">=24 <25"
+	},
 	"scripts": {
 		"dev": "npm run db:migrate && node --env-file-if-exists=.env node_modules/vite/bin/vite.js dev --port 3000",
 		"build": "DATABASE_URL=postgres://roomio:roomio@localhost:5432/roomio node --env-file-if-exists=.env node_modules/vite/bin/vite.js build",
