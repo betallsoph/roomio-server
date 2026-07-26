@@ -6,12 +6,7 @@ import { eq } from 'drizzle-orm';
 import { rateLimit } from '$lib/server/rate-limit';
 import { isPublicHealthPath } from '$lib/server/health';
 import { registerProcessLifecycle } from '$lib/server/lifecycle';
-import {
-	childRequestLogger,
-	getLogger,
-	logHttpRequest,
-	resolveRequestId
-} from '$lib/server/logger';
+import { getLogger, logHttpRequest, resolveRequestId } from '$lib/server/logger';
 
 registerProcessLifecycle();
 

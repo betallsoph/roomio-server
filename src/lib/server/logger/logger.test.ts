@@ -47,7 +47,7 @@ function captureLogs(fn: () => void): string[] {
 	return lines;
 }
 
-function createEvent(pathname: string, method: string, requestId?: string) {
+function createEvent(pathname: string, method: string, requestId?: string, localsRequestId?: string) {
 	const headers = new Headers();
 	if (requestId) headers.set('x-request-id', requestId);
 
@@ -61,7 +61,9 @@ function createEvent(pathname: string, method: string, requestId?: string) {
 			serialize: () => '',
 			getAll: () => []
 		},
-		locals: {} as App.Locals,
+		locals: {
+			...(localsRequestId ? { requestId: localsRequestId } : {})
+		} as App.Locals,
 		getClientAddress: () => '127.0.0.1',
 		params: {},
 		route: { id: pathname },
@@ -177,8 +179,7 @@ test('handle attaches x-request-id matching structured log', async () => {
 
 test('handleError returns generic 500 payload without stack or SQL', async () => {
 	await withTestEnv(() => {
-		const event = createEvent('/api/invoices', 'GET') as never;
-		event.locals.requestId = 'server-error-123456';
+		const event = createEvent('/api/invoices', 'GET', undefined, 'server-error-123456') as never;
 
 		const lines = captureLogs(() => {
 			const result = handleError({
