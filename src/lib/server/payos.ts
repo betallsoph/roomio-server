@@ -4,8 +4,14 @@ import { db } from '$lib/server/db';
 import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import { tryDecryptSecret } from '$lib/server/secrets';
+import {
+	getEnv,
+	getPublicAppOrigin,
+	getPayosWebhookUrl,
+	isPayosConfigured
+} from './env';
 
-const PAYOS_API_BASE = process.env.PAYOS_API_BASE ?? 'https://api-merchant.payos.vn';
+export { getPayosWebhookUrl };
 
 export interface PayOSConfig {
 	clientId: string;
@@ -30,11 +36,19 @@ export interface PayOSPaymentLinkData {
 // Cấu hình PayOS của NỀN TẢNG (từ env) — dùng cho dòng tiền chủ trọ → SuperAdmin (subscription)
 // và cho webhook subscription. KHÔNG dùng cho tiền thuê (tiền thuê dùng key riêng từng chủ trọ).
 export function getPlatformPayOSConfig(): PayOSConfig | null {
-	const clientId = process.env.PAYOS_CLIENT_ID;
-	const apiKey = process.env.PAYOS_API_KEY;
-	const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
-	if (!clientId || !apiKey || !checksumKey) return null;
-	return { clientId, apiKey, checksumKey };
+	if (!isPayosConfigured()) return null;
+	const payos = getEnv().payos;
+	if (payos.status !== 'CONFIGURED') return null;
+	return {
+		clientId: payos.clientId,
+		apiKey: payos.apiKey,
+		checksumKey: payos.checksumKey
+	};
+}
+
+function payosApiBase(): string {
+	const payos = getEnv().payos;
+	return payos.status === 'CONFIGURED' ? payos.apiBase : 'https://api-merchant.payos.vn';
 }
 
 // Chọn cấu hình PayOS theo ngữ cảnh dòng tiền:
@@ -97,7 +111,7 @@ export async function resolvePayOSConfig(
 }
 
 export function getPublicOrigin() {
-	return process.env.PUBLIC_APP_ORIGIN ?? process.env.ORIGIN ?? 'http://localhost:5173';
+	return getPublicAppOrigin();
 }
 
 function normalizeSignatureValue(value: unknown): string {
@@ -190,7 +204,7 @@ export async function createPayOSPaymentLink(
 		signature
 	};
 
-	const response = await fetch(`${PAYOS_API_BASE}/v2/payment-requests`, {
+	const response = await fetch(`${payosApiBase()}/v2/payment-requests`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
@@ -223,7 +237,7 @@ export async function createPayOSPaymentLink(
 // Đăng ký/confirm webhook URL với PayOS bằng key của 1 merchant. PayOS sẽ ping thử URL,
 // nên hàm này vừa validate key vừa đăng ký webhook — dùng cho nút "Kiểm tra kết nối".
 export async function confirmPayOSWebhook(config: PayOSConfig, webhookUrl: string) {
-	const response = await fetch(`${PAYOS_API_BASE}/confirm-webhook`, {
+	const response = await fetch(`${payosApiBase()}/confirm-webhook`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',

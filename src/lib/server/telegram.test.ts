@@ -3,7 +3,14 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 
 const BOT_TOKEN = '123456:test-token';
-process.env.BOT_TOKEN = BOT_TOKEN;
+const { resetEnvForTests } = await import('./env.js');
+resetEnvForTests({
+	NODE_ENV: 'test',
+	DATABASE_URL: 'postgres://roomio:roomio@localhost:5432/roomio',
+	BOT_TOKEN,
+	BOT_USERNAME: 'roomio_bot',
+	MINIAPP_SHORT_NAME: 'app'
+});
 
 const { TelegramAuthError, verifyInitData } = await import('./telegram.js');
 

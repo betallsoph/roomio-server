@@ -1,6 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+import { getEnv } from './env';
 const METER_PHOTO_PREFIX = 'uploads/meters/';
 
 export interface MeterOcrResult {
@@ -10,19 +9,20 @@ export interface MeterOcrResult {
 }
 
 function googleAiApiKey(): string | null {
-	const key = process.env.GOOGLE_AI_API_KEY?.trim();
-	return key || null;
+	const ocr = getEnv().ocr;
+	return ocr.status === 'CONFIGURED' ? ocr.apiKey : null;
 }
 
 function geminiMeterModel(): string {
-	return process.env.GEMINI_METER_MODEL?.trim() || DEFAULT_MODEL;
+	const ocr = getEnv().ocr;
+	return ocr.status === 'CONFIGURED' ? ocr.meterModel : 'gemini-2.5-flash';
 }
 
 function r2PublicBaseUrl(): string | null {
-	const value = process.env.R2_PUBLIC_BASE_URL?.trim();
-	if (!value) return null;
+	const r2 = getEnv().r2;
+	if (r2.status !== 'CONFIGURED') return null;
 	try {
-		return new URL(value).toString().replace(/\/+$/, '');
+		return new URL(r2.publicBaseUrl).toString().replace(/\/+$/, '');
 	} catch {
 		return null;
 	}

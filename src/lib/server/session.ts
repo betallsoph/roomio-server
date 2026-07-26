@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
+import { getEnv } from './env';
 
 export interface SessionData {
 	userId: string;
@@ -11,12 +12,15 @@ export interface SessionData {
 	staffLandlordId: string | null; // Chủ trọ mà nhân viên (STAFF) phục vụ — dùng để scope dữ liệu
 }
 
-const SECRET = process.env.SESSION_SECRET ?? 'roomio-dev-secret-change-in-production';
 export const SESSION_COOKIE = 'roomio_session';
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 ngày
 
+function sessionSecret(): string {
+	return getEnv().sessionSecret;
+}
+
 function sign(payload: string): string {
-	return crypto.createHmac('sha256', SECRET).update(payload).digest('base64url');
+	return crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
 }
 
 export function createSession(cookies: Cookies, data: SessionData) {
@@ -25,7 +29,7 @@ export function createSession(cookies: Cookies, data: SessionData) {
 		path: '/',
 		httpOnly: true,
 		sameSite: 'lax',
-		secure: process.env.NODE_ENV === 'production',
+		secure: getEnv().isProduction,
 		maxAge: SESSION_MAX_AGE
 	});
 }

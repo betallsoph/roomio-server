@@ -13,16 +13,7 @@ import {
 	setDefaultPaymentAccount
 } from '$lib/server/payment-accounts';
 import { encryptSecret } from '$lib/server/secrets';
-import { confirmPayOSWebhook } from '$lib/server/payos';
-
-function apiWebhookUrl() {
-	const origin = (
-		process.env.ORIGIN ??
-		process.env.PUBLIC_APP_ORIGIN ??
-		'http://localhost:3000'
-	).replace(/\/$/, '');
-	return `${origin}/api/payos-webhook`;
-}
+import { confirmPayOSWebhook, getPayosWebhookUrl } from '$lib/server/payos';
 
 function resolveTargetLandlordId(
 	session: SessionData | null,
@@ -63,7 +54,7 @@ async function confirmWebhookIfPayOS(input: {
 	try {
 		await confirmPayOSWebhook(
 			{ clientId: input.clientId, apiKey: input.apiKey, checksumKey: input.checksumKey },
-			apiWebhookUrl()
+			getPayosWebhookUrl()
 		);
 		return { webhookRegistered: true, warning: null };
 	} catch (error) {
@@ -155,7 +146,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			{
 				account: publicPaymentAccount(account),
 				webhookRegistered: webhook.webhookRegistered,
-				webhookUrl: apiWebhookUrl(),
+				webhookUrl: getPayosWebhookUrl(),
 				warning: webhook.warning
 			},
 			{ status: 201 }
@@ -238,7 +229,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		return json({
 			account: publicPaymentAccount(updated[0]),
 			webhookRegistered: webhook.webhookRegistered,
-			webhookUrl: apiWebhookUrl(),
+			webhookUrl: getPayosWebhookUrl(),
 			warning: webhook.warning
 		});
 	} catch (error) {

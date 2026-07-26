@@ -6,18 +6,8 @@ import { db } from '$lib/server/db';
 import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { encryptSecret } from '$lib/server/secrets';
-import { confirmPayOSWebhook } from '$lib/server/payos';
+import { confirmPayOSWebhook, getPayosWebhookUrl } from '$lib/server/payos';
 import { ensureDefaultPaymentAccount } from '$lib/server/payment-accounts';
-
-// URL webhook tiền thuê — phải trỏ về box API (không phải frontend). PayOS sẽ ping thử URL này.
-function apiWebhookUrl() {
-	const origin = (
-		process.env.ORIGIN ??
-		process.env.PUBLIC_APP_ORIGIN ??
-		'http://localhost:3000'
-	).replace(/\/$/, '');
-	return `${origin}/api/payos-webhook`;
-}
 
 // Quyền: LANDLORD chỉ cấu hình PayOS của CHÍNH MÌNH; SUPER_ADMIN cấu hình cho landlordId bất kỳ.
 function resolveTargetLandlordId(
@@ -62,7 +52,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!target.ok) return target.response;
 
 		if (action === 'disconnect') {
-			const account = await ensureDefaultPaymentAccount(target.id);
+			let account = null;
+			try {
+				account = await ensureDefaultPaymentAccount(target.id);
+			} catch {
+				account = null;
+			}
 			await db.transaction(async (tx) => {
 				await tx
 					.update(landlordProfiles)
@@ -73,16 +68,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						payosConnectedAt: null
 					})
 					.where(eq(landlordProfiles.id, target.id));
-				await tx
-					.update(paymentAccounts)
-					.set({
-						provider: 'vietqr',
-						payosClientId: null,
-						payosApiKeyEnc: null,
-						payosChecksumKeyEnc: null,
-						payosConnectedAt: null
-					})
-					.where(eq(paymentAccounts.id, account.id));
+				if (account) {
+					await tx
+						.update(paymentAccounts)
+						.set({
+							provider: 'vietqr',
+							payosClientId: null,
+							payosApiKeyEnc: null,
+							payosChecksumKeyEnc: null,
+							payosConnectedAt: null
+						})
+						.where(eq(paymentAccounts.id, account.id));
+				}
 			});
 			return json({ connected: false });
 		}
@@ -97,41 +94,39 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const apiKeyEnc = encryptSecret(apiKey);
 		const checksumKeyEnc = encryptSecret(checksumKey);
 		const connectedAt = new Date();
+		await db
+			.update(landlordProfiles)
+			.set({
+				payosClientId: clientId,
+				payosApiKeyEnc: apiKeyEnc,
+				payosChecksumKeyEnc: checksumKeyEnc,
+				payosConnectedAt: connectedAt
+			})
+			.where(eq(landlordProfiles.id, target.id));
 		const account = await ensureDefaultPaymentAccount(target.id);
-		await db.transaction(async (tx) => {
-			await tx
-				.update(landlordProfiles)
-				.set({
-					payosClientId: clientId,
-					payosApiKeyEnc: apiKeyEnc,
-					payosChecksumKeyEnc: checksumKeyEnc,
-					payosConnectedAt: connectedAt
-				})
-				.where(eq(landlordProfiles.id, target.id));
-			await tx
-				.update(paymentAccounts)
-				.set({
-					provider: 'payos',
-					payosClientId: clientId,
-					payosApiKeyEnc: apiKeyEnc,
-					payosChecksumKeyEnc: checksumKeyEnc,
-					payosConnectedAt: connectedAt
-				})
-				.where(eq(paymentAccounts.id, account.id));
-		});
+		await db
+			.update(paymentAccounts)
+			.set({
+				provider: 'payos',
+				payosClientId: clientId,
+				payosApiKeyEnc: apiKeyEnc,
+				payosChecksumKeyEnc: checksumKeyEnc,
+				payosConnectedAt: connectedAt
+			})
+			.where(eq(paymentAccounts.id, account.id));
 
 		// Đăng ký webhook (vừa validate key vừa set URL). Ở dev localhost PayOS không gọi tới được
 		// → cảnh báo chứ không chặn; key vẫn lưu để lên prod test lại.
 		let webhookRegistered = false;
 		let warning: string | null = null;
 		try {
-			await confirmPayOSWebhook({ clientId, apiKey, checksumKey }, apiWebhookUrl());
+			await confirmPayOSWebhook({ clientId, apiKey, checksumKey }, getPayosWebhookUrl());
 			webhookRegistered = true;
 		} catch (e) {
 			warning = errorMessage(e);
 		}
 
-		return json({ connected: true, webhookRegistered, webhookUrl: apiWebhookUrl(), warning });
+		return json({ connected: true, webhookRegistered, webhookUrl: getPayosWebhookUrl(), warning });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

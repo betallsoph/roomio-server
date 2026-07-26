@@ -5,7 +5,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: roomio
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-matkhau_change_me_in_production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: roomio
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -24,10 +24,12 @@ services:
     ports:
       - '3000:3000'
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://roomio:${POSTGRES_PASSWORD:-matkhau_change_me_in_production}@db:5432/roomio}
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL in .env}
       - SUPER_ADMIN_ACCOUNTS=${SUPER_ADMIN_ACCOUNTS:-}
-      - SESSION_SECRET=${SESSION_SECRET:-change_me_to_a_secure_random_string_in_production}
-      - ORIGIN=${ORIGIN:-http://localhost:3000}
+      - SESSION_SECRET=${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      - ORIGIN=${ORIGIN:?Set ORIGIN in .env}
+      - PUBLIC_APP_ORIGIN=${PUBLIC_APP_ORIGIN:?Set PUBLIC_APP_ORIGIN in .env}
       - PORT=3000
       - UPLOAD_DIR=/app/uploads
       - PAYOS_CLIENT_ID=${PAYOS_CLIENT_ID:-}
@@ -35,7 +37,6 @@ services:
       - PAYOS_CHECKSUM_KEY=${PAYOS_CHECKSUM_KEY:-}
       - PAYOS_ENC_KEY=${PAYOS_ENC_KEY:-}
       - PAYOS_PARTNER_CODE=${PAYOS_PARTNER_CODE:-}
-      - PUBLIC_APP_ORIGIN=${PUBLIC_APP_ORIGIN:-}
       - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
       - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
       - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
@@ -46,6 +47,12 @@ services:
       - BOT_TOKEN=${BOT_TOKEN:-}
       - BOT_USERNAME=${BOT_USERNAME:-}
       - MINIAPP_SHORT_NAME=${MINIAPP_SHORT_NAME:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      - QSTASH_TOKEN=${QSTASH_TOKEN:-}
+      - QSTASH_CURRENT_SIGNING_KEY=${QSTASH_CURRENT_SIGNING_KEY:-}
+      - QSTASH_NEXT_SIGNING_KEY=${QSTASH_NEXT_SIGNING_KEY:-}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY:-}
+      - GEMINI_METER_MODEL=${GEMINI_METER_MODEL:-gemini-2.5-flash}
     depends_on:
       db:
         condition: service_healthy

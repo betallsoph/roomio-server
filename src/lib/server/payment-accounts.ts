@@ -1,17 +1,39 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
+import { isPayosConfigured } from './env';
 
 export type PaymentAccountRow = typeof paymentAccounts.$inferSelect;
 
+function hasConfiguredPayos(account: PaymentAccountRow): boolean {
+	return !!(
+		account.provider === 'payos' &&
+		account.payosClientId &&
+		account.payosApiKeyEnc &&
+		account.payosChecksumKeyEnc
+	);
+}
+
+function hasConfiguredBank(account: PaymentAccountRow): boolean {
+	return !!(account.accountNumber?.trim() && account.accountName?.trim());
+}
+
+function configurationStatus(account: PaymentAccountRow): 'NOT_CONFIGURED' | 'ACTIVE' {
+	if (hasConfiguredPayos(account) || hasConfiguredBank(account)) return 'ACTIVE';
+	return 'NOT_CONFIGURED';
+}
+
 export function publicPaymentAccount(account: PaymentAccountRow) {
+	const status = configurationStatus(account);
+	const payosConnected = hasConfiguredPayos(account) && isPayosConfigured();
 	return {
 		id: account.id,
 		landlordId: account.landlordId,
 		name: account.name,
 		provider: account.provider,
 		isDefault: account.isDefault,
-		isActive: account.isActive,
+		isActive: account.isActive && status === 'ACTIVE',
+		configurationStatus: status,
 		bankName: account.bankName,
 		bankCode: account.bankCode,
 		accountNumber: account.accountNumber,
@@ -19,11 +41,7 @@ export function publicPaymentAccount(account: PaymentAccountRow) {
 		bankBranch: account.bankBranch,
 		momoNumber: account.momoNumber,
 		payosClientId: account.payosClientId,
-		payosConnected: !!(
-			account.payosClientId &&
-			account.payosApiKeyEnc &&
-			account.payosChecksumKeyEnc
-		),
+		payosConnected,
 		payosConnectedAt: account.payosConnectedAt,
 		createdAt: account.createdAt,
 		updatedAt: account.updatedAt
@@ -40,6 +58,22 @@ function accountNameFromProfile(profile: {
 	if (profile.accountName?.trim()) return profile.accountName.trim();
 	if (profile.accountNumber?.trim()) return `Tài khoản ${profile.accountNumber.trim()}`;
 	return 'Tài khoản mặc định';
+}
+
+function profileHasPaymentConfig(profile: {
+	accountNumber: string;
+	accountName: string;
+	payosClientId: string | null;
+	payosApiKeyEnc: string | null;
+	payosChecksumKeyEnc: string | null;
+}) {
+	const hasPayOS = !!(
+		profile.payosClientId &&
+		profile.payosApiKeyEnc &&
+		profile.payosChecksumKeyEnc
+	);
+	const hasBank = !!(profile.accountNumber?.trim() && profile.accountName?.trim());
+	return hasPayOS || hasBank;
 }
 
 export async function ensureDefaultPaymentAccount(landlordId: string) {
@@ -83,6 +117,9 @@ export async function ensureDefaultPaymentAccount(landlordId: string) {
 		}
 	});
 	if (!profile) throw new Error('Không tìm thấy hồ sơ chủ trọ');
+	if (!profileHasPaymentConfig(profile)) {
+		throw new Error('Chưa cấu hình tài khoản nhận tiền');
+	}
 
 	const hasPayOS = !!(
 		profile.payosClientId &&
@@ -113,7 +150,6 @@ export async function ensureDefaultPaymentAccount(landlordId: string) {
 }
 
 export async function listPaymentAccounts(landlordId: string) {
-	await ensureDefaultPaymentAccount(landlordId);
 	return db.query.paymentAccounts.findMany({
 		where: and(eq(paymentAccounts.landlordId, landlordId), eq(paymentAccounts.isActive, true)),
 		orderBy: [desc(paymentAccounts.isDefault), asc(paymentAccounts.createdAt)]
@@ -134,7 +170,8 @@ export async function getPaymentAccountForLandlord(
 		if (!account) throw new Error('Tài khoản nhận tiền không thuộc chủ trọ này');
 		return account;
 	}
-	return ensureDefaultPaymentAccount(landlordId);
+	const account = await ensureDefaultPaymentAccount(landlordId);
+	return account;
 }
 
 export async function setDefaultPaymentAccount(landlordId: string, paymentAccountId: string) {

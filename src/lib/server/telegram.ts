@@ -1,15 +1,17 @@
 import crypto from 'crypto';
-
-// Xác thực initData của Telegram Mini App.
+import { getEnv, isTelegramConfigured } from './env';
 // Tài liệu: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 //
 // initData là một query-string đã được Telegram ký. Backend verify chữ ký bằng BOT_TOKEN để
 // tin được "đây đúng là user Telegram X" mà không cần mật khẩu.
 
-const BOT_TOKEN = process.env.BOT_TOKEN?.trim() ?? '';
-
 // initData cũ hơn khoảng thời gian này (giây) bị coi là hết hạn — chống replay nếu chuỗi bị lộ.
 const INIT_DATA_MAX_AGE_SECONDS = 60 * 60; // 1 giờ
+
+function botToken(): string {
+	const telegram = getEnv().telegram;
+	return telegram.status === 'CONFIGURED' ? telegram.botToken : '';
+}
 
 export interface TelegramUser {
 	id: number;
@@ -31,11 +33,12 @@ export interface VerifiedInitData {
 export class TelegramAuthError extends Error {}
 
 export function telegramConfigured(): boolean {
-	return BOT_TOKEN.length > 0;
+	return isTelegramConfigured();
 }
 
 export function verifyInitData(initData: string): VerifiedInitData {
-	if (!BOT_TOKEN) {
+	const token = botToken();
+	if (!token) {
 		throw new TelegramAuthError('Server chưa cấu hình BOT_TOKEN');
 	}
 	if (!initData) {
@@ -61,7 +64,7 @@ export function verifyInitData(initData: string): VerifiedInitData {
 	const dataCheckString = pairs.join('\n');
 
 	// secret_key = HMAC_SHA256(key="WebAppData", msg=BOT_TOKEN)
-	const secretKey = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+	const secretKey = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
 	// computed = hex(HMAC_SHA256(key=secret_key, msg=data_check_string))
 	const computed = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 

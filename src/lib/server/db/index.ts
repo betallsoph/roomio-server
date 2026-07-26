@@ -1,17 +1,8 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
+import { validateEnvOrExit } from '../env';
 import * as schema from './schema';
 
-const databaseUrl = process.env.DATABASE_URL;
+const env = validateEnvOrExit();
 
-function createDb() {
-	if (!databaseUrl?.startsWith('postgres')) {
-		throw new Error(
-			'DATABASE_URL phải trỏ tới Postgres. Ví dụ: postgres://roomio:pass@localhost:5432/roomio'
-		);
-	}
-
-	return drizzle(databaseUrl, { schema });
-}
-
-export const db = createDb();
+export const db = drizzle(env.databaseUrl, { schema });
 export type Db = typeof db;

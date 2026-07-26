@@ -1,9 +1,7 @@
 import crypto from 'crypto';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-
-const DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-const DEFAULT_EXPIRES_SECONDS = 5 * 60;
+import { getEnv } from './env';
 
 const EXT_BY_TYPE: Record<string, string> = {
 	'image/jpeg': 'jpg',
@@ -47,17 +45,6 @@ interface UploadR2ObjectInput extends CreatePresignedUploadInput {
 
 let cachedClient: S3Client | null = null;
 
-function requiredEnv(name: string): string {
-	const value = process.env[name]?.trim();
-	if (!value) throw new Error(`Thiếu biến môi trường ${name}`);
-	return value;
-}
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
-
 function normalizeAccountId(value: string): string {
 	if (!/^[a-f0-9]{32}$/i.test(value)) {
 		throw new Error('R2_ACCOUNT_ID không hợp lệ; chỉ nhập Account ID, không nhập URL endpoint');
@@ -76,17 +63,18 @@ function normalizePublicBaseUrl(value: string): string {
 }
 
 function r2Config(): R2Config {
+	const r2 = getEnv().r2;
+	if (r2.status !== 'CONFIGURED') {
+		throw new Error('R2_NOT_CONFIGURED');
+	}
 	return {
-		accountId: normalizeAccountId(requiredEnv('R2_ACCOUNT_ID')),
-		accessKeyId: requiredEnv('R2_ACCESS_KEY_ID'),
-		secretAccessKey: requiredEnv('R2_SECRET_ACCESS_KEY'),
-		bucket: requiredEnv('R2_BUCKET'),
-		publicBaseUrl: normalizePublicBaseUrl(requiredEnv('R2_PUBLIC_BASE_URL')),
-		maxUploadBytes: parsePositiveInt(process.env.R2_UPLOAD_MAX_BYTES, DEFAULT_MAX_UPLOAD_BYTES),
-		expiresIn: Math.min(
-			parsePositiveInt(process.env.R2_PRESIGN_EXPIRES_SECONDS, DEFAULT_EXPIRES_SECONDS),
-			60 * 60
-		)
+		accountId: normalizeAccountId(r2.accountId),
+		accessKeyId: r2.accessKeyId,
+		secretAccessKey: r2.secretAccessKey,
+		bucket: r2.bucket,
+		publicBaseUrl: normalizePublicBaseUrl(r2.publicBaseUrl),
+		maxUploadBytes: r2.maxUploadBytes,
+		expiresIn: r2.presignExpiresSeconds
 	};
 }
 
