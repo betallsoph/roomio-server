@@ -34,7 +34,7 @@ Roomio dùng hai trục độc lập ở cấp **Property** (cụm quản lý �
 
 Trục B chỉ phục vụ phân loại nội bộ và add-on tương lai — **không** thay đổi bảng giá subscription ở phase hiện tại.
 
-Cùng địa chỉ vật lý có thể có nhiều property (khác `rentalType`) thay vì thêm entity zone. Checklist regression sau migrate: [`docs/rental-type-regression-checklist.md`](docs/rental-type-regression-checklist.md).
+Cùng địa chỉ vật lý có thể có nhiều property (khác `rentalType`) thay vì thêm entity zone. Checklist regression sau migrate: [`../docs/rental-type-regression-checklist.md`](../docs/rental-type-regression-checklist.md).
 
 ## Công nghệ
 

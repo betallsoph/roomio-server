@@ -96,3 +96,36 @@ Code nguồn của bảng giá nằm tại `src/lib/server/subscription-pricing.
 - Chi tiết phần mở rộng theo từng loại hình được lưu trong `requestedRoomAdditions`; hai trường số phòng trên yêu cầu lưu hạn mức đích của nhóm chuẩn và co-living.
 - Việc chỉ bật thêm loại hình với hạn mức bằng 0 không tự cộng phí, nhưng chủ trọ vẫn chưa thể tạo phòng thuộc nhóm đó.
 - Nếu số phòng thực tế vượt mức đã khai báo trong lúc yêu cầu đang chờ, yêu cầu cũ không được duyệt và chủ trọ phải gửi lại để tính giá mới.
+
+## Bảng giá thử nghiệm Ver 2 (A/B Testing & VIP Operator)
+
+Đây là bảng giá chiến lược thử nghiệm song song (Ver 2), áp dụng cơ chế lock-in khách hàng sau 6 tháng trải nghiệm và tách riêng **Gói VIP Operator** cho phân khúc quy mô lớn kèm dịch vụ White-glove Onboarding.
+
+### 1. Phân khúc Tiêu chuẩn (< 50 phòng — Tự phục vụ)
+
+| Số phòng | Nhóm 1: CHDV / Trọ chuẩn | Nhóm 2: Co-living / Share | Cơ chế / Điểm khác biệt so với Ver 1 |
+| -------- | -----------------------: | ------------------------: | ------------------------------------ |
+| 1–4      |     Miễn phí 6 tháng đầu |      Miễn phí 6 tháng đầu | Sau 6 tháng thu phí nền tảng 149.000đ/tháng |
+| 5–10     |                 169.000đ |                  149.000đ | Tăng nhẹ so với bản chuẩn |
+| 11–20    |                 319.000đ |                  290.000đ | Bậc chia nhỏ hơn (đỡ sốc khi nhảy bậc) |
+| 21–30    |                 499.000đ |                  469.000đ | ~16.6k/phòng |
+| 31–40    |                 679.000đ |                  649.000đ | ~16.9k/phòng |
+| 41–50    |                 859.000đ |                  819.000đ | ~17.1k/phòng |
+
+### 2. Phân khúc VIP OPERATOR (≥ 50 phòng — Kèm Đặc quyền VIP)
+
+Dành cho chủ chuỗi và operator chuyên nghiệp, bao gồm các đặc quyền:
+- **White-glove Onboarding:** Bao setup nhập liệu A-Z từ Excel/sổ tay (không cần tự gõ).
+- **Zalo VIP 1-1:** Kênh hỗ trợ ưu tiên với SLA 5 phút, ưu tiên xử lý Feature Request.
+- **Mở khóa tính năng chuyên sâu:** Phân quyền `STAFF`, quản lý nhiều tòa nhà (`Multi-property workspace`), báo cáo P&L dòng tiền.
+- **Ưu đãi mỏ neo:** Giảm 50% tháng đầu tiên trải nghiệm.
+
+| Số phòng | Giá VIP chính thức / Tháng | Giá tháng đầu (Giảm 50%) | Đơn giá bình quân |
+| -------- | -------------------------: | -----------------------: | ----------------- |
+| 51–70    |                 1.489.000đ |                 745.000đ | ~21k / phòng |
+| 71–90    |                 1.989.000đ |                 995.000đ | ~22k / phòng |
+| 91–110   |                 2.489.000đ |               1.245.000đ | ~22k / phòng |
+| 111–150  |                 3.289.000đ |               1.645.000đ | ~22k / phòng |
+| 151–200  |                 4.189.000đ |               2.095.000đ | ~21k / phòng |
+| Trên 200 |                    Liên hệ |         Thỏa thuận riêng | Gói Enterprise |
+
