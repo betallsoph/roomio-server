@@ -32,5 +32,8 @@ ENV NODE_ENV=production
 
 EXPOSE 3000
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+	CMD node -e "fetch('http://127.0.0.1:3000/api/health/ready',{signal:AbortSignal.timeout(3000)}).then(async(r)=>{await r.arrayBuffer();process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"
+
 # Start script runs migrations first, then boots the API.
 CMD ["npm", "run", "start"]

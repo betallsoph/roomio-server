@@ -52,15 +52,9 @@ jobs:
             done
             docker compose up -d --build --remove-orphans
 
-            echo "==> Wait for API healthy"
-            for i in $(seq 1 30); do
-              if curl -sf http://127.0.0.1:3000/api/auth/me >/dev/null 2>&1 || \
-                 curl -sf http://127.0.0.1:3000/ >/dev/null 2>&1; then
-                echo "API is up"
-                break
-              fi
-              sleep 2
-            done
+            echo "==> Wait for API readiness"
+            chmod +x scripts/wait-for-readiness.sh
+            ./scripts/wait-for-readiness.sh http://127.0.0.1:3000/api/health/ready 30 2
 
             docker compose ps
             docker image prune -f

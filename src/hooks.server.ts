@@ -4,6 +4,10 @@ import { db } from '$lib/server/db';
 import { users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { rateLimit } from '$lib/server/rate-limit';
+import { isPublicHealthPath } from '$lib/server/health';
+import { registerProcessLifecycle } from '$lib/server/lifecycle';
+
+registerProcessLifecycle();
 
 // Các API không cần đăng nhập
 const PUBLIC_API = [
@@ -38,6 +42,13 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.session = session;
 
 	const { pathname } = event.url;
+
+	if (isPublicHealthPath(pathname)) {
+		if (event.request.method !== 'GET') {
+			return json({ error: 'Method Not Allowed' }, { status: 405 });
+		}
+		return resolve(event);
+	}
 
 	if (pathname === '/api/auth' && event.request.method === 'POST') {
 		const limited = rateLimit(`auth:${event.getClientAddress()}`, 20, 15 * 60 * 1000);
