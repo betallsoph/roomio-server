@@ -5,9 +5,10 @@ import { db } from '$lib/server/db';
 import { users, staffProfiles } from '$lib/server/db/schema';
 import { eq, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
+import { resolveLandlordScopeForList } from '$lib/server/landlord-query-scope';
 
 // Cột User công khai cho UI (không trả passwordHash)
-const STAFF_USER_COLUMNS = {
+export const STAFF_USER_COLUMNS = {
 	id: true,
 	name: true,
 	email: true,
@@ -16,15 +17,18 @@ const STAFF_USER_COLUMNS = {
 } as const;
 
 // Danh sách nhân viên của một chủ trọ
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
+		const scope = resolveLandlordScopeForList(
+			locals.session,
+			url.searchParams.get('landlordId')
+		);
+		if ('error' in scope) {
+			return json({ error: scope.error }, { status: scope.status });
 		}
 
 		const staff = await db.query.staffProfiles.findMany({
-			where: eq(staffProfiles.landlordId, landlordId),
+			where: eq(staffProfiles.landlordId, scope.landlordId),
 			with: { user: { columns: STAFF_USER_COLUMNS } }
 		});
 
