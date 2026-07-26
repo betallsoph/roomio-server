@@ -47,7 +47,12 @@ function captureLogs(fn: () => void): string[] {
 	return lines;
 }
 
-function createEvent(pathname: string, method: string, requestId?: string, localsRequestId?: string) {
+function createEvent(
+	pathname: string,
+	method: string,
+	requestId?: string,
+	localsRequestId?: string
+) {
 	const headers = new Headers();
 	if (requestId) headers.set('x-request-id', requestId);
 
