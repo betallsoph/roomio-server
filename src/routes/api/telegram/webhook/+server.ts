@@ -17,6 +17,7 @@ import {
 } from '$lib/server/telegram-bot';
 import { uploadR2Object } from '$lib/server/r2';
 import { and, eq, lt } from 'drizzle-orm';
+import { childRequestLogger } from '$lib/server/logger';
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET?.trim() ?? '';
 const FLOW = 'maintenance_request';
@@ -410,7 +411,9 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 	}
 }
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const log = childRequestLogger(locals.requestId, { handler: 'telegram-webhook' });
+
 	if (!WEBHOOK_SECRET) {
 		return json({ error: 'Server chưa cấu hình TELEGRAM_WEBHOOK_SECRET' }, { status: 503 });
 	}
@@ -421,13 +424,19 @@ export const POST: RequestHandler = async ({ request }) => {
 	try {
 		await cleanupExpiredSessions();
 		const update = (await request.json()) as TelegramUpdate;
+		const updateKind = update.callback_query
+			? 'callback_query'
+			: update.message
+				? 'message'
+				: 'unknown';
 		if (update.callback_query) {
 			await handleCallback(update.callback_query);
 		} else if (update.message) {
 			await handleMessage(update.message);
 		}
+		log.info({ updateKind }, 'telegram webhook processed');
 	} catch (error) {
-		console.error('telegram webhook failed', error);
+		log.error({ err: error }, 'telegram webhook failed');
 	}
 
 	return json({ ok: true });

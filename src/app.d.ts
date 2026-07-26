@@ -7,6 +7,7 @@ declare global {
 		// interface Error {}
 		interface Locals {
 			session: SessionData | null;
+			requestId: string;
 		}
 		// interface PageData {}
 		// interface PageState {}

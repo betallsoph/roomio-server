@@ -11,11 +11,13 @@ import {
 	queueMeterReminders,
 	runOverdueSweep
 } from '$lib/server/automation';
+import { childRequestLogger, logJobEvent } from '$lib/server/logger';
 
 // Cron hằng ngày — gọi từ lịch ngoài (GitHub Actions / crontab) bằng header x-cron-secret.
 // Chạy nhắc + quét quá hạn + tự soạn hóa đơn NHÁP cho mọi chủ trọ. Không có session người dùng.
 // Idempotent: nhắc/nháp đều chống trùng, nên chạy lại trong ngày vô hại.
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const log = childRequestLogger(locals.requestId, { jobType: 'cron-monthly' });
 	const secret = process.env.CRON_SECRET;
 	if (!secret) {
 		return json({ error: 'CRON_SECRET chưa cấu hình trên server' }, { status: 500 });
@@ -34,6 +36,13 @@ export const POST: RequestHandler = async ({ request }) => {
 		const month =
 			typeof body.month === 'string' ? body.month : new Date().toISOString().slice(0, 7);
 		const draft = body.draft !== false; // mặc định soạn nháp; truyền {"draft":false} để chỉ chạy nhắc
+
+		logJobEvent({
+			requestId: locals.requestId,
+			jobType: 'cron-monthly',
+			outcome: 'started',
+			detail: { month, draft }
+		});
 
 		const rows = await db.select({ landlordId: properties.landlordId }).from(properties);
 		const landlordIds = [...new Set(rows.map((r) => r.landlordId))];
@@ -60,6 +69,19 @@ export const POST: RequestHandler = async ({ request }) => {
 			}
 		}
 
+		logJobEvent({
+			requestId: locals.requestId,
+			jobType: 'cron-monthly',
+			outcome: 'completed',
+			detail: {
+				month,
+				landlords: landlordIds.length,
+				processed,
+				draftInvoices,
+				errorCount: errors.length
+			}
+		});
+
 		return json({
 			success: true,
 			month,
@@ -69,6 +91,15 @@ export const POST: RequestHandler = async ({ request }) => {
 			errors
 		});
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		log.error({ err: error }, 'cron monthly job failed');
+		logJobEvent({
+			requestId: locals.requestId,
+			jobType: 'cron-monthly',
+			outcome: 'failed'
+		});
+		return json(
+			{ error: 'Đã xảy ra lỗi. Vui lòng thử lại sau.', requestId: locals.requestId },
+			{ status: 500 }
+		);
 	}
 };

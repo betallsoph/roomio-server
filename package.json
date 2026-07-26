@@ -31,7 +31,8 @@
 		"@upstash/qstash": "2.11.3",
 		"bcryptjs": "^2.4.3",
 		"drizzle-orm": "^0.45.2",
-		"pg": "^8.21.0"
+		"pg": "^8.21.0",
+		"pino": "^9.14.0"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

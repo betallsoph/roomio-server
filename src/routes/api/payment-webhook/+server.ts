@@ -1,10 +1,10 @@
 import { json } from '@sveltejs/kit';
-import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { invoices, paymentTransactions, rooms } from '$lib/server/db/schema';
 import { eq, or, sql } from 'drizzle-orm';
 import { resolvePayOSConfig, verifyPayOSWebhook } from '$lib/server/payos';
+import { childRequestLogger } from '$lib/server/logger';
 
 // Webhook tiền thuê (khách thuê → chủ trọ). Mỗi chủ trọ dùng PayOS RIÊNG nên không thể verify
 // trước khi biết hóa đơn thuộc chủ trọ nào: ta MATCH hóa đơn theo orderCode/paymentLinkId TRƯỚC
@@ -12,7 +12,9 @@ import { resolvePayOSConfig, verifyPayOSWebhook } from '$lib/server/payos';
 // Chỉ áp tiền SAU khi chữ ký hợp lệ. orderCode được sinh tất định toàn cục (từ invoiceId) nên
 // match 1 endpoint không nhầm giữa các chủ trọ.
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const log = childRequestLogger(locals.requestId, { handler: 'payos-webhook' });
+
 	try {
 		const body = await request.json();
 		const { code, desc, success, data, signature } = body;
@@ -47,6 +49,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		// Không khớp hóa đơn → chưa biết key chủ trọ nào để verify; log (KHÔNG áp tiền) rồi ack 200.
 		if (!invoice) {
+			log.info({ orderCode, outcome: 'unmatched' }, 'payos webhook received');
 			await db.insert(paymentTransactions).values({
 				provider: 'payos',
 				providerTransactionId,
@@ -161,8 +164,22 @@ export const POST: RequestHandler = async ({ request }) => {
 				.where(eq(rooms.id, invoice.roomId));
 		});
 
+		log.info(
+			{
+				invoiceId: invoice.id,
+				landlordId,
+				orderCode,
+				outcome: fullyPaid ? 'paid' : 'partial'
+			},
+			'payos webhook applied'
+		);
+
 		return json({ success: true, invoiceId: invoice.id, status: fullyPaid ? 'paid' : 'partial' });
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		log.error({ err: error }, 'payos webhook failed');
+		return json(
+			{ error: 'Đã xảy ra lỗi. Vui lòng thử lại sau.', requestId: locals.requestId },
+			{ status: 500 }
+		);
 	}
 };
