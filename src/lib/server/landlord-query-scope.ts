@@ -1,8 +1,6 @@
 import type { SessionData } from '$lib/server/session';
 
-export type LandlordScopeResult =
-	| { landlordId: string }
-	| { error: string; status: number };
+export type LandlordScopeResult = { landlordId: string } | { error: string; status: number };
 
 /**
  * Xác định landlordId cho truy vấn danh sách (GET).

@@ -24,16 +24,16 @@ jobs:
         env:
           POSTGRES_USER: roomio
           POSTGRES_PASSWORD: ci_test_password
-          POSTGRES_DB: roomio
+          POSTGRES_DB: roomio_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U roomio -d roomio"
+          --health-cmd "pg_isready -U roomio -d roomio_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgres://roomio:ci_test_password@localhost:5432/roomio
+      DATABASE_URL: postgres://roomio:ci_test_password@localhost:5432/roomio_test
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +56,7 @@ jobs:
         run: npm run db:check
 
       - run: npm run format:check
+      - run: npm run lint
       - run: npm run check
       - run: npm run test
       - run: npm run build
@@ -68,6 +69,8 @@ jobs:
     needs: quality
     steps:
       - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 

@@ -6,8 +6,7 @@ import { getEnv } from './env';
 // Định dạng lưu: base64(iv).base64(authTag).base64(ciphertext)
 
 function getKey(): Buffer {
-	const payos = getEnv().payos;
-	const rawKey = payos.status === 'CONFIGURED' ? payos.encKey : null;
+	const rawKey = getEnv().payosEncryptionKey;
 	if (!rawKey) {
 		throw new Error('Chưa cấu hình PAYOS_ENC_KEY để mã hóa khóa PayOS');
 	}

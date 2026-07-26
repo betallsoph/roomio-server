@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { landlordProfiles, paymentAccounts, services, users } from '$lib/server/db/schema';
+import { landlordProfiles, services, users } from '$lib/server/db/schema';
 import { eq, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
 import {
@@ -296,28 +296,10 @@ export const POST: RequestHandler = async ({ request }) => {
 						subValidUntil,
 						subscribedStandardRoomLimit: standardRoomLimit,
 						subscribedColivingRoomLimit: colivingRoomLimit,
-						enabledRentalTypes,
-						bankName: 'Vietcombank',
-						bankCode: 'VCB',
-						accountNumber: '1234567890',
-						accountName: name.toUpperCase(),
-						bankBranch: 'Chi nhánh TP.HCM'
+						enabledRentalTypes
 					})
 					.returning()
 			)[0];
-
-			await tx.insert(paymentAccounts).values({
-				landlordId: landlord.id,
-				name: `${companyName || name} mặc định`,
-				provider: 'vietqr',
-				isDefault: true,
-				isActive: true,
-				bankName: 'Vietcombank',
-				bankCode: 'VCB',
-				accountNumber: '1234567890',
-				accountName: name,
-				bankBranch: 'Chi nhánh TP.HCM'
-			});
 
 			await tx.insert(services).values(
 				DEFAULT_SERVICES.map((service) => ({

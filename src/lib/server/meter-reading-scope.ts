@@ -7,12 +7,14 @@ import type { SessionData } from '$lib/server/session';
 // Helper này quyết định phạm vi ĐỌC dựa DUY NHẤT trên actor trong session, không tin ID client.
 //
 // Nguyên tắc:
-// - Scope của LANDLORD/STAFF luôn lấy từ session, ID client không mở rộng quyền.
+// - Scope LANDLORD lấy từ session; query khác scope bị từ chối rõ ràng.
+// - STAFF bị khóa cho tới khi có assignment/capability theo property.
 // - TENANT bị khóa lịch sử cho tới khi có Tenancy: lọc theo "phòng đang ở" vẫn lộ chỉ số
 //   của khách cũ cùng phòng, nên trả 403 thay vì lọc sai.
 // - SUPER_ADMIN phải chỉ định landlord rõ ràng; thiếu thì 400, không trả toàn hệ thống.
 
 export const TENANCY_HISTORY_NOT_READY = 'TENANCY_HISTORY_NOT_READY';
+export const STAFF_SCOPE_NOT_READY = 'STAFF_SCOPE_NOT_READY';
 
 export type MeterReadingScopeQuery = {
 	landlordId?: string | null;
@@ -37,22 +39,27 @@ export function resolveMeterReadingScope(
 
 	switch (session.role) {
 		case 'LANDLORD': {
-			// Scope cố định theo landlord của phiên; query landlordId/tenantId bị bỏ qua.
+			// Scope cố định theo landlord của phiên; client không được xin scope khác.
 			const landlordId = session.landlordProfileId;
 			if (!landlordId) {
 				return { ok: false, status: 403, error: 'Phiên chủ trọ không hợp lệ' };
 			}
-			return { ok: true, landlordId };
-		}
-
-		case 'STAFF': {
-			// Nhân viên chỉ trong phạm vi chủ trọ mình phục vụ; không cross-landlord.
-			const landlordId = session.staffLandlordId;
-			if (!landlordId) {
-				return { ok: false, status: 403, error: 'Nhân viên chưa được gán chủ trọ' };
+			const requestedLandlordId = query.landlordId?.trim();
+			if (requestedLandlordId && requestedLandlordId !== landlordId) {
+				return { ok: false, status: 403, error: 'Không có quyền truy cập dữ liệu này' };
 			}
 			return { ok: true, landlordId };
 		}
+
+		case 'STAFF':
+			// Chưa có property assignment/capability để biết nhân viên được xem phòng nào.
+			// Fail closed cho tới khi AUTH-013 hoàn thiện schema phân quyền nhân viên.
+			return {
+				ok: false,
+				status: 403,
+				error: 'Phạm vi xem chỉ số của nhân viên chưa được cấu hình',
+				code: STAFF_SCOPE_NOT_READY
+			};
 
 		case 'TENANT':
 			// Tạm khóa lịch sử: lọc theo phòng hiện tại vẫn lộ chỉ số khách cũ.

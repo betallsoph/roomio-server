@@ -47,10 +47,9 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			tenantId: url.searchParams.get('tenantId')
 		});
 		if (!scope.ok) {
-			return json(
-				scope.code ? { error: scope.error, code: scope.code } : { error: scope.error },
-				{ status: scope.status }
-			);
+			return json(scope.code ? { error: scope.error, code: scope.code } : { error: scope.error }, {
+				status: scope.status
+			});
 		}
 
 		// Chỉ áp status/month SAU khi đã khóa phạm vi landlord của actor.

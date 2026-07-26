@@ -10,10 +10,7 @@ const SERVICE_TYPES = ['METERED', 'MANUAL_AMOUNT', 'FLAT_ROOM', 'FLAT_PERSON', '
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const scope = resolveLandlordScopeForList(
-			locals.session,
-			url.searchParams.get('landlordId')
-		);
+		const scope = resolveLandlordScopeForList(locals.session, url.searchParams.get('landlordId'));
 		if ('error' in scope) {
 			return json({ error: scope.error }, { status: scope.status });
 		}

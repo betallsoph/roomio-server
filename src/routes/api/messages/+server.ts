@@ -8,6 +8,7 @@ import {
 	deliverLandlordMessageToTelegram,
 	type TelegramDelivery
 } from '$lib/server/message-delivery';
+import { childRequestLogger } from '$lib/server/logger';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
 // Hội thoại 1-1 giữa chủ nhà và khách thuê
@@ -149,7 +150,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					content
 				});
 			} catch (deliveryError) {
-				console.error('Telegram delivery failed after message was saved', deliveryError);
+				childRequestLogger(locals.requestId, { route: '/api/messages' }).error(
+					{
+						event: 'telegram_delivery_failed_after_message_saved',
+						landlordId,
+						tenantId,
+						messageId: created[0].id,
+						err: deliveryError
+					},
+					'Telegram delivery failed after message was saved'
+				);
 				telegramDelivery = {
 					status: 'failed',
 					delivered: false,

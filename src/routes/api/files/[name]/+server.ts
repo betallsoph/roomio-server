@@ -2,8 +2,9 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import fs from 'fs/promises';
 import path from 'path';
+import { getEnv } from '$lib/server/env';
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR ?? 'uploads';
+const UPLOAD_DIR = getEnv().uploadDir;
 
 const CONTENT_TYPES: Record<string, string> = {
 	jpg: 'image/jpeg',

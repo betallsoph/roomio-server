@@ -4,8 +4,9 @@ import type { RequestHandler } from './$types';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { getEnv } from '$lib/server/env';
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR ?? 'uploads';
+const UPLOAD_DIR = getEnv().uploadDir;
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
 const EXT_BY_TYPE: Record<string, string> = {

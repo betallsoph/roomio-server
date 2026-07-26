@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { Writable } from 'node:stream';
 import test from 'node:test';
+import { resetEnvForTests } from '$lib/server/env';
 import {
 	createLogger,
 	getLogger,
@@ -16,20 +17,26 @@ import { handle, handleError } from '../../../hooks.server.js';
 
 const TEST_ENV = {
 	NODE_ENV: 'test',
-	DATABASE_URL: 'postgres://roomio:roomio@localhost:5432/roomio',
-	SESSION_SECRET: 'roomio-local-dev-secret-32chars-min!!',
+	DATABASE_URL: 'postgres://roomio:database-password-never-log@localhost:5432/roomio',
+	SESSION_SECRET: 'session-secret-never-log-32chars-min!!',
 	ORIGIN: 'http://localhost:3000',
-	PUBLIC_APP_ORIGIN: 'http://localhost:5173'
+	PUBLIC_APP_ORIGIN: 'http://localhost:5173',
+	BOT_TOKEN: '1234567890:telegram-token-never-log-abcdef',
+	BOT_USERNAME: 'roomio_test_bot',
+	MINIAPP_SHORT_NAME: 'app',
+	TELEGRAM_WEBHOOK_SECRET: 'telegram-webhook-secret-never-log'
 };
 
 async function withTestEnv<T>(fn: () => T | Promise<T>): Promise<T> {
 	const previous = { ...process.env };
 	Object.assign(process.env, TEST_ENV);
+	resetEnvForTests();
 	resetLoggerForTests();
 	try {
 		return await fn();
 	} finally {
 		process.env = previous;
+		resetEnvForTests();
 		resetLoggerForTests();
 	}
 }
@@ -134,6 +141,47 @@ test('logger output is JSON and redacts sensitive fields', async () => {
 	});
 });
 
+test('logger scrubs configured and patterned secrets inside nested objects and Errors', async () => {
+	await withTestEnv(() => {
+		const bearer = 'bearer-credential-never-log';
+		const nestedError = new Error(
+			`Database failed at ${TEST_ENV.DATABASE_URL}; Bearer ${bearer}; bot=${TEST_ENV.BOT_TOKEN}; session=${TEST_ENV.SESSION_SECRET}`
+		);
+		const lines = captureLogs(() => {
+			getLogger().error(
+				{
+					context: {
+						levelOne: {
+							levelTwo: {
+								err: nestedError,
+								credentials: { password: 'nested-password-never-log' }
+							}
+						}
+					}
+				},
+				`delivery crashed with Bearer ${bearer}`
+			);
+		});
+
+		assert.equal(lines.length, 1);
+		const serialized = lines[0]!;
+		for (const forbiddenValue of [
+			TEST_ENV.DATABASE_URL,
+			'database-password-never-log',
+			TEST_ENV.SESSION_SECRET,
+			TEST_ENV.BOT_TOKEN,
+			bearer,
+			'nested-password-never-log'
+		]) {
+			assert.equal(serialized.includes(forbiddenValue), false, forbiddenValue);
+		}
+		assert.match(serialized, /\[REDACTED/);
+		const parsed = JSON.parse(serialized);
+		assert.equal(parsed.context.levelOne.levelTwo.err.type, 'Error');
+		assert.equal(typeof parsed.context.levelOne.levelTwo.err.stack, 'string');
+	});
+});
+
 test('logHttpRequest emits parseable JSON with required fields', async () => {
 	await withTestEnv(() => {
 		const lines = captureLogs(() => {
@@ -182,6 +230,46 @@ test('handle attaches x-request-id matching structured log', async () => {
 	});
 });
 
+test('handle replaces an explicit raw 500 response with a generic requestId payload', async () => {
+	await withTestEnv(async () => {
+		const rawFailure = `SELECT leaked FROM users AT ${TEST_ENV.DATABASE_URL}`;
+		const externalId = 'client-server-error-1234';
+		const response = await handle({
+			event: createEvent('/api/health/live', 'GET', externalId) as never,
+			resolve: async () =>
+				new Response(JSON.stringify({ error: rawFailure }), {
+					status: 500,
+					headers: { 'content-type': 'application/problem+json', 'x-safe-header': 'kept' }
+				})
+		});
+
+		assert.equal(response.status, 500);
+		assert.equal(response.headers.get('x-request-id'), externalId);
+		assert.equal(response.headers.get('x-safe-header'), 'kept');
+		assert.match(response.headers.get('content-type') ?? '', /^application\/json/);
+		const serialized = await response.text();
+		assert.equal(serialized.includes(rawFailure), false);
+		assert.equal(serialized.includes(TEST_ENV.DATABASE_URL), false);
+		assert.deepEqual(JSON.parse(serialized), {
+			error: 'Đã xảy ra lỗi. Vui lòng thử lại sau.',
+			requestId: externalId
+		});
+	});
+});
+
+test('handle preserves a 503 readiness response body', async () => {
+	await withTestEnv(async () => {
+		const response = await handle({
+			event: createEvent('/api/health/ready', 'GET', 'readiness-req-1234') as never,
+			resolve: async () => new Response('database unavailable', { status: 503 })
+		});
+
+		assert.equal(response.status, 503);
+		assert.equal(await response.text(), 'database unavailable');
+		assert.equal(response.headers.get('x-request-id'), 'readiness-req-1234');
+	});
+});
+
 test('handleError returns generic 500 payload without stack or SQL', async () => {
 	await withTestEnv(() => {
 		const event = createEvent('/api/invoices', 'GET', undefined, 'server-error-123456') as never;
@@ -205,6 +293,7 @@ test('handleError returns generic 500 payload without stack or SQL', async () =>
 
 		const errorLine = lines.find((line) => line.includes('unhandled request error'));
 		assert.ok(errorLine);
+		assert.equal(errorLine!.includes('postgres://'), false);
 		const parsed = JSON.parse(errorLine!);
 		assert.equal(parsed.requestId, 'server-error-123456');
 	});

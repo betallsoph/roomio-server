@@ -18,8 +18,8 @@ import {
 import { uploadR2Object } from '$lib/server/r2';
 import { and, eq, lt } from 'drizzle-orm';
 import { childRequestLogger } from '$lib/server/logger';
+import { getEnv } from '$lib/server/env';
 
-const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET?.trim() ?? '';
 const FLOW = 'maintenance_request';
 const SESSION_TTL_MS = 30 * 60 * 1000;
 
@@ -413,11 +413,13 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const log = childRequestLogger(locals.requestId, { handler: 'telegram-webhook' });
+	const telegram = getEnv().telegram;
+	const webhookSecret = telegram.status === 'CONFIGURED' ? telegram.webhookSecret : null;
 
-	if (!WEBHOOK_SECRET) {
+	if (!webhookSecret) {
 		return json({ error: 'Server chưa cấu hình TELEGRAM_WEBHOOK_SECRET' }, { status: 503 });
 	}
-	if (request.headers.get('x-telegram-bot-api-secret-token') !== WEBHOOK_SECRET) {
+	if (request.headers.get('x-telegram-bot-api-secret-token') !== webhookSecret) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
 	}
 

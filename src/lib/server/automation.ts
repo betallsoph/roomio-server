@@ -338,13 +338,13 @@ export async function generateDraftInvoices(landlordId: string, month: string, d
 			const anomalous = anomalousByRoom[room.id] ?? new Set<string>();
 			if (!roomReadyForAutoDraft(room, approvedByService, anomalous)) continue;
 
-			let built: ReturnType<typeof buildInvoiceItems> | null = null;
+			let built: ReturnType<typeof buildInvoiceItems>;
 			try {
 				built = buildInvoiceItems(room, month, { readings: approvedByService });
 			} catch {
 				continue;
 			}
-			if (!built || built.totalAmount <= 0) continue;
+			if (built.totalAmount <= 0) continue;
 
 			const randomHex = Math.floor(1000 + Math.random() * 9000).toString();
 			const invoiceId = `INV-${month.replace('-', '')}-${randomHex}`;

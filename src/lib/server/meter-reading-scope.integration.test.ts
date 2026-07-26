@@ -58,9 +58,13 @@ function sess(role: string, over: Partial<Session> = {}): Session {
 }
 
 if (!RUN) {
-	test('meter-readings GET A/B integration', {
-		skip: 'BLOCKED_INTEGRATION_TEST: set DATABASE_URL to a disposable localhost *test* Postgres'
-	}, () => {});
+	test(
+		'meter-readings GET A/B integration',
+		{
+			skip: 'BLOCKED_INTEGRATION_TEST: set DATABASE_URL to a disposable localhost *test* Postgres'
+		},
+		() => {}
+	);
 } else {
 	const { GET, POST, PUT } = await import('../../routes/api/meter-readings/+server.js');
 	const { db } = await import('./db/index.js');
@@ -80,7 +84,7 @@ if (!RUN) {
 		const qs = new URLSearchParams(params).toString();
 		const url = new URL(`http://localhost/api/meter-readings${qs ? '?' + qs : ''}`);
 		const res = await call(GET, { url, locals: { session } });
-		let body: unknown = null;
+		let body: unknown;
 		try {
 			body = await res.json();
 		} catch {
@@ -94,24 +98,60 @@ if (!RUN) {
 	before(async () => {
 		await cleanup();
 		await db.insert(users).values([
-			{ id: U_LA, email: 'a13-la@test.local', phone: 'a13-000001', passwordHash: 'x', name: 'LA', role: 'LANDLORD' },
-			{ id: U_LB, email: 'a13-lb@test.local', phone: 'a13-000002', passwordHash: 'x', name: 'LB', role: 'LANDLORD' },
-			{ id: U_TC, email: 'a13-tc@test.local', phone: 'a13-000003', passwordHash: 'x', name: 'TC', role: 'TENANT' }
+			{
+				id: U_LA,
+				email: 'a13-la@test.local',
+				phone: 'a13-000001',
+				passwordHash: 'x',
+				name: 'LA',
+				role: 'LANDLORD'
+			},
+			{
+				id: U_LB,
+				email: 'a13-lb@test.local',
+				phone: 'a13-000002',
+				passwordHash: 'x',
+				name: 'LB',
+				role: 'LANDLORD'
+			},
+			{
+				id: U_TC,
+				email: 'a13-tc@test.local',
+				phone: 'a13-000003',
+				passwordHash: 'x',
+				name: 'TC',
+				role: 'TENANT'
+			}
 		]);
 		await db.insert(landlordProfiles).values([
 			{ id: LA, userId: U_LA },
 			{ id: LB, userId: U_LB }
 		]);
-		await db.insert(tenantProfiles).values([
-			{ id: TC, userId: U_TC, idNumber: 'A13-ID', moveInDate: '2026-01-01', deposit: 0 }
-		]);
+		await db
+			.insert(tenantProfiles)
+			.values([{ id: TC, userId: U_TC, idNumber: 'A13-ID', moveInDate: '2026-01-01', deposit: 0 }]);
 		await db.insert(properties).values([
 			{ id: PA, landlordId: LA, name: 'Prop A', shortName: 'A', address: 'addr A' },
 			{ id: PB, landlordId: LB, name: 'Prop B', shortName: 'B', address: 'addr B' }
 		]);
 		await db.insert(rooms).values([
-			{ id: RA, propertyId: PA, roomNumber: 'A-101', roomType: 'standard', status: 'paid', monthlyRent: 1, tenantId: TC },
-			{ id: RB, propertyId: PB, roomNumber: 'B-101', roomType: 'standard', status: 'paid', monthlyRent: 1 }
+			{
+				id: RA,
+				propertyId: PA,
+				roomNumber: 'A-101',
+				roomType: 'standard',
+				status: 'paid',
+				monthlyRent: 1,
+				tenantId: TC
+			},
+			{
+				id: RB,
+				propertyId: PB,
+				roomNumber: 'B-101',
+				roomType: 'standard',
+				status: 'paid',
+				monthlyRent: 1
+			}
 		]);
 		await db.insert(services).values([
 			{ id: SA, landlordId: LA, name: 'Điện', type: 'METERED', defaultRate: 3000 },
@@ -119,10 +159,41 @@ if (!RUN) {
 		]);
 		await db.insert(meterReadings).values([
 			// Phòng A: một bản ghi CŨ (thời khách trước) + một bản ghi hiện tại.
-			{ id: 'a13-mr-a-old', roomId: RA, serviceId: SA, month: '2026-05', prevValue: 0, currValue: 100, recordedAt: '2026-05-31', status: 'approved', submittedBy: 'LANDLORD' },
-			{ id: 'a13-mr-a-cur', roomId: RA, serviceId: SA, month: '2026-06', prevValue: 100, currValue: 150, recordedAt: '2026-06-30', status: 'pending', submittedBy: 'TENANT', photoUrl: 'x.jpg' },
+			{
+				id: 'a13-mr-a-old',
+				roomId: RA,
+				serviceId: SA,
+				month: '2026-05',
+				prevValue: 0,
+				currValue: 100,
+				recordedAt: '2026-05-31',
+				status: 'approved',
+				submittedBy: 'LANDLORD'
+			},
+			{
+				id: 'a13-mr-a-cur',
+				roomId: RA,
+				serviceId: SA,
+				month: '2026-06',
+				prevValue: 100,
+				currValue: 150,
+				recordedAt: '2026-06-30',
+				status: 'pending',
+				submittedBy: 'TENANT',
+				photoUrl: 'x.jpg'
+			},
 			// Phòng B thuộc landlord B.
-			{ id: 'a13-mr-b', roomId: RB, serviceId: SB, month: '2026-06', prevValue: 0, currValue: 80, recordedAt: '2026-06-30', status: 'approved', submittedBy: 'LANDLORD' }
+			{
+				id: 'a13-mr-b',
+				roomId: RB,
+				serviceId: SB,
+				month: '2026-06',
+				prevValue: 0,
+				currValue: 80,
+				recordedAt: '2026-06-30',
+				status: 'approved',
+				submittedBy: 'LANDLORD'
+			}
 		]);
 	});
 
@@ -145,7 +216,10 @@ if (!RUN) {
 		assert.equal(r.status, 200);
 		const ids = roomIdsOf(r.body);
 		assert.ok(ids.length >= 2, 'A phải thấy các reading phòng A');
-		assert.ok(ids.every((id) => id === RA), 'mọi roomId phải thuộc scope A');
+		assert.ok(
+			ids.every((id) => id === RA),
+			'mọi roomId phải thuộc scope A'
+		);
 		assert.ok(!ids.includes(RB), 'không được thấy phòng B');
 	});
 
@@ -155,11 +229,10 @@ if (!RUN) {
 		assert.ok(roomIdsOf(r.body).every((id) => id === RA));
 	});
 
-	test('landlord A gửi landlordId=B → vẫn chỉ scope A', async () => {
+	test('landlord A gửi landlordId=B → 403, không trả row', async () => {
 		const r = await getReadings(landlordA, { landlordId: LB });
-		assert.equal(r.status, 200);
-		assert.ok(roomIdsOf(r.body).every((id) => id === RA));
-		assert.ok(!roomIdsOf(r.body).includes(RB));
+		assert.equal(r.status, 403);
+		assert.equal(Array.isArray(r.body), false);
 	});
 
 	test('tenant hiện tại → 403 TENANCY_HISTORY_NOT_READY, không đọc cả lịch sử khách cũ cùng phòng', async () => {
@@ -175,10 +248,11 @@ if (!RUN) {
 		assert.equal(Array.isArray(r.body), false);
 	});
 
-	test('staff A gửi filter landlordId=B → chỉ room A', async () => {
+	test('staff A bị fail closed tới khi có property assignment scope', async () => {
 		const r = await getReadings(staffA, { landlordId: LB });
-		assert.equal(r.status, 200);
-		assert.ok(roomIdsOf(r.body).every((id) => id === RA));
+		assert.equal(r.status, 403);
+		assert.equal(Array.isArray(r.body), false);
+		assert.equal((r.body as { code?: string }).code, 'STAFF_SCOPE_NOT_READY');
 	});
 
 	test('super-admin thiếu explicit scope → 400, không dump toàn hệ thống', async () => {
@@ -204,7 +278,7 @@ if (!RUN) {
 	});
 
 	test('mọi roomId trong mọi response được authorize đều nằm trong scope', async () => {
-		for (const s of [landlordA, staffA]) {
+		for (const s of [landlordA]) {
 			const ids = roomIdsOf((await getReadings(s)).body);
 			assert.ok(ids.every((id) => id === RA));
 		}

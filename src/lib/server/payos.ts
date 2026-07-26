@@ -42,8 +42,7 @@ export function getPlatformPayOSConfig(): PayOSConfig | null {
 }
 
 function payosApiBase(): string {
-	const payos = getEnv().payos;
-	return payos.status === 'CONFIGURED' ? payos.apiBase : 'https://api-merchant.payos.vn';
+	return getEnv().payosApiBase;
 }
 
 // Chọn cấu hình PayOS theo ngữ cảnh dòng tiền:

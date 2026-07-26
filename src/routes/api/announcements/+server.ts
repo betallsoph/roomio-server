@@ -12,6 +12,7 @@ import {
 	requireLandlord
 } from '$lib/server/authz';
 import { queueAnnouncementTelegramDeliveries } from '$lib/server/message-delivery';
+import { childRequestLogger } from '$lib/server/logger';
 
 async function landlordOwnsBlock(landlordId: string, blockId: string) {
 	const row = await db.query.blocks.findFirst({
@@ -146,9 +147,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				targetId: targetId || null
 			});
 		} catch (deliveryError) {
-			console.error(
-				'Telegram announcement delivery failed after announcement was saved',
-				deliveryError
+			childRequestLogger(locals.requestId, { route: '/api/announcements' }).error(
+				{
+					event: 'telegram_delivery_failed_after_announcement_saved',
+					landlordId: auth.value,
+					announcementId: created[0].id,
+					targetType: targetType || 'ALL',
+					targetId: targetId || null,
+					err: deliveryError
+				},
+				'Telegram delivery failed after announcement was saved'
 			);
 			telegramDelivery = {
 				status: 'failed',

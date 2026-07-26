@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import test from 'node:test';
 
 const { resetEnvForTests } = await import('./env.js');

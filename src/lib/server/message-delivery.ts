@@ -6,6 +6,7 @@ import {
 	sendTelegramMessage,
 	type TelegramSendResult
 } from '$lib/server/telegram-bot';
+import { getLogger } from '$lib/server/logger';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
 const MAX_MANUAL_RETRY_BATCH = 25;
@@ -253,14 +254,32 @@ async function markTelegramDeliveryFailed(
 
 function queueTelegramNotificationSend(notification: NotificationDelivery) {
 	void sendQueuedTelegramNotification(notification).catch(async (error) => {
-		console.error('Queued Telegram delivery crashed', error);
+		getLogger().error(
+			{
+				event: 'telegram_delivery_crashed',
+				notificationId: notification.id,
+				landlordId: notification.landlordId,
+				tenantId: notification.tenantId,
+				err: error
+			},
+			'queued Telegram delivery crashed'
+		);
 		await markTelegramDeliveryFailed(notification, {
 			ok: false,
 			code: 'network',
 			message: error instanceof Error ? error.message : 'Không chạy được delivery Telegram',
 			retryable: true
 		}).catch((markError) => {
-			console.error('Failed to mark queued Telegram delivery as failed', markError);
+			getLogger().error(
+				{
+					event: 'telegram_delivery_mark_failed',
+					notificationId: notification.id,
+					landlordId: notification.landlordId,
+					tenantId: notification.tenantId,
+					err: markError
+				},
+				'failed to mark queued Telegram delivery as failed'
+			);
 		});
 	});
 }

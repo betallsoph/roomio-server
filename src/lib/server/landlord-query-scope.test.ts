@@ -85,12 +85,9 @@ test('no session → 401', () => {
 });
 
 test('staff response columns exclude passwordHash', () => {
-	const src = readFileSync(
-		new URL('../../routes/api/staff/+server.ts', import.meta.url),
-		'utf8'
-	);
-	const match = src.match(/export const STAFF_USER_COLUMNS\s*=\s*\{([^}]+)\}/);
-	assert.ok(match, 'STAFF_USER_COLUMNS export found');
+	const src = readFileSync(new URL('../../routes/api/staff/+server.ts', import.meta.url), 'utf8');
+	const match = src.match(/const STAFF_USER_COLUMNS\s*=\s*\{([^}]+)\}/);
+	assert.ok(match, 'STAFF_USER_COLUMNS declaration found');
 	const columnsBlock = match[1];
 	assert.doesNotMatch(columnsBlock, /passwordHash/);
 	for (const col of ['id', 'name', 'email', 'phone', 'isActive']) {
@@ -99,10 +96,7 @@ test('staff response columns exclude passwordHash', () => {
 });
 
 test('POST/PUT/DELETE unchanged — still scope via session landlord', () => {
-	const src = readFileSync(
-		new URL('../../routes/api/staff/+server.ts', import.meta.url),
-		'utf8'
-	);
+	const src = readFileSync(new URL('../../routes/api/staff/+server.ts', import.meta.url), 'utf8');
 
 	assert.match(src, /export const POST[\s\S]*locals\.session\?\.landlordProfileId/);
 	assert.match(

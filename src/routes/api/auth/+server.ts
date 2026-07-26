@@ -7,6 +7,7 @@ import { eq, or } from 'drizzle-orm';
 import { createSession, destroySession } from '$lib/server/session';
 import { hashPassword, verifyPassword } from '$lib/server/password';
 import { requiredEmail, requiredPhone, ValidationError } from '$lib/server/validation';
+import { getEnv } from '$lib/server/env';
 
 type EnvSuperAdmin = {
 	id: string;
@@ -18,7 +19,8 @@ type EnvSuperAdmin = {
 const ENV_SUPER_ADMIN_ID = 'env-super-admin';
 
 function getEnvSuperAdmins(): EnvSuperAdmin[] {
-	const accounts = process.env.SUPER_ADMIN_ACCOUNTS?.split(',')
+	const accounts = getEnv()
+		.superAdminAccounts?.split(',')
 		.map((raw) => raw.trim())
 		.filter(Boolean);
 

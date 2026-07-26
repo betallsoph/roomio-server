@@ -10,6 +10,8 @@ import { getLogger, logHttpRequest, resolveRequestId } from '$lib/server/logger'
 
 registerProcessLifecycle();
 
+const GENERIC_SERVER_ERROR_MESSAGE = 'Đã xảy ra lỗi. Vui lòng thử lại sau.';
+
 // Các API không cần đăng nhập
 const PUBLIC_API = [
 	'/api/auth',
@@ -55,6 +57,24 @@ function beginRequest(event: Parameters<Handle>[0]['event']) {
 		});
 		const headers = new Headers(response.headers);
 		headers.set('x-request-id', requestId);
+		if (response.status === 500) {
+			headers.delete('content-length');
+			headers.delete('content-encoding');
+			headers.delete('content-range');
+			headers.delete('etag');
+			headers.set('content-type', 'application/json; charset=utf-8');
+			return new Response(
+				JSON.stringify({
+					error: GENERIC_SERVER_ERROR_MESSAGE,
+					requestId
+				}),
+				{
+					status: 500,
+					statusText: 'Internal Server Error',
+					headers
+				}
+			);
+		}
 		return new Response(response.body, {
 			status: response.status,
 			statusText: response.statusText,
@@ -82,7 +102,7 @@ export const handleError: HandleServerError = ({ error, event, status }) => {
 
 	if (status >= 500) {
 		return {
-			message: 'Đã xảy ra lỗi. Vui lòng thử lại sau.',
+			message: GENERIC_SERVER_ERROR_MESSAGE,
 			requestId
 		};
 	}

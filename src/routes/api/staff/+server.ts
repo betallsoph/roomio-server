@@ -8,7 +8,7 @@ import { hashPassword } from '$lib/server/password';
 import { resolveLandlordScopeForList } from '$lib/server/landlord-query-scope';
 
 // Cột User công khai cho UI (không trả passwordHash)
-export const STAFF_USER_COLUMNS = {
+const STAFF_USER_COLUMNS = {
 	id: true,
 	name: true,
 	email: true,
@@ -19,10 +19,7 @@ export const STAFF_USER_COLUMNS = {
 // Danh sách nhân viên của một chủ trọ
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const scope = resolveLandlordScopeForList(
-			locals.session,
-			url.searchParams.get('landlordId')
-		);
+		const scope = resolveLandlordScopeForList(locals.session, url.searchParams.get('landlordId'));
 		if ('error' in scope) {
 			return json({ error: scope.error }, { status: scope.status });
 		}

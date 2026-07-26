@@ -2,6 +2,7 @@ const SESSION_SECRET_MIN_LENGTH = 32;
 
 const SESSION_SECRET_PLACEHOLDERS = new Set([
 	'roomio-dev-secret-change-in-production',
+	'local-dev-only-session-secret-32chars-min!!',
 	'change_me_to_a_secure_random_string_in_production',
 	'doi-chuoi-nay-o-production',
 	'change_me',
@@ -13,12 +14,31 @@ const SESSION_SECRET_PLACEHOLDERS = new Set([
 const DATABASE_PASSWORD_PLACEHOLDERS = [
 	'matkhau',
 	'matkhau_change_me_in_production',
+	'local-dev-only-password',
 	'change_me',
 	'changeme',
 	'password',
 	'postgres',
 	'roomio'
 ];
+
+const SUPER_ADMIN_PASSWORD_PLACEHOLDERS = [
+	'doi-mat-khau-dai-va-kho-doan',
+	'change_me',
+	'changeme',
+	'password',
+	'admin'
+];
+
+const OPTIONAL_SECRET_PLACEHOLDERS = [
+	'change_me',
+	'changeme',
+	'secret',
+	'your-secret-here',
+	'doi-chuoi-nay-o-production'
+];
+
+const LOG_LEVELS = new Set(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
 
 const PAYOS_VARS = ['PAYOS_CLIENT_ID', 'PAYOS_API_KEY', 'PAYOS_CHECKSUM_KEY'] as const;
 const R2_VARS = [
@@ -48,9 +68,6 @@ export interface PayOSFeatureConfig {
 	clientId: string;
 	apiKey: string;
 	checksumKey: string;
-	apiBase: string;
-	encKey: string | null;
-	partnerCode: string | null;
 }
 
 export interface R2FeatureConfig {
@@ -97,6 +114,13 @@ export interface EnvConfig {
 	origin: string;
 	publicAppOrigin: string;
 	cronSecret: string | null;
+	superAdminAccounts: string | null;
+	uploadDir: string;
+	logLevel: string;
+	releaseSha: string;
+	payosApiBase: string;
+	payosEncryptionKey: string | null;
+	payosPartnerCode: string | null;
 	payos: PayOSFeatureConfig | { status: 'NOT_CONFIGURED' };
 	r2: R2FeatureConfig | { status: 'NOT_CONFIGURED' };
 	telegram: TelegramFeatureConfig | { status: 'NOT_CONFIGURED' };
@@ -124,6 +148,37 @@ function normalizeOrigin(value: string): string {
 	return value.replace(/\/+$/, '');
 }
 
+function isValidHttpUrl(value: string, httpsOnly: boolean): boolean {
+	try {
+		const parsed = new URL(value);
+		if (httpsOnly ? parsed.protocol !== 'https:' : !['http:', 'https:'].includes(parsed.protocol)) {
+			return false;
+		}
+		return (
+			!parsed.username &&
+			!parsed.password &&
+			(parsed.pathname === '/' || parsed.pathname === '') &&
+			!parsed.search &&
+			!parsed.hash
+		);
+	} catch {
+		return false;
+	}
+}
+
+function secretIsUnsafe(value: string, minimumLength: number): boolean {
+	const normalized = value.trim().toLowerCase();
+	return (
+		value.length < minimumLength ||
+		OPTIONAL_SECRET_PLACEHOLDERS.some(
+			(placeholder) =>
+				normalized === placeholder ||
+				((placeholder.includes('_') || placeholder.includes('-')) &&
+					normalized.includes(placeholder))
+		)
+	);
+}
+
 function isPlaceholderSessionSecret(value: string): boolean {
 	const normalized = value.trim().toLowerCase();
 	return SESSION_SECRET_PLACEHOLDERS.has(normalized);
@@ -149,6 +204,32 @@ function databaseUrlUsesLocalhost(url: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function superAdminAccountsAreUnsafe(raw: string, isProduction: boolean): boolean {
+	if (!raw) return false;
+
+	const accounts = raw
+		.split(',')
+		.map((item) => item.trim())
+		.filter(Boolean);
+	if (accounts.length === 0) return false;
+
+	return accounts.some((account) => {
+		const [email, password] = account.split(':').map((part) => part?.trim());
+		if (!email || !password || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return true;
+		if (!isProduction) return false;
+		const normalized = password.toLowerCase();
+		return (
+			password.length < 16 ||
+			SUPER_ADMIN_PASSWORD_PLACEHOLDERS.some(
+				(placeholder) =>
+					normalized === placeholder ||
+					((placeholder.includes('_') || placeholder.includes('-')) &&
+						normalized.includes(placeholder))
+			)
+		);
+	});
 }
 
 function readFeatureGroup<T extends readonly string[]>(
@@ -181,17 +262,11 @@ function parsePayosFeature(
 		return { status: 'NOT_CONFIGURED' };
 	}
 
-	const encKey = trim(source.PAYOS_ENC_KEY) || null;
-	if (isProduction && !encKey) errors.push('PAYOS_ENC_KEY');
-
 	return {
 		status: 'CONFIGURED',
 		clientId: group.values.PAYOS_CLIENT_ID,
 		apiKey: group.values.PAYOS_API_KEY,
-		checksumKey: group.values.PAYOS_CHECKSUM_KEY,
-		apiBase: trim(source.PAYOS_API_BASE) || 'https://api-merchant.payos.vn',
-		encKey,
-		partnerCode: trim(source.PAYOS_PARTNER_CODE) || null
+		checksumKey: group.values.PAYOS_CHECKSUM_KEY
 	};
 }
 
@@ -205,6 +280,10 @@ function parseR2Feature(
 	if (group.missing.length > 0) {
 		if (isProduction) errors.push(...group.missing);
 		return { status: 'NOT_CONFIGURED' };
+	}
+	if (!/^[a-f0-9]{32}$/i.test(group.values.R2_ACCOUNT_ID)) errors.push('R2_ACCOUNT_ID');
+	if (!isValidHttpUrl(group.values.R2_PUBLIC_BASE_URL, isProduction)) {
+		errors.push('R2_PUBLIC_BASE_URL');
 	}
 
 	return {
@@ -234,12 +313,17 @@ function parseTelegramFeature(
 		return { status: 'NOT_CONFIGURED' };
 	}
 
+	const webhookSecret = trim(source.TELEGRAM_WEBHOOK_SECRET) || null;
+	if (isProduction && (!webhookSecret || secretIsUnsafe(webhookSecret, 16))) {
+		errors.push('TELEGRAM_WEBHOOK_SECRET');
+	}
+
 	return {
 		status: 'CONFIGURED',
 		botToken: group.values.BOT_TOKEN,
 		botUsername: group.values.BOT_USERNAME,
 		miniappShortName: group.values.MINIAPP_SHORT_NAME,
-		webhookSecret: trim(source.TELEGRAM_WEBHOOK_SECRET) || null
+		webhookSecret
 	};
 }
 
@@ -312,11 +396,15 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 		if (isProduction) errors.push('ORIGIN');
 		else origin = DEV_ORIGIN;
 	}
+	if (origin && !isValidHttpUrl(origin, isProduction)) errors.push('ORIGIN');
 
 	let publicAppOrigin = trim(source.PUBLIC_APP_ORIGIN);
 	if (!publicAppOrigin) {
 		if (isProduction) errors.push('PUBLIC_APP_ORIGIN');
 		else publicAppOrigin = trim(source.ORIGIN) || DEV_PUBLIC_APP_ORIGIN;
+	}
+	if (publicAppOrigin && !isValidHttpUrl(publicAppOrigin, isProduction)) {
+		errors.push('PUBLIC_APP_ORIGIN');
 	}
 
 	const payos = parsePayosFeature(source, isProduction, errors);
@@ -324,6 +412,24 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 	const telegram = parseTelegramFeature(source, isProduction, errors);
 	const qstash = parseQStashFeature(source, isProduction, errors);
 	const ocr = parseOcrFeature(source, isProduction, errors);
+	const superAdminAccounts = trim(source.SUPER_ADMIN_ACCOUNTS);
+	if (isProduction && !superAdminAccounts) {
+		errors.push('SUPER_ADMIN_ACCOUNTS');
+	} else if (superAdminAccountsAreUnsafe(superAdminAccounts, isProduction)) {
+		errors.push('SUPER_ADMIN_ACCOUNTS');
+	}
+	const cronSecret = trim(source.CRON_SECRET);
+	if (isProduction && cronSecret && secretIsUnsafe(cronSecret, 32)) {
+		errors.push('CRON_SECRET');
+	}
+	const payosEncryptionKey = trim(source.PAYOS_ENC_KEY);
+	if (isProduction && payosEncryptionKey && secretIsUnsafe(payosEncryptionKey, 32)) {
+		errors.push('PAYOS_ENC_KEY');
+	}
+	const payosApiBase = trim(source.PAYOS_API_BASE) || 'https://api-merchant.payos.vn';
+	if (!isValidHttpUrl(payosApiBase, isProduction)) errors.push('PAYOS_API_BASE');
+	const configuredLogLevel = trim(source.LOG_LEVEL);
+	if (configuredLogLevel && !LOG_LEVELS.has(configuredLogLevel)) errors.push('LOG_LEVEL');
 
 	if (errors.length > 0) {
 		throw new EnvValidationError([...new Set(errors)]);
@@ -336,7 +442,15 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 		sessionSecret,
 		origin: normalizeOrigin(origin),
 		publicAppOrigin: normalizeOrigin(publicAppOrigin),
-		cronSecret: trim(source.CRON_SECRET) || null,
+		cronSecret: cronSecret || null,
+		superAdminAccounts: superAdminAccounts || null,
+		uploadDir: trim(source.UPLOAD_DIR) || 'uploads',
+		logLevel: configuredLogLevel || (isProduction ? 'info' : 'debug'),
+		releaseSha:
+			trim(source.RELEASE_SHA) || trim(source.GITHUB_SHA) || trim(source.COMMIT_SHA) || 'unknown',
+		payosApiBase,
+		payosEncryptionKey: payosEncryptionKey || null,
+		payosPartnerCode: trim(source.PAYOS_PARTNER_CODE) || null,
 		payos,
 		r2,
 		telegram,
@@ -389,6 +503,10 @@ export function getPayosWebhookUrl(): string {
 
 export function isPayosConfigured(): boolean {
 	return getEnv().payos.status === 'CONFIGURED';
+}
+
+export function isPayosEncryptionConfigured(): boolean {
+	return getEnv().payosEncryptionKey !== null;
 }
 
 export function isR2Configured(): boolean {

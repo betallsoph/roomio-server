@@ -12,13 +12,14 @@ import {
 	runOverdueSweep
 } from '$lib/server/automation';
 import { childRequestLogger, logJobEvent } from '$lib/server/logger';
+import { getEnv } from '$lib/server/env';
 
 // Cron hằng ngày — gọi từ lịch ngoài (GitHub Actions / crontab) bằng header x-cron-secret.
 // Chạy nhắc + quét quá hạn + tự soạn hóa đơn NHÁP cho mọi chủ trọ. Không có session người dùng.
 // Idempotent: nhắc/nháp đều chống trùng, nên chạy lại trong ngày vô hại.
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const log = childRequestLogger(locals.requestId, { jobType: 'cron-monthly' });
-	const secret = process.env.CRON_SECRET;
+	const secret = getEnv().cronSecret;
 	if (!secret) {
 		return json({ error: 'CRON_SECRET chưa cấu hình trên server' }, { status: 500 });
 	}

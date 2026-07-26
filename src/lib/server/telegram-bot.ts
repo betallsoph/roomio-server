@@ -1,6 +1,4 @@
-const BOT_TOKEN = process.env.BOT_TOKEN?.trim() ?? '';
-const BOT_USERNAME = process.env.BOT_USERNAME?.trim() ?? '';
-const MINIAPP_SHORT_NAME = process.env.MINIAPP_SHORT_NAME?.trim() ?? '';
+import { getEnv } from './env';
 
 const TELEGRAM_SEND_TIMEOUT_MS = 8_000;
 const TELEGRAM_MESSAGE_LIMIT = 4096;
@@ -38,8 +36,9 @@ function trimTelegramText(text: string) {
 }
 
 export function buildMiniAppUrl() {
-	if (!BOT_USERNAME || !MINIAPP_SHORT_NAME) return null;
-	return `https://t.me/${BOT_USERNAME}/${MINIAPP_SHORT_NAME}`;
+	const telegram = getEnv().telegram;
+	if (telegram.status !== 'CONFIGURED') return null;
+	return `https://t.me/${telegram.botUsername}/${telegram.miniappShortName}`;
 }
 
 export function buildTenantDirectMessageText(content: string) {
@@ -65,7 +64,8 @@ export async function sendTelegramMessage(
 	text: string,
 	options: TelegramMessageOptions = {}
 ): Promise<TelegramSendResult> {
-	if (!BOT_TOKEN) {
+	const telegram = getEnv().telegram;
+	if (telegram.status !== 'CONFIGURED') {
 		return {
 			ok: false,
 			code: 'not_configured',
@@ -73,6 +73,7 @@ export async function sendTelegramMessage(
 			retryable: false
 		};
 	}
+	const botToken = telegram.botToken;
 	if (!chatId.trim()) {
 		return {
 			ok: false,
@@ -86,7 +87,7 @@ export async function sendTelegramMessage(
 	const timeout = setTimeout(() => controller.abort(), TELEGRAM_SEND_TIMEOUT_MS);
 
 	try {
-		const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+		const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -159,9 +160,10 @@ export async function sendTelegramMessage(
 }
 
 export async function answerTelegramCallbackQuery(callbackQueryId: string) {
-	if (!BOT_TOKEN || !callbackQueryId.trim()) return;
+	const telegram = getEnv().telegram;
+	if (telegram.status !== 'CONFIGURED' || !callbackQueryId.trim()) return;
 
-	await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+	await fetch(`https://api.telegram.org/bot${telegram.botToken}/answerCallbackQuery`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ callback_query_id: callbackQueryId })
@@ -169,10 +171,11 @@ export async function answerTelegramCallbackQuery(callbackQueryId: string) {
 }
 
 export async function getTelegramFilePath(fileId: string) {
-	if (!BOT_TOKEN) throw new Error('Server chưa cấu hình BOT_TOKEN');
+	const telegram = getEnv().telegram;
+	if (telegram.status !== 'CONFIGURED') throw new Error('Server chưa cấu hình BOT_TOKEN');
 	if (!fileId.trim()) throw new Error('Thiếu Telegram file ID');
 
-	const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, {
+	const res = await fetch(`https://api.telegram.org/bot${telegram.botToken}/getFile`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ file_id: fileId })
@@ -185,10 +188,11 @@ export async function getTelegramFilePath(fileId: string) {
 }
 
 export async function downloadTelegramFile(filePath: string) {
-	if (!BOT_TOKEN) throw new Error('Server chưa cấu hình BOT_TOKEN');
+	const telegram = getEnv().telegram;
+	if (telegram.status !== 'CONFIGURED') throw new Error('Server chưa cấu hình BOT_TOKEN');
 	if (!filePath.trim()) throw new Error('Thiếu Telegram file path');
 
-	const res = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+	const res = await fetch(`https://api.telegram.org/file/bot${telegram.botToken}/${filePath}`);
 	if (!res.ok) throw new Error(`Không tải được ảnh Telegram: HTTP ${res.status}`);
 
 	const contentType = res.headers.get('content-type')?.split(';')[0]?.toLowerCase() || 'image/jpeg';

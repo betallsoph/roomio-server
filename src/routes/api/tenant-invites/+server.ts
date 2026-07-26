@@ -5,14 +5,14 @@ import { errorMessage } from '$lib/server/api';
 import { db } from '$lib/server/db';
 import { tenantInvites } from '$lib/server/db/schema';
 import { requireLandlord, landlordOwnsTenant, forbidden } from '$lib/server/authz';
+import { getEnv } from '$lib/server/env';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 ngày
 
 function buildDeepLink(token: string): string | null {
-	const bot = process.env.BOT_USERNAME?.trim();
-	const app = process.env.MINIAPP_SHORT_NAME?.trim();
-	if (!bot || !app) return null;
-	return `https://t.me/${bot}/${app}?startapp=${token}`;
+	const telegram = getEnv().telegram;
+	if (telegram.status !== 'CONFIGURED') return null;
+	return `https://t.me/${telegram.botUsername}/${telegram.miniappShortName}?startapp=${token}`;
 }
 
 // Chủ trọ sinh link mời Telegram cho 1 khách thuê. Token 1 lần, hết hạn sau 7 ngày.

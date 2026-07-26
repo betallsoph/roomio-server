@@ -207,7 +207,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const nextRoomNumber = String(roomNumber).trim();
 		let nextRoomCode = roomCode ? String(roomCode).trim() : null;
-		let nextBlockId = blockId || null;
+		const nextBlockId = blockId || null;
 		const nextFloor =
 			floor !== undefined && floor !== null && floor !== '' ? normalizeFloor(floor) : null;
 

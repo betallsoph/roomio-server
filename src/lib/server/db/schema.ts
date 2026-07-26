@@ -41,11 +41,11 @@ export const landlordProfiles = pgTable('LandlordProfile', {
 	enabledRentalTypes: text('enabledRentalTypes').notNull().default('APARTMENT'), // comma list: APARTMENT, MOTEL, DORM, WHOLE_UNIT
 
 	// Thông tin ngân hàng nhận tiền chuyển khoản (Cấu hình riêng của mỗi chủ trọ)
-	bankName: text('bankName').notNull().default('Vietcombank'),
-	bankCode: text('bankCode').notNull().default('VCB'),
-	accountNumber: text('accountNumber').notNull().default('1234567890'),
-	accountName: text('accountName').notNull().default('NGUYEN VAN HAU'),
-	bankBranch: text('bankBranch').notNull().default('Chi nhánh TP.HCM'),
+	bankName: text('bankName').notNull().default(''),
+	bankCode: text('bankCode').notNull().default(''),
+	accountNumber: text('accountNumber').notNull().default(''),
+	accountName: text('accountName').notNull().default(''),
+	bankBranch: text('bankBranch').notNull().default(''),
 	momoNumber: text('momoNumber'), // Số điện thoại nhận Momo (tùy chọn)
 
 	// PayOS riêng của từng chủ trọ — tiền thuê về THẲNG tài khoản chủ trọ (mô hình A2A).
@@ -67,8 +67,8 @@ export const paymentAccounts = pgTable(
 		provider: text('provider').notNull().default('vietqr'), // 'vietqr' | 'payos'
 		isDefault: boolean('isDefault').notNull().default(false),
 		isActive: boolean('isActive').notNull().default(true),
-		bankName: text('bankName').notNull().default('Vietcombank'),
-		bankCode: text('bankCode').notNull().default('VCB'),
+		bankName: text('bankName').notNull().default(''),
+		bankCode: text('bankCode').notNull().default(''),
 		accountNumber: text('accountNumber').notNull().default(''),
 		accountName: text('accountName').notNull().default(''),
 		bankBranch: text('bankBranch'),

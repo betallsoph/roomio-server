@@ -1,6 +1,6 @@
 import pino, { type Logger, type LoggerOptions } from 'pino';
 import { getEnv } from '$lib/server/env';
-import { REDACT_PATHS } from './redact.js';
+import { collectSensitiveLogValues, REDACT_PATHS, sanitizeLogValue } from './redact.js';
 import { resolveRequestId } from './request-id.js';
 
 export { resolveRequestId, isValidRequestId } from './request-id.js';
@@ -8,21 +8,16 @@ export { REDACT_PATHS } from './redact.js';
 export { LOG_ROTATION_DEFAULTS, LOG_ROTATE_CONFIG_SNIPPET } from './rotation.js';
 
 export function getReleaseSha(): string {
-	return (
-		process.env.RELEASE_SHA?.trim() ||
-		process.env.GITHUB_SHA?.trim() ||
-		process.env.COMMIT_SHA?.trim() ||
-		'unknown'
-	);
+	return getEnv().releaseSha;
 }
 
 function resolveLogLevel(): string {
-	const fromEnv = process.env.LOG_LEVEL?.trim();
-	if (fromEnv) return fromEnv;
-	return getEnv().isProduction ? 'info' : 'debug';
+	return getEnv().logLevel;
 }
 
 export function buildLoggerOptions(): LoggerOptions {
+	const sensitiveValues = collectSensitiveLogValues(getEnv());
+
 	return {
 		level: resolveLogLevel(),
 		base: {
@@ -35,7 +30,16 @@ export function buildLoggerOptions(): LoggerOptions {
 			censor: '[REDACTED]'
 		},
 		formatters: {
-			level: (label) => ({ level: label })
+			level: (label) => ({ level: label }),
+			bindings: (bindings) =>
+				sanitizeLogValue(bindings, sensitiveValues) as Record<string, unknown>,
+			log: (object) => sanitizeLogValue(object, sensitiveValues) as Record<string, unknown>
+		},
+		hooks: {
+			logMethod(args, method) {
+				const sanitizedArgs = args.map((value) => sanitizeLogValue(value, sensitiveValues));
+				method.apply(this, sanitizedArgs as Parameters<typeof method>);
+			}
 		},
 		timestamp: pino.stdTimeFunctions.isoTime
 	};

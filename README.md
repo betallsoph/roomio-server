@@ -74,7 +74,7 @@ Lịch sử automation được tự dọn khi chạy tác vụ: log job giữ 9
 
 ## Biến môi trường
 
-Xem `.env.example`. Bắt buộc cả local lẫn production: `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `SUPER_ADMIN_ACCOUNTS`. Khi bật Telegram Mini App, bắt buộc thêm `BOT_TOKEN`, `BOT_USERNAME`, `MINIAPP_SHORT_NAME`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed. Có thể khai báo nhiều thông tin đăng nhập, phân cách bằng dấu phẩy; tất cả cùng đại diện cho một Super Admin và dùng chung quyền quản trị.
+Xem `.env.example`. Production bắt buộc có `DATABASE_URL`, `SESSION_SECRET`, `ORIGIN`, `PUBLIC_APP_ORIGIN` và `SUPER_ADMIN_ACCOUNTS`. Khi bật Telegram Mini App, bắt buộc thêm `BOT_TOKEN`, `BOT_USERNAME`, `MINIAPP_SHORT_NAME`, `TELEGRAM_WEBHOOK_SECRET`. Super Admin lấy trực tiếp từ env, không lưu trong bảng `User` và không cần seed. Có thể khai báo nhiều thông tin đăng nhập, phân cách bằng dấu phẩy; tất cả cùng đại diện cho một Super Admin và dùng chung quyền quản trị. Mật khẩu Super Admin phải dài ít nhất 16 ký tự và không được dùng chuỗi mẫu trong tài liệu.
 
 ## Đồng bộ production về local
 
@@ -112,11 +112,13 @@ Nếu chạy bằng Docker Compose, đặt file `.env` trên server cạnh `dock
 
 ```bash
 POSTGRES_PASSWORD=mat-khau-db-rat-dai
-SUPER_ADMIN_ACCOUNTS=email1@domain.com:mat-khau-1:Super Admin,email2@domain.com:mat-khau-2:Super Admin
-SESSION_SECRET=chuoi-random-dai
+SUPER_ADMIN_ACCOUNTS=owner@domain.com:<mat-khau-random-tren-16-ky-tu>:Super Admin
+SESSION_SECRET=<ket-qua-openssl-rand-base64-48>
+CRON_SECRET=<ket-qua-openssl-rand-base64-48-khac>
 ORIGIN=https://api.roomio.example.com
 PUBLIC_APP_ORIGIN=https://roomio.example.com
-PAYOS_ENC_KEY=base64-32-byte-neu-dung-payos-rieng
+TELEGRAM_WEBHOOK_SECRET=<chuoi-random-rieng>
+PAYOS_ENC_KEY=<base64-32-byte-neu-dung-payos-rieng>
 ```
 
 Sau đó chạy:

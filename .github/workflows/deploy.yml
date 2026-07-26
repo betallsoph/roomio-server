@@ -41,12 +41,14 @@ jobs:
             git reset --hard origin/master
 
             echo "==> Build & restart (arm64 native on VPS)"
-            if [ ! -f .env ] || ! grep -q '^SUPER_ADMIN_ACCOUNTS=' .env; then
-              echo "::warning::SUPER_ADMIN_ACCOUNTS is not set on VPS. Deploy can continue, but env SuperAdmin login will not work until .env is configured."
+            if [ ! -f .env ] || ! grep -Eq '^SUPER_ADMIN_ACCOUNTS=.+$' .env; then
+              echo "::error::SUPER_ADMIN_ACCOUNTS is missing in the VPS .env. Production cannot boot safely without an admin account."
+              exit 1
             fi
-            for name in BOT_TOKEN BOT_USERNAME MINIAPP_SHORT_NAME; do
+            export RELEASE_SHA="$(git rev-parse HEAD)"
+            for name in BOT_TOKEN BOT_USERNAME MINIAPP_SHORT_NAME TELEGRAM_WEBHOOK_SECRET CRON_SECRET; do
               if [ ! -f .env ] || ! grep -Eq "^${name}=.+$" .env; then
-                echo "::error::${name} is missing in the VPS .env. Telegram Mini App authentication cannot work."
+                echo "::error::${name} is missing in the VPS .env. Production boot requirements are incomplete."
                 exit 1
               fi
             done

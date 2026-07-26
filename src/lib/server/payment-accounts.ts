@@ -1,31 +1,52 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
-import { isPayosConfigured } from './env';
+import { isPayosEncryptionConfigured } from './env';
 
 export type PaymentAccountRow = typeof paymentAccounts.$inferSelect;
+export type PaymentAccountConfiguration = Pick<
+	PaymentAccountRow,
+	| 'provider'
+	| 'bankCode'
+	| 'accountNumber'
+	| 'accountName'
+	| 'payosClientId'
+	| 'payosApiKeyEnc'
+	| 'payosChecksumKeyEnc'
+>;
 
-function hasConfiguredPayos(account: PaymentAccountRow): boolean {
+const LEGACY_PLACEHOLDER_ACCOUNT_NUMBERS = new Set(['1234567890']);
+
+function hasConfiguredPayos(account: PaymentAccountConfiguration): boolean {
 	return !!(
 		account.provider === 'payos' &&
 		account.payosClientId &&
 		account.payosApiKeyEnc &&
-		account.payosChecksumKeyEnc
+		account.payosChecksumKeyEnc &&
+		isPayosEncryptionConfigured()
 	);
 }
 
-function hasConfiguredBank(account: PaymentAccountRow): boolean {
-	return !!(account.accountNumber?.trim() && account.accountName?.trim());
+function hasConfiguredBank(account: PaymentAccountConfiguration): boolean {
+	const accountNumber = account.accountNumber?.trim();
+	return !!(
+		accountNumber &&
+		account.bankCode?.trim() &&
+		account.accountName?.trim() &&
+		!LEGACY_PLACEHOLDER_ACCOUNT_NUMBERS.has(accountNumber)
+	);
 }
 
-function configurationStatus(account: PaymentAccountRow): 'NOT_CONFIGURED' | 'ACTIVE' {
+export function paymentAccountConfigurationStatus(
+	account: PaymentAccountConfiguration
+): 'NOT_CONFIGURED' | 'ACTIVE' {
 	if (hasConfiguredPayos(account) || hasConfiguredBank(account)) return 'ACTIVE';
 	return 'NOT_CONFIGURED';
 }
 
 export function publicPaymentAccount(account: PaymentAccountRow) {
-	const status = configurationStatus(account);
-	const payosConnected = hasConfiguredPayos(account) && isPayosConfigured();
+	const status = paymentAccountConfigurationStatus(account);
+	const payosConnected = hasConfiguredPayos(account);
 	return {
 		id: account.id,
 		landlordId: account.landlordId,
@@ -61,6 +82,7 @@ function accountNameFromProfile(profile: {
 }
 
 function profileHasPaymentConfig(profile: {
+	bankCode: string;
 	accountNumber: string;
 	accountName: string;
 	payosClientId: string | null;
@@ -70,33 +92,41 @@ function profileHasPaymentConfig(profile: {
 	const hasPayOS = !!(
 		profile.payosClientId &&
 		profile.payosApiKeyEnc &&
-		profile.payosChecksumKeyEnc
+		profile.payosChecksumKeyEnc &&
+		isPayosEncryptionConfigured()
 	);
-	const hasBank = !!(profile.accountNumber?.trim() && profile.accountName?.trim());
+	const accountNumber = profile.accountNumber?.trim();
+	const hasBank = !!(
+		accountNumber &&
+		profile.bankCode?.trim() &&
+		profile.accountName?.trim() &&
+		!LEGACY_PLACEHOLDER_ACCOUNT_NUMBERS.has(accountNumber)
+	);
 	return hasPayOS || hasBank;
 }
 
 export async function ensureDefaultPaymentAccount(landlordId: string) {
-	const existingDefault = await db.query.paymentAccounts.findFirst({
-		where: and(
-			eq(paymentAccounts.landlordId, landlordId),
-			eq(paymentAccounts.isDefault, true),
-			eq(paymentAccounts.isActive, true)
-		)
-	});
-	if (existingDefault) return existingDefault;
-
-	const existingActive = await db.query.paymentAccounts.findFirst({
+	const activeAccounts = await db.query.paymentAccounts.findMany({
 		where: and(eq(paymentAccounts.landlordId, landlordId), eq(paymentAccounts.isActive, true)),
-		orderBy: [asc(paymentAccounts.createdAt)]
+		orderBy: [desc(paymentAccounts.isDefault), asc(paymentAccounts.createdAt)]
 	});
-	if (existingActive) {
-		const updated = await db
-			.update(paymentAccounts)
-			.set({ isDefault: true })
-			.where(eq(paymentAccounts.id, existingActive.id))
-			.returning();
-		return updated[0];
+	const configuredAccount = activeAccounts.find(
+		(account) => paymentAccountConfigurationStatus(account) === 'ACTIVE'
+	);
+	if (configuredAccount?.isDefault) return configuredAccount;
+	if (configuredAccount) {
+		return db.transaction(async (tx) => {
+			await tx
+				.update(paymentAccounts)
+				.set({ isDefault: false })
+				.where(eq(paymentAccounts.landlordId, landlordId));
+			const updated = await tx
+				.update(paymentAccounts)
+				.set({ isDefault: true })
+				.where(eq(paymentAccounts.id, configuredAccount.id))
+				.returning();
+			return updated[0];
+		});
 	}
 
 	const profile = await db.query.landlordProfiles.findFirst({
@@ -168,6 +198,9 @@ export async function getPaymentAccountForLandlord(
 			)
 		});
 		if (!account) throw new Error('Tài khoản nhận tiền không thuộc chủ trọ này');
+		if (!account.isActive || paymentAccountConfigurationStatus(account) !== 'ACTIVE') {
+			throw new Error('Tài khoản nhận tiền chưa được cấu hình hoặc đã tắt');
+		}
 		return account;
 	}
 	const account = await ensureDefaultPaymentAccount(landlordId);

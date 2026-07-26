@@ -7,15 +7,12 @@ const SERVICES_SRC = new URL('../../routes/api/services/+server.ts', import.meta
 test('GET scopes listings via resolveLandlordScopeForList and session', () => {
 	const src = readFileSync(SERVICES_SRC, 'utf8');
 
-	assert.match(src, /import \{ resolveLandlordScopeForList \} from '\$lib\/server\/landlord-query-scope'/);
 	assert.match(
 		src,
-		/export const GET[\s\S]*resolveLandlordScopeForList\(\s*locals\.session/
+		/import \{ resolveLandlordScopeForList \} from '\$lib\/server\/landlord-query-scope'/
 	);
-	assert.match(
-		src,
-		/export const GET[\s\S]*url\.searchParams\.get\('landlordId'\)/
-	);
+	assert.match(src, /export const GET[\s\S]*resolveLandlordScopeForList\(\s*locals\.session/);
+	assert.match(src, /export const GET[\s\S]*url\.searchParams\.get\('landlordId'\)/);
 	assert.match(src, /export const GET[\s\S]*eq\(services\.landlordId, scope\.landlordId\)/);
 	assert.doesNotMatch(
 		src,

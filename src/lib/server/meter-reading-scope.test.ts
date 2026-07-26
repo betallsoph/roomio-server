@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { resolveMeterReadingScope, TENANCY_HISTORY_NOT_READY } = await import(
-	'./meter-reading-scope.js'
-);
+const { resolveMeterReadingScope, STAFF_SCOPE_NOT_READY, TENANCY_HISTORY_NOT_READY } =
+	await import('./meter-reading-scope.js');
 
 type Session = {
 	userId: string;
@@ -32,12 +31,12 @@ test('no session → 401, no landlord scope', () => {
 	assert.equal(d.ok === false && d.status, 401);
 });
 
-test('LANDLORD scope always comes from session, ignoring query landlordId', () => {
+test('LANDLORD cannot request another landlord scope', () => {
 	const d = resolveMeterReadingScope(session('LANDLORD', { landlordProfileId: 'landlord-a' }), {
 		landlordId: 'landlord-b'
 	});
-	assert.equal(d.ok, true);
-	assert.equal(d.ok === true && d.landlordId, 'landlord-a');
+	assert.equal(d.ok, false);
+	assert.equal(d.ok === false && d.status, 403);
 });
 
 test('LANDLORD passing tenantId of another landlord does not expand scope', () => {
@@ -54,18 +53,20 @@ test('LANDLORD with missing landlordProfileId is denied (defensive)', () => {
 	assert.equal(d.ok === false && d.status, 403);
 });
 
-test('STAFF scope comes from staffLandlordId, query cannot cross landlord', () => {
+test('STAFF is denied until property assignment scope exists', () => {
 	const d = resolveMeterReadingScope(session('STAFF', { staffLandlordId: 'landlord-a' }), {
 		landlordId: 'landlord-b'
 	});
-	assert.equal(d.ok, true);
-	assert.equal(d.ok === true && d.landlordId, 'landlord-a');
+	assert.equal(d.ok, false);
+	assert.equal(d.ok === false && d.status, 403);
+	assert.equal(d.ok === false && d.code, STAFF_SCOPE_NOT_READY);
 });
 
 test('STAFF without staffLandlordId is denied', () => {
 	const d = resolveMeterReadingScope(session('STAFF', { staffLandlordId: null }), {});
 	assert.equal(d.ok, false);
 	assert.equal(d.ok === false && d.status, 403);
+	assert.equal(d.ok === false && d.code, STAFF_SCOPE_NOT_READY);
 });
 
 test('TENANT is locked with 403 TENANCY_HISTORY_NOT_READY', () => {
