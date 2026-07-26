@@ -4,21 +4,24 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { services, rooms, properties, roomServiceConfigs } from '$lib/server/db/schema';
 import { asc, eq } from 'drizzle-orm';
+import { resolveLandlordScopeForList } from '$lib/server/landlord-query-scope';
 
 const SERVICE_TYPES = ['METERED', 'MANUAL_AMOUNT', 'FLAT_ROOM', 'FLAT_PERSON', 'FLAT_VEHICLE'];
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-
-		if (!landlordId) {
-			return json({ error: 'Missing landlord ID' }, { status: 400 });
+		const scope = resolveLandlordScopeForList(
+			locals.session,
+			url.searchParams.get('landlordId')
+		);
+		if ('error' in scope) {
+			return json({ error: scope.error }, { status: scope.status });
 		}
 
 		const result = await db
 			.select()
 			.from(services)
-			.where(eq(services.landlordId, landlordId))
+			.where(eq(services.landlordId, scope.landlordId))
 			.orderBy(asc(services.name));
 
 		return json(result);
