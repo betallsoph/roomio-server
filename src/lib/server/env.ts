@@ -29,7 +29,11 @@ const R2_VARS = [
 	'R2_PUBLIC_BASE_URL'
 ] as const;
 const TELEGRAM_VARS = ['BOT_TOKEN', 'BOT_USERNAME', 'MINIAPP_SHORT_NAME'] as const;
-const QSTASH_VARS = ['QSTASH_TOKEN', 'QSTASH_CURRENT_SIGNING_KEY', 'QSTASH_NEXT_SIGNING_KEY'] as const;
+const QSTASH_VARS = [
+	'QSTASH_TOKEN',
+	'QSTASH_CURRENT_SIGNING_KEY',
+	'QSTASH_NEXT_SIGNING_KEY'
+] as const;
 const OCR_VARS = ['GOOGLE_AI_API_KEY'] as const;
 
 const DEV_SESSION_SECRET = 'roomio-local-dev-secret-32chars-min!!';

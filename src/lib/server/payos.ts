@@ -4,12 +4,7 @@ import { db } from '$lib/server/db';
 import { landlordProfiles, paymentAccounts } from '$lib/server/db/schema';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import { tryDecryptSecret } from '$lib/server/secrets';
-import {
-	getEnv,
-	getPublicAppOrigin,
-	getPayosWebhookUrl,
-	isPayosConfigured
-} from './env';
+import { getEnv, getPublicAppOrigin, getPayosWebhookUrl, isPayosConfigured } from './env';
 
 export { getPayosWebhookUrl };
 
