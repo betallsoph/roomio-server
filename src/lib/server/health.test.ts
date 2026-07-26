@@ -18,7 +18,9 @@ import { handleShutdown, resetLifecycleForTests } from './lifecycle.js';
 import { handle } from '../../hooks.server.js';
 import { GET as liveGet } from '../../routes/api/health/live/+server.js';
 
-const waitScript = fileURLToPath(new URL('../../../scripts/wait-for-readiness.sh', import.meta.url));
+const waitScript = fileURLToPath(
+	new URL('../../../scripts/wait-for-readiness.sh', import.meta.url)
+);
 
 function createEvent(pathname: string, method: string) {
 	return {
@@ -187,12 +189,7 @@ test('wait-for-readiness.sh exits zero when probe succeeds', async () => {
 	const { port } = server.address() as AddressInfo;
 
 	try {
-		const child = spawn('sh', [
-			waitScript,
-			`http://127.0.0.1:${port}/api/health/ready`,
-			'3',
-			'1'
-		]);
+		const child = spawn('sh', [waitScript, `http://127.0.0.1:${port}/api/health/ready`, '3', '1']);
 		const [code] = await once(child, 'close');
 		assert.equal(code, 0);
 	} finally {
