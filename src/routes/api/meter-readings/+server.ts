@@ -11,6 +11,7 @@ import {
 } from '$lib/server/db/schema';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { forbidden, landlordOwnsRoom } from '$lib/server/authz';
+import { resolveMeterReadingScope } from '$lib/server/meter-reading-scope';
 
 // Ngưỡng cảnh báo: mức tiêu thụ lệch quá 50% so với trung bình 3 tháng gần nhất
 const ANOMALY_THRESHOLD = 0.5;
@@ -38,38 +39,40 @@ async function actorOwnsReading(session: App.Locals['session'], readingId: strin
 	return false;
 }
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-		const tenantId = url.searchParams.get('tenantId');
-		const status = url.searchParams.get('status');
-
-		const conditions = [];
-
-		if (landlordId) {
-			conditions.push(
-				inArray(
-					meterReadings.roomId,
-					db
-						.select({ id: rooms.id })
-						.from(rooms)
-						.innerJoin(properties, eq(rooms.propertyId, properties.id))
-						.where(eq(properties.landlordId, landlordId))
-				)
+		// Phạm vi ĐỌC lấy DUY NHẤT từ actor đã xác thực; không tin landlordId/tenantId client.
+		const scope = resolveMeterReadingScope(locals.session, {
+			landlordId: url.searchParams.get('landlordId'),
+			tenantId: url.searchParams.get('tenantId')
+		});
+		if (!scope.ok) {
+			return json(
+				scope.code ? { error: scope.error, code: scope.code } : { error: scope.error },
+				{ status: scope.status }
 			);
-		} else if (tenantId) {
-			conditions.push(
-				inArray(
-					meterReadings.roomId,
-					db.select({ id: rooms.id }).from(rooms).where(eq(rooms.tenantId, tenantId))
-				)
-			);
-		} else {
-			return json({ error: 'Missing landlordId or tenantId' }, { status: 400 });
 		}
+
+		// Chỉ áp status/month SAU khi đã khóa phạm vi landlord của actor.
+		const status = url.searchParams.get('status');
+		const month = url.searchParams.get('month');
+
+		const conditions = [
+			inArray(
+				meterReadings.roomId,
+				db
+					.select({ id: rooms.id })
+					.from(rooms)
+					.innerJoin(properties, eq(rooms.propertyId, properties.id))
+					.where(eq(properties.landlordId, scope.landlordId))
+			)
+		];
 
 		if (status) {
 			conditions.push(eq(meterReadings.status, status));
+		}
+		if (month) {
+			conditions.push(eq(meterReadings.month, month));
 		}
 
 		const result = await db
