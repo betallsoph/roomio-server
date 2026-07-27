@@ -59,6 +59,10 @@ jobs:
       - run: npm run lint
       - run: npm run check
       - run: npm run test
+      - name: Run security integration tests
+        run: npm run test:security
+        env:
+          SECURITY_INTEGRATION: '1'
       - run: npm run build
         env:
           PGLITE_DIR: memory://roomio-build
