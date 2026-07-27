@@ -78,7 +78,9 @@ function mockFixture(): SecurityFixtureMap {
 test('SECURITY_FIXTURE_KNOWN_GAPS documents AUTH-004 and AUTH-005 deferrals', () => {
 	assert.ok(SECURITY_FIXTURE_KNOWN_GAPS.length >= 3);
 	assert.ok(
-		SECURITY_FIXTURE_KNOWN_GAPS.some((gap) => gap.includes('AUTH-004') && gap.includes('ManagedTenant'))
+		SECURITY_FIXTURE_KNOWN_GAPS.some(
+			(gap) => gap.includes('AUTH-004') && gap.includes('ManagedTenant')
+		)
 	);
 	assert.ok(
 		SECURITY_FIXTURE_KNOWN_GAPS.some((gap) => gap.includes('AUTH-005') && gap.includes('Staff'))
@@ -154,7 +156,10 @@ test(
 			const actorCount = await handle.db.select({ id: users.id }).from(users);
 			assert.equal(actorCount.length, 10);
 
-			assert.notEqual(fixture.ids.landlordA.landlordProfileId, fixture.ids.landlordB.landlordProfileId);
+			assert.notEqual(
+				fixture.ids.landlordA.landlordProfileId,
+				fixture.ids.landlordB.landlordProfileId
+			);
 			assert.notEqual(fixture.ids.invoiceAOld.invoiceId, fixture.ids.invoiceANow.invoiceId);
 			assert.notEqual(
 				fixture.ids.meterReadingAOld.meterReadingId,

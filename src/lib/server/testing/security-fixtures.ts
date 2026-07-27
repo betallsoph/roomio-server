@@ -94,13 +94,7 @@ function uuid(): string {
 	return crypto.randomUUID();
 }
 
-function userRow(
-	id: string,
-	email: string,
-	phone: string,
-	name: string,
-	role: string
-) {
+function userRow(id: string, email: string, phone: string, name: string, role: string) {
 	return {
 		id,
 		email,
@@ -178,78 +172,80 @@ export async function seedSecurityFixtures(
 
 	const tag = runId.slice(-8);
 
-	await db.insert(users).values([
-		userRow(
-			ids.superAdmin.userId,
-			`sec-sa-${tag}@fixture.test`,
-			`0900${tag}01`,
-			'Super Admin',
-			'SUPER_ADMIN'
-		),
-		userRow(
-			ids.landlordA.userId,
-			`sec-la-${tag}@fixture.test`,
-			`0900${tag}02`,
-			'Landlord A',
-			'LANDLORD'
-		),
-		userRow(
-			ids.landlordB.userId,
-			`sec-lb-${tag}@fixture.test`,
-			`0900${tag}03`,
-			'Landlord B',
-			'LANDLORD'
-		),
-		userRow(
-			ids.tenantAOld.userId,
-			`sec-ta-old-${tag}@fixture.test`,
-			`0900${tag}04`,
-			'Tenant A Old',
-			'TENANT'
-		),
-		userRow(
-			ids.tenantANow.userId,
-			`sec-ta-now-${tag}@fixture.test`,
-			`0900${tag}05`,
-			'Tenant A Now',
-			'TENANT'
-		),
-		userRow(
-			ids.tenantA2Now.userId,
-			`sec-ta2-now-${tag}@fixture.test`,
-			`0900${tag}06`,
-			'Tenant A2 Now',
-			'TENANT'
-		),
-		userRow(
-			ids.tenantBNow.userId,
-			`sec-tb-now-${tag}@fixture.test`,
-			`0900${tag}07`,
-			'Tenant B Now',
-			'TENANT'
-		),
-		userRow(
-			ids.staffALimited.userId,
-			`sec-staff-a-lim-${tag}@fixture.test`,
-			`0900${tag}08`,
-			'Staff A Limited',
-			'STAFF'
-		),
-		userRow(
-			ids.staffAEmpty.userId,
-			`sec-staff-a-empty-${tag}@fixture.test`,
-			`0900${tag}09`,
-			'Staff A Empty',
-			'STAFF'
-		),
-		userRow(
-			ids.staffB.userId,
-			`sec-staff-b-${tag}@fixture.test`,
-			`0900${tag}10`,
-			'Staff B',
-			'STAFF'
-		)
-	]);
+	await db
+		.insert(users)
+		.values([
+			userRow(
+				ids.superAdmin.userId,
+				`sec-sa-${tag}@fixture.test`,
+				`0900${tag}01`,
+				'Super Admin',
+				'SUPER_ADMIN'
+			),
+			userRow(
+				ids.landlordA.userId,
+				`sec-la-${tag}@fixture.test`,
+				`0900${tag}02`,
+				'Landlord A',
+				'LANDLORD'
+			),
+			userRow(
+				ids.landlordB.userId,
+				`sec-lb-${tag}@fixture.test`,
+				`0900${tag}03`,
+				'Landlord B',
+				'LANDLORD'
+			),
+			userRow(
+				ids.tenantAOld.userId,
+				`sec-ta-old-${tag}@fixture.test`,
+				`0900${tag}04`,
+				'Tenant A Old',
+				'TENANT'
+			),
+			userRow(
+				ids.tenantANow.userId,
+				`sec-ta-now-${tag}@fixture.test`,
+				`0900${tag}05`,
+				'Tenant A Now',
+				'TENANT'
+			),
+			userRow(
+				ids.tenantA2Now.userId,
+				`sec-ta2-now-${tag}@fixture.test`,
+				`0900${tag}06`,
+				'Tenant A2 Now',
+				'TENANT'
+			),
+			userRow(
+				ids.tenantBNow.userId,
+				`sec-tb-now-${tag}@fixture.test`,
+				`0900${tag}07`,
+				'Tenant B Now',
+				'TENANT'
+			),
+			userRow(
+				ids.staffALimited.userId,
+				`sec-staff-a-lim-${tag}@fixture.test`,
+				`0900${tag}08`,
+				'Staff A Limited',
+				'STAFF'
+			),
+			userRow(
+				ids.staffAEmpty.userId,
+				`sec-staff-a-empty-${tag}@fixture.test`,
+				`0900${tag}09`,
+				'Staff A Empty',
+				'STAFF'
+			),
+			userRow(
+				ids.staffB.userId,
+				`sec-staff-b-${tag}@fixture.test`,
+				`0900${tag}10`,
+				'Staff B',
+				'STAFF'
+			)
+		]);
 
 	await db.insert(landlordProfiles).values([
 		{ id: ids.landlordA.landlordProfileId, userId: ids.landlordA.userId },
