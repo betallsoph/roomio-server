@@ -50,9 +50,8 @@ if (skipReason) {
 			const ids = fixture.ids;
 
 			const { GET: getInvoices } = await import('../../../routes/api/invoices/+server.js');
-			const { GET: getMeterReadings } = await import(
-				'../../../routes/api/meter-readings/+server.js'
-			);
+			const { GET: getMeterReadings } =
+				await import('../../../routes/api/meter-readings/+server.js');
 			const { GET: getRooms } = await import('../../../routes/api/rooms/+server.js');
 
 			const landlordA = fixtureSession(fixture, 'landlordA');
