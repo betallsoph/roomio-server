@@ -40,6 +40,21 @@ const OPTIONAL_SECRET_PLACEHOLDERS = [
 
 const LOG_LEVELS = new Set(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
 
+// INFRA-005 — ngân sách connection và timeout tường minh cho A1 một OCPU.
+// Tổng budget là 8 connection cho CẢ máy A1-APP, không phải 8 cho mỗi process.
+export const DB_POOL_TOTAL_BUDGET = 8;
+const DEFAULT_API_DB_POOL_MAX = 6;
+const DEFAULT_DISPATCHER_DB_POOL_MAX = 2;
+const DEFAULT_DB_CONNECTION_TIMEOUT_MS = 3_000;
+const DEFAULT_DB_IDLE_TIMEOUT_MS = 30_000;
+const DEFAULT_DB_STATEMENT_TIMEOUT_MS = 15_000;
+const DEFAULT_DB_LOCK_TIMEOUT_MS = 3_000;
+const DEFAULT_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS = 10_000;
+
+// Trần cứng: job dài phải chia nhỏ, không nới timeout để che query chậm.
+export const MAX_DB_STATEMENT_TIMEOUT_MS = 60_000;
+export const MAX_DB_LOCK_TIMEOUT_MS = 10_000;
+
 const PAYOS_VARS = ['PAYOS_CLIENT_ID', 'PAYOS_API_KEY', 'PAYOS_CHECKSUM_KEY'] as const;
 const R2_VARS = [
 	'R2_ACCOUNT_ID',
@@ -106,10 +121,22 @@ export type FeatureConfig<T extends FeatureStatus> = T extends 'CONFIGURED'
 	? { status: 'CONFIGURED' } & Record<string, unknown>
 	: { status: 'NOT_CONFIGURED' };
 
+/** INFRA-005 — cấu hình pool/timeout đã kiểm tra, dùng chung cho mọi process role. */
+export interface DbPoolConfig {
+	apiPoolMax: number;
+	dispatcherPoolMax: number;
+	connectionTimeoutMs: number;
+	idleTimeoutMs: number;
+	statementTimeoutMs: number;
+	lockTimeoutMs: number;
+	idleInTransactionTimeoutMs: number;
+}
+
 export interface EnvConfig {
 	nodeEnv: string;
 	isProduction: boolean;
 	databaseUrl: string;
+	db: DbPoolConfig;
 	sessionSecret: string;
 	origin: string;
 	publicAppOrigin: string;
@@ -146,6 +173,92 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 
 function normalizeOrigin(value: string): string {
 	return value.replace(/\/+$/, '');
+}
+
+/**
+ * Đọc số nguyên dương bắt buộc hợp lệ. Khác `parsePositiveInt`: giá trị có mặt nhưng
+ * sai định dạng sẽ báo lỗi tên biến thay vì âm thầm rơi về mặc định — cấu hình pool
+ * sai phải chặn boot, không được chạy tiếp với giá trị ngoài ý muốn.
+ */
+function parseStrictPositiveInt(
+	source: NodeJS.ProcessEnv,
+	name: string,
+	fallback: number,
+	errors: string[],
+	maximum?: number
+): number {
+	const raw = trim(source[name]);
+	if (!raw) return fallback;
+
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		errors.push(name);
+		return fallback;
+	}
+	if (maximum !== undefined && parsed > maximum) {
+		errors.push(name);
+		return fallback;
+	}
+	return parsed;
+}
+
+function parseDbPoolConfig(source: NodeJS.ProcessEnv, errors: string[]): DbPoolConfig {
+	const apiPoolMax = parseStrictPositiveInt(
+		source,
+		'API_DB_POOL_MAX',
+		DEFAULT_API_DB_POOL_MAX,
+		errors,
+		DB_POOL_TOTAL_BUDGET
+	);
+	const dispatcherPoolMax = parseStrictPositiveInt(
+		source,
+		'DISPATCHER_DB_POOL_MAX',
+		DEFAULT_DISPATCHER_DB_POOL_MAX,
+		errors,
+		DB_POOL_TOTAL_BUDGET
+	);
+
+	// Tổng cấu hình của mọi process phải nằm trong ngân sách một máy.
+	if (apiPoolMax + dispatcherPoolMax > DB_POOL_TOTAL_BUDGET) {
+		errors.push('API_DB_POOL_MAX', 'DISPATCHER_DB_POOL_MAX');
+	}
+
+	return {
+		apiPoolMax,
+		dispatcherPoolMax,
+		connectionTimeoutMs: parseStrictPositiveInt(
+			source,
+			'DB_CONNECTION_TIMEOUT_MS',
+			DEFAULT_DB_CONNECTION_TIMEOUT_MS,
+			errors
+		),
+		idleTimeoutMs: parseStrictPositiveInt(
+			source,
+			'DB_IDLE_TIMEOUT_MS',
+			DEFAULT_DB_IDLE_TIMEOUT_MS,
+			errors
+		),
+		statementTimeoutMs: parseStrictPositiveInt(
+			source,
+			'DB_STATEMENT_TIMEOUT_MS',
+			DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+			errors,
+			MAX_DB_STATEMENT_TIMEOUT_MS
+		),
+		lockTimeoutMs: parseStrictPositiveInt(
+			source,
+			'DB_LOCK_TIMEOUT_MS',
+			DEFAULT_DB_LOCK_TIMEOUT_MS,
+			errors,
+			MAX_DB_LOCK_TIMEOUT_MS
+		),
+		idleInTransactionTimeoutMs: parseStrictPositiveInt(
+			source,
+			'DB_IDLE_IN_TRANSACTION_TIMEOUT_MS',
+			DEFAULT_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS,
+			errors
+		)
+	};
 }
 
 function isValidHttpUrl(value: string, httpsOnly: boolean): boolean {
@@ -430,6 +543,7 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 	if (!isValidHttpUrl(payosApiBase, isProduction)) errors.push('PAYOS_API_BASE');
 	const configuredLogLevel = trim(source.LOG_LEVEL);
 	if (configuredLogLevel && !LOG_LEVELS.has(configuredLogLevel)) errors.push('LOG_LEVEL');
+	const db = parseDbPoolConfig(source, errors);
 
 	if (errors.length > 0) {
 		throw new EnvValidationError([...new Set(errors)]);
@@ -439,6 +553,7 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 		nodeEnv,
 		isProduction,
 		databaseUrl,
+		db,
 		sessionSecret,
 		origin: normalizeOrigin(origin),
 		publicAppOrigin: normalizeOrigin(publicAppOrigin),
