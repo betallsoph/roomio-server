@@ -1,5 +1,6 @@
 import { Pool, type PoolConfig } from 'pg';
 import type { DbPoolConfig, EnvConfig } from '../env';
+import { getLogger } from '../logger/index.js';
 
 // INFRA-005 — pool và timeout tường minh.
 //
@@ -21,7 +22,7 @@ const POOL_CONNECTION_TIMEOUT_MESSAGE = 'timeout exceeded when trying to connect
 
 export interface PoolMetrics {
 	event: 'db_pool_metrics';
-	role: ProcessRole;
+	processRole: ProcessRole;
 	/** Connection đang mở (đang dùng + rảnh). */
 	totalCount: number;
 	/** Connection rảnh trong pool. */
@@ -33,7 +34,7 @@ export interface PoolMetrics {
 
 export interface ScrubbedPoolError {
 	event: 'db_pool_error';
-	role: ProcessRole;
+	processRole: ProcessRole;
 	/** Mã lỗi Postgres (ví dụ 57P01) hoặc mã lỗi hệ thống; không kèm chi tiết kết nối. */
 	code: string;
 	errorName: string;
@@ -83,29 +84,37 @@ export function isPoolConnectionTimeout(error: unknown): boolean {
  * Chỉ giữ trường an toàn. `error.message` của pg có thể chứa host/database/tên role
  * nên không bao giờ được log nguyên văn.
  */
-export function scrubPoolError(error: unknown, role: ProcessRole): ScrubbedPoolError {
+export function scrubPoolError(error: unknown, processRole: ProcessRole): ScrubbedPoolError {
 	const code =
 		typeof error === 'object' && error !== null && 'code' in error
 			? String((error as { code: unknown }).code ?? 'UNKNOWN')
 			: 'UNKNOWN';
 	return {
 		event: 'db_pool_error',
-		role,
+		processRole,
 		code: code || 'UNKNOWN',
 		errorName: error instanceof Error ? error.name : 'UnknownError'
 	};
+}
+
+/**
+ * Sink lỗi mặc định: cũng đi qua Pino logger chung. Nhận payload ĐÃ scrub nên
+ * `error.message` (có thể chứa host/role/database) không bao giờ được ghi.
+ */
+function defaultErrorSink(scrubbed: ScrubbedPoolError): void {
+	getLogger().error(scrubbed, 'db pool error');
 }
 
 type MetricsSource = Pick<Pool, 'totalCount' | 'idleCount' | 'waitingCount'>;
 
 export function collectPoolMetrics(
 	pool: MetricsSource,
-	role: ProcessRole,
+	processRole: ProcessRole,
 	max: number
 ): PoolMetrics {
 	return {
 		event: 'db_pool_metrics',
-		role,
+		processRole,
 		totalCount: pool.totalCount,
 		idleCount: pool.idleCount,
 		waitingCount: pool.waitingCount,
@@ -119,9 +128,13 @@ export interface PoolMetricsOptions {
 	max: number;
 }
 
+/**
+ * Sink mặc định: Pino logger dùng chung của OBS-001 (một JSON object mỗi dòng, đã có
+ * redaction/sanitize ở tầng logger). Chỉ đẩy field đã chọn — không có error, DB URL
+ * hay credential nào đi qua đây.
+ */
 function defaultMetricsSink(metrics: PoolMetrics): void {
-	// Một dòng JSON; OBS-001 sẽ thay bằng logger chung khi có.
-	console.info(JSON.stringify(metrics));
+	getLogger().info(metrics, 'db pool metrics');
 }
 
 /**
@@ -148,12 +161,17 @@ export function startPoolMetrics(
 }
 
 /** Tạo đúng một pool cho process hiện tại, đã gắn error handler đã scrub. */
-export function createPool(env: EnvConfig, role: ProcessRole): Pool {
+export function createPool(
+	env: EnvConfig,
+	role: ProcessRole,
+	errorSink: (error: ScrubbedPoolError) => void = defaultErrorSink
+): Pool {
 	const pool = new Pool(buildPoolConfig(env, role));
 
 	// Lỗi của client rảnh trong pool là sự kiện async: không bắt thì process crash.
+	// Chỉ đẩy payload ĐÃ scrub; `error` gốc không bao giờ tới logger.
 	pool.on('error', (error) => {
-		console.error(JSON.stringify(scrubPoolError(error, role)));
+		errorSink(scrubPoolError(error, role));
 	});
 
 	return pool;

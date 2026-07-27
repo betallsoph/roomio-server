@@ -180,7 +180,7 @@ test('scrubPoolError keeps only safe fields', () => {
 	const scrubbed = scrubPoolError(error, 'api');
 	assert.deepEqual(scrubbed, {
 		event: 'db_pool_error',
-		role: 'api',
+		processRole: 'api',
 		code: '28P01',
 		errorName: 'Error'
 	});
@@ -199,7 +199,7 @@ test('scrubbed pool error never carries host, password or message text', () => {
 test('scrubPoolError handles non-Error values without throwing', () => {
 	assert.deepEqual(scrubPoolError('boom', 'api'), {
 		event: 'db_pool_error',
-		role: 'api',
+		processRole: 'api',
 		code: 'UNKNOWN',
 		errorName: 'UnknownError'
 	});
@@ -221,7 +221,7 @@ test('collectPoolMetrics reports total, idle and waiting counts', () => {
 	const fakePool = { totalCount: 6, idleCount: 1, waitingCount: 4 };
 	assert.deepEqual(collectPoolMetrics(fakePool, 'api', 6), {
 		event: 'db_pool_metrics',
-		role: 'api',
+		processRole: 'api',
 		totalCount: 6,
 		idleCount: 1,
 		waitingCount: 4,
@@ -274,4 +274,71 @@ test('metrics timer is unref-ed so it cannot keep the process alive', () => {
 test('default metrics interval stays within the 15-30s sampling window', () => {
 	assert.ok(POOL_METRICS_INTERVAL_MS >= 15_000);
 	assert.ok(POOL_METRICS_INTERVAL_MS <= 30_000);
+});
+
+// --- Sink mặc định đi qua Pino logger dùng chung ---------------------------------
+
+test('default metrics sink logs through Pino with event, processRole and the three counts', async () => {
+	const { createLogger, setLoggerForTests, resetLoggerForTests } =
+		await import('../logger/index.js');
+	const lines: Record<string, unknown>[] = [];
+	setLoggerForTests(
+		createLogger({
+			write(chunk: string) {
+				for (const line of chunk.split('\n').filter(Boolean)) lines.push(JSON.parse(line));
+			}
+		})
+	);
+	try {
+		const stop = startPoolMetrics({ totalCount: 6, idleCount: 0, waitingCount: 4 }, 'dispatcher', {
+			intervalMs: 5,
+			max: 2
+		});
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		stop();
+	} finally {
+		resetLoggerForTests();
+	}
+
+	assert.ok(lines.length >= 1, 'expected at least one Pino line');
+	const entry = lines[0];
+	assert.equal(entry.event, 'db_pool_metrics');
+	assert.equal(entry.processRole, 'dispatcher');
+	assert.equal(entry.totalCount, 6);
+	assert.equal(entry.idleCount, 0);
+	assert.equal(entry.waitingCount, 4);
+	assert.equal(entry.msg, 'db pool metrics');
+	// Không có trường lỗi/kết nối nào lọt vào metric.
+	assert.equal('err' in entry, false);
+	assert.equal('connectionString' in entry, false);
+});
+
+test('pool error sink receives only scrubbed fields, never the raw error', async () => {
+	const { createPool } = await import('./pool.js');
+	const captured: unknown[] = [];
+	const env = envWith({ API_DB_POOL_MAX: '1' });
+	// Không mở connection: chỉ phát sự kiện 'error' để kiểm đường log.
+	const pool = createPool(env, 'api', (scrubbed) => captured.push(scrubbed));
+	try {
+		const raw = Object.assign(
+			new Error('connection to db.internal failed: password=hunter2 user=roomio'),
+			{ code: '57P01' }
+		);
+		pool.emit('error', raw, undefined as never);
+
+		assert.equal(captured.length, 1);
+		const payload = captured[0] as Record<string, unknown>;
+		assert.deepEqual(payload, {
+			event: 'db_pool_error',
+			processRole: 'api',
+			code: '57P01',
+			errorName: 'Error'
+		});
+		const serialized = JSON.stringify(payload);
+		for (const leak of ['db.internal', 'hunter2', 'password', 'postgres://', 'localhost']) {
+			assert.equal(serialized.includes(leak), false, `leaked ${leak}`);
+		}
+	} finally {
+		await pool.end();
+	}
 });
