@@ -123,6 +123,14 @@ if (skipReason) {
 				async () => {
 					const result = await getRoomList(landlordA);
 					assert.equal(result.status, 200);
+					assert.ok(Array.isArray(result.body), 'room list must be an array');
+					const roomsBody = result.body as Array<{
+						id?: string;
+						tenant?: { user?: Record<string, unknown> | null } | null;
+					}>;
+					const occupied = roomsBody.find((row) => row.id === ids.roomA1R1.roomId);
+					assert.ok(occupied, 'landlordA room list must include seeded roomA1R1');
+					assert.ok(occupied.tenant?.user, 'roomA1R1 must embed nested tenant.user');
 					const hits = findForbiddenKeys(result.body);
 					assert.ok(
 						hits.some((hit) => hit.key === 'passwordHash'),

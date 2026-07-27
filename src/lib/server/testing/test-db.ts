@@ -63,6 +63,18 @@ export type SecurityDbHandle = {
 let sharedPool: Pool | undefined;
 let migrationsReady = false;
 
+/** Serialize withSecurityDb — suite files share one Postgres and must not truncate/seed in parallel. */
+let securityDbChain: Promise<unknown> = Promise.resolve();
+
+function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+	const run = securityDbChain.then(fn, fn);
+	securityDbChain = run.then(
+		() => undefined,
+		() => undefined
+	);
+	return run;
+}
+
 function isDisposableTestDatabase(raw: string): boolean {
 	try {
 		const dbName = new URL(raw).pathname.replace(/^\//, '');
@@ -127,21 +139,24 @@ export async function resetSecurityDb(pool: Pool = getOrCreatePool()): Promise<v
 /**
  * Run a security integration callback against an isolated, migrated Postgres database.
  * Resets data before and after fn; does not start local Postgres or Testcontainers.
+ * Exclusive: concurrent callers queue so truncate/seed cannot race across test files.
  */
 export async function withSecurityDb<T>(fn: (handle: SecurityDbHandle) => Promise<T>): Promise<T> {
-	const pool = getOrCreatePool();
-	await ensureMigrations(pool);
-	await resetSecurityDb(pool);
-
-	const db = drizzle(pool, { schema });
-	const runId = createSecurityRunId();
-	const handle: SecurityDbHandle = { db, pool, runId };
-
-	try {
-		return await fn(handle);
-	} finally {
+	return runExclusive(async () => {
+		const pool = getOrCreatePool();
+		await ensureMigrations(pool);
 		await resetSecurityDb(pool);
-	}
+
+		const db = drizzle(pool, { schema });
+		const runId = createSecurityRunId();
+		const handle: SecurityDbHandle = { db, pool, runId };
+
+		try {
+			return await fn(handle);
+		} finally {
+			await resetSecurityDb(pool);
+		}
+	});
 }
 
 /** Close the shared pool — call from suite teardown when the process exits integration mode. */

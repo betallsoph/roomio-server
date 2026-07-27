@@ -140,6 +140,12 @@ test('formatSecurityFixtureMap includes runId and named keys', () => {
 
 const integrationSkip = getSecurityIntegrationSkipReason();
 
+if (!integrationSkip) {
+	test.after(async () => {
+		await closeSecurityDbPool();
+	});
+}
+
 test(
 	'seedSecurityFixtures seeds landlord A/B topology with legacy room tenant',
 	{ skip: integrationSkip },
@@ -182,7 +188,5 @@ test(
 			const fixture = await seedSecurityFixturesFromHandle(handle);
 			assert.ok(fixture.runId.startsWith('sec_'));
 		});
-
-		await closeSecurityDbPool();
 	}
 );
