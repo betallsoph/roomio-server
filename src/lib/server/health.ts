@@ -42,15 +42,22 @@ export async function checkDatabaseReady(
 	queryPool: Pick<Pool, 'query'> = pool,
 	timeoutMs = READINESS_TIMEOUT_MS
 ): Promise<boolean> {
+	// Hàng đợi có trần hai lớp: probe bỏ cuộc sau `timeoutMs`, và INFRA-005 đặt
+	// `connectionTimeoutMillis` nên query đang chờ connection cũng tự fail — probe
+	// không thể tích tụ query treo vô hạn khi pool cạn.
+	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		await Promise.race([
 			queryPool.query('SELECT 1'),
 			new Promise<never>((_, reject) => {
-				setTimeout(() => reject(new Error('READINESS_TIMEOUT')), timeoutMs);
+				timer = setTimeout(() => reject(new Error('READINESS_TIMEOUT')), timeoutMs);
 			})
 		]);
 		return true;
 	} catch {
 		return false;
+	} finally {
+		// Không để lại timer treo sau mỗi lần probe.
+		if (timer) clearTimeout(timer);
 	}
 }
