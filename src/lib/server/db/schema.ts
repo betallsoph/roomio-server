@@ -566,7 +566,6 @@ export const subscriptionChangeRequests = pgTable(
 	})
 );
 
-
 export const auditEvents = pgTable(
 	'AuditEvent',
 	{
@@ -835,4 +834,3 @@ export const auditEventsRelations = relations(auditEvents, ({ one }) => ({
 		references: [users.id]
 	})
 }));
-

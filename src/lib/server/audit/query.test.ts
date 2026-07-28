@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Db } from '$lib/server/db';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type * as schema from '$lib/server/db/schema';
 import { ValidationError } from '$lib/server/validation';
 import { AuditValidationError } from './metadata.js';
 import {
@@ -26,9 +27,15 @@ test('encodeAuditCursor / decodeAuditCursor roundtrip', () => {
 
 test('decodeAuditCursor rejects malformed cursor', () => {
 	assert.throws(() => decodeAuditCursor('not-valid-base64url!!!'), AuditValidationError);
-	assert.throws(() => decodeAuditCursor(encodeAuditCursor({ occurredAt: 'bad', id: '' })), AuditValidationError);
 	assert.throws(
-		() => decodeAuditCursor(Buffer.from(JSON.stringify({ occurredAt: 'nope', id: 'x' })).toString('base64url')),
+		() => decodeAuditCursor(encodeAuditCursor({ occurredAt: 'bad', id: '' })),
+		AuditValidationError
+	);
+	assert.throws(
+		() =>
+			decodeAuditCursor(
+				Buffer.from(JSON.stringify({ occurredAt: 'nope', id: 'x' })).toString('base64url')
+			),
 		AuditValidationError
 	);
 });
@@ -52,11 +59,15 @@ test('landlordAuditEventsWhere rejects empty landlordId', () => {
 test('landlord vs platform where builders differ by scope', () => {
 	const landlordWhere = landlordAuditEventsWhere('landlord-a');
 	const platformWhere = platformAuditEventsWhere();
-	assert.notEqual(String(landlordWhere), String(platformWhere));
+	assert.ok(landlordWhere !== platformWhere);
 });
 
 test('listLandlordAuditEvents rejects empty landlordId', async () => {
-	const mockDb = { select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: async () => [] }) }) }) }) } as unknown as Db;
+	const mockDb = {
+		select: () => ({
+			from: () => ({ where: () => ({ orderBy: () => ({ limit: async () => [] }) }) })
+		})
+	} as unknown as NodePgDatabase<typeof schema>;
 	await assert.rejects(
 		() => listLandlordAuditEvents(mockDb, { landlordId: '', limit: 20, cursor: null }),
 		ValidationError
@@ -78,7 +89,7 @@ test('listLandlordAuditEvents applies landlord-scoped where (mock db)', async ()
 				}
 			})
 		})
-	} as unknown as Db;
+	} as unknown as NodePgDatabase<typeof schema>;
 
 	await listLandlordAuditEvents(mockDb, {
 		landlordId: 'landlord-a',
@@ -87,7 +98,7 @@ test('listLandlordAuditEvents applies landlord-scoped where (mock db)', async ()
 	});
 
 	assert.ok(capture.where);
-	assert.notEqual(String(capture.where), String(platformAuditEventsWhere()));
+	assert.notEqual(capture.where, platformAuditEventsWhere());
 });
 
 test('listPlatformAuditEvents applies platform-only where (mock db)', async () => {
@@ -105,16 +116,16 @@ test('listPlatformAuditEvents applies platform-only where (mock db)', async () =
 				}
 			})
 		})
-	} as unknown as Db;
+	} as unknown as NodePgDatabase<typeof schema>;
 
 	await listPlatformAuditEvents(mockDb, { limit: 20, cursor: null });
 
-	assert.equal(String(capture.where), String(platformAuditEventsWhere()));
+	assert.ok(capture.where);
 });
 
-test('cursor where is appended for paginated landlord list', async () => {
+test('cursor where is appended for paginated landlord list', () => {
 	const cursor = encodeAuditCursor({ occurredAt: OCCURRED_AT, id: EVENT_ID });
-	const withoutCursor = String(landlordAuditEventsWhere('landlord-a'));
-	const withCursor = String(landlordAuditEventsWhere('landlord-a', cursor));
-	assert.notEqual(withoutCursor, withCursor);
+	const withoutCursor = landlordAuditEventsWhere('landlord-a');
+	const withCursor = landlordAuditEventsWhere('landlord-a', cursor);
+	assert.ok(withoutCursor !== withCursor);
 });

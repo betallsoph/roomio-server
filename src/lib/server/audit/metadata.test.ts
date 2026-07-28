@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AUDIT_ACTION_VERSION } from './actions.js';
 import {
-	AuditValidationError,
 	AUDIT_METADATA_MAX_BYTES,
 	AUDIT_METADATA_MAX_DEPTH,
 	AUDIT_METADATA_MAX_KEYS,
@@ -95,11 +94,15 @@ test('validateAuditMetadata rejects too many keys per object', () => {
 });
 
 test('validateAuditMetadata rejects serialized payload larger than max bytes', () => {
-	const input = { note: 'x'.repeat(AUDIT_METADATA_MAX_BYTES) };
+	assert.ok(AUDIT_METADATA_MAX_BYTES > 0);
+	const input: Record<string, string> = {};
+	for (let i = 0; i < AUDIT_METADATA_MAX_KEYS; i++) {
+		input[`part${i}`] = 'x'.repeat(220);
+	}
 	assert.throws(
 		() => validateAuditMetadata(input, AUDIT_ACTION_VERSION),
 		(error: unknown) => {
-			assert.ok(error instanceof AuditValidationError);
+			assert.ok(isAuditValidationError(error));
 			assert.equal(error.code, 'METADATA_TOO_LARGE');
 			return true;
 		}

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { AUDIT_ACTION_VERSION, isAuditAction } from './actions.js';
 import { decodeAuditCursor, encodeAuditCursor } from './query.js';
 import { toAuditEventDto, type AuditEventDto } from './dto.js';
-import { AuditValidationError } from './metadata.js';
+import { AuditValidationError, AUDIT_METADATA_MAX_KEYS } from './metadata.js';
 import { validateAuditMetadata } from './metadata.js';
 
 const PUBLIC_DTO_KEYS = [
@@ -101,11 +101,11 @@ test('validateAuditMetadata rejects forbidden key substrings', () => {
 });
 
 test('validateAuditMetadata rejects oversize payload', () => {
-	const huge = 'x'.repeat(5_000);
-	assert.throws(
-		() => validateAuditMetadata({ note: huge }, AUDIT_ACTION_VERSION),
-		AuditValidationError
-	);
+	const input: Record<string, string> = {};
+	for (let i = 0; i < AUDIT_METADATA_MAX_KEYS; i++) {
+		input[`part${i}`] = 'x'.repeat(220);
+	}
+	assert.throws(() => validateAuditMetadata(input, AUDIT_ACTION_VERSION), AuditValidationError);
 });
 
 test('isAuditAction guards the versioned allowlist', () => {

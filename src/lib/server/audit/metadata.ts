@@ -95,7 +95,10 @@ function validateMetadataValue(value: unknown, depth: number): unknown {
 	if (typeof value === 'boolean') return value;
 	if (typeof value === 'number') {
 		if (!Number.isFinite(value)) {
-			throw new AuditValidationError('INVALID_METADATA_VALUE', 'Audit metadata number must be finite');
+			throw new AuditValidationError(
+				'INVALID_METADATA_VALUE',
+				'Audit metadata number must be finite'
+			);
 		}
 		return value;
 	}
@@ -103,7 +106,10 @@ function validateMetadataValue(value: unknown, depth: number): unknown {
 		return validateMetadataString(value);
 	}
 	if (typeof value === 'bigint' || typeof value === 'function' || typeof value === 'symbol') {
-		throw new AuditValidationError('INVALID_METADATA_VALUE', 'Audit metadata value type is not allowed');
+		throw new AuditValidationError(
+			'INVALID_METADATA_VALUE',
+			'Audit metadata value type is not allowed'
+		);
 	}
 	if (Array.isArray(value)) {
 		if (depth > AUDIT_METADATA_MAX_DEPTH) {
@@ -114,7 +120,10 @@ function validateMetadataValue(value: unknown, depth: number): unknown {
 	if (typeof value === 'object') {
 		return validateMetadataObject(value as Record<string, unknown>, depth + 1);
 	}
-	throw new AuditValidationError('INVALID_METADATA_VALUE', 'Audit metadata value type is not allowed');
+	throw new AuditValidationError(
+		'INVALID_METADATA_VALUE',
+		'Audit metadata value type is not allowed'
+	);
 }
 
 function validateMetadataObject(
@@ -146,10 +155,7 @@ function validateMetadataObject(
 	return output;
 }
 
-export function validateAuditMetadata(
-	input: unknown,
-	version: number
-): Record<string, unknown> {
+export function validateAuditMetadata(input: unknown, version: number): Record<string, unknown> {
 	if (version !== AUDIT_ACTION_VERSION) {
 		throw new AuditValidationError(
 			'UNSUPPORTED_METADATA_VERSION',

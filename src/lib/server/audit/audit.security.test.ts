@@ -13,11 +13,7 @@ import {
 	type SecurityDbHandle
 } from '../testing/test-db.js';
 import { AUDIT_ACTION_VERSION } from './actions.js';
-import {
-	auditActorMachine,
-	auditActorSystem,
-	type AuditActorRef
-} from './actors.js';
+import { auditActorMachine, auditActorSystem, type AuditActorRef } from './actors.js';
 import { appendAudit, type AppendAuditInput } from './append.js';
 import { AuditValidationError } from './metadata.js';
 import { validateAuditMetadata } from './metadata.js';
@@ -61,11 +57,16 @@ async function countAuditRows(db: SecurityDbHandle['db']): Promise<number> {
 	return Number(row?.value ?? 0);
 }
 
-async function expectValidationError(run: () => unknown): Promise<void> {
-	await assert.rejects(run, (error: unknown) => {
-		assert.ok(error instanceof AuditValidationError);
-		return true;
-	});
+async function expectValidationError(run: () => unknown | Promise<unknown>): Promise<void> {
+	await assert.rejects(
+		async () => {
+			await run();
+		},
+		(error: unknown) => {
+			assert.ok(error instanceof AuditValidationError);
+			return true;
+		}
+	);
 }
 
 if (skipReason) {
@@ -84,38 +85,36 @@ if (skipReason) {
 	});
 
 	test('audit security integration', async (t) => {
-		await t.test('append in transaction then landlord query sees event for landlord A', async () => {
-			await withSecurityDb(async (handle) => {
-				const fixture = await seedSecurityFixturesFromHandle(handle);
-				const actor = landlordUserActor(fixture, 'landlordA');
-				const event = landlordAppendInput(fixture, 'landlordA', {
-					requestId: `happy-${fixture.runId}`
+		await t.test(
+			'append in transaction then landlord query sees event for landlord A',
+			async () => {
+				await withSecurityDb(async (handle) => {
+					const fixture = await seedSecurityFixturesFromHandle(handle);
+					const actor = landlordUserActor(fixture, 'landlordA');
+					const event = landlordAppendInput(fixture, 'landlordA', {
+						requestId: `happy-${fixture.runId}`
+					});
+
+					const { id } = await handle.db.transaction(async (tx) => appendAudit(tx, actor, event));
+
+					const listed = await listLandlordAuditEvents(handle.db, {
+						landlordId: fixture.ids.landlordA.landlordProfileId,
+						limit: 20
+					});
+
+					assert.equal(listed.items.length, 1);
+					assert.equal(listed.items[0]?.id, id);
+					assert.equal(listed.items[0]?.action, 'CONFIG.UPDATED');
+					assert.equal(listed.items[0]?.actorUserId, fixture.ids.landlordA.userId);
+					assert.equal(listed.items[0]?.landlordId, fixture.ids.landlordA.landlordProfileId);
+					assert.equal(listed.nextCursor, null);
+
+					const [row] = await handle.db.select().from(auditEvents).where(eq(auditEvents.id, id));
+					assert.ok(row);
+					assert.equal(row.requestId, event.requestId);
 				});
-
-				const { id } = await handle.db.transaction(async (tx) =>
-					appendAudit(tx, actor, event)
-				);
-
-				const listed = await listLandlordAuditEvents(handle.db, {
-					landlordId: fixture.ids.landlordA.landlordProfileId,
-					limit: 20
-				});
-
-				assert.equal(listed.items.length, 1);
-				assert.equal(listed.items[0]?.id, id);
-				assert.equal(listed.items[0]?.action, 'CONFIG.UPDATED');
-				assert.equal(listed.items[0]?.actorUserId, fixture.ids.landlordA.userId);
-				assert.equal(listed.items[0]?.landlordId, fixture.ids.landlordA.landlordProfileId);
-				assert.equal(listed.nextCursor, null);
-
-				const [row] = await handle.db
-					.select()
-					.from(auditEvents)
-					.where(eq(auditEvents.id, id));
-				assert.ok(row);
-				assert.equal(row.requestId, event.requestId);
-			});
-		});
+			}
+		);
 
 		await t.test('append inside transaction then throw leaves no audit row', async () => {
 			await withSecurityDb(async (handle) => {
@@ -178,7 +177,9 @@ if (skipReason) {
 				assert.equal(listedB.items.length, 1);
 				assert.equal(listedA.items[0]?.requestId, requestA);
 				assert.equal(listedB.items[0]?.requestId, requestB);
-				assert.ok(listedA.items.every((item) => item.landlordId === fixture.ids.landlordA.landlordProfileId));
+				assert.ok(
+					listedA.items.every((item) => item.landlordId === fixture.ids.landlordA.landlordProfileId)
+				);
 				assert.ok(listedA.items.every((item) => item.requestId !== requestB));
 				assert.ok(listedB.items.every((item) => item.requestId !== requestA));
 			});

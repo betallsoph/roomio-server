@@ -1,6 +1,7 @@
 import { and, desc, eq, isNull, lt, or, type SQL } from 'drizzle-orm';
-import type { Db } from '$lib/server/db';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { auditEvents } from '$lib/server/db/schema';
+import type * as schema from '$lib/server/db/schema';
 import { ValidationError } from '$lib/server/validation';
 import { AuditValidationError } from './metadata.js';
 import { toAuditEventDto, type AuditEventDto } from './dto.js';
@@ -102,7 +103,7 @@ export function platformAuditEventsWhere(cursor?: string | null): SQL | undefine
 }
 
 export async function listLandlordAuditEvents(
-	db: Db,
+	db: NodePgDatabase<typeof schema>,
 	options: LandlordAuditListOptions
 ): Promise<AuditListResult> {
 	const limit = auditListLimit(options.limit);
@@ -117,7 +118,7 @@ export async function listLandlordAuditEvents(
 }
 
 export async function listPlatformAuditEvents(
-	db: Db,
+	db: NodePgDatabase<typeof schema>,
 	options: AuditListOptions
 ): Promise<AuditListResult> {
 	const limit = auditListLimit(options.limit);
