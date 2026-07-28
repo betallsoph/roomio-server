@@ -527,7 +527,8 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 	const qstash = parseQStashFeature(source, isProduction, errors);
 	const ocr = parseOcrFeature(source, isProduction, errors);
 	const superAdminAccounts = trim(source.SUPER_ADMIN_ACCOUNTS);
-	const allowEnvSuperAdmin = !isProduction && !!superAdminAccounts;
+	// Plaintext env Super Admin is local-dev transitional only — never staging/test/production.
+	const allowEnvSuperAdmin = nodeEnv === 'development' && !!superAdminAccounts;
 	if (isProduction && !superAdminAccounts) {
 		errors.push('SUPER_ADMIN_ACCOUNTS');
 	} else if (superAdminAccountsAreUnsafe(superAdminAccounts, isProduction)) {

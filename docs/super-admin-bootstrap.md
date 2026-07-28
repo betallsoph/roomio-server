@@ -53,4 +53,4 @@ Response phải có `role: SUPER_ADMIN` và `id` là UUID DB (không phải `env
 
 ## Dev-only env Super Admin
 
-Khi `NODE_ENV` khác `production` và `SUPER_ADMIN_ACCOUNTS` được set, `allowEnvSuperAdmin=true` cho phép đăng nhập plaintext env **chỉ để dev local**. Production luôn `allowEnvSuperAdmin=false`; session `env-super-admin` không được `getUserActor` chấp nhận và hooks chỉ bypass DB khi `isTransitionalEnvSuperAdminSession` (non-production).
+Khi `NODE_ENV=development` và `SUPER_ADMIN_ACCOUNTS` được set, `allowEnvSuperAdmin=true` cho phép đăng nhập plaintext env **chỉ để dev local**. Staging/test/production luôn `allowEnvSuperAdmin=false`; session `env-super-admin` không được `getUserActor` chấp nhận và hooks chỉ bypass DB khi `isTransitionalEnvSuperAdminSession` (development only).

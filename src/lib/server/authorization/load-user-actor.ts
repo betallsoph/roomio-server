@@ -52,7 +52,7 @@ export function isEnvFakeSuperAdminUserId(userId: string): boolean {
  * (`getActorContext`) may honor outside production. `getUserActor` always rejects
  * these IDs — only DB-backed Super Admin users are loaded here.
  *
- * Requires allowEnvSuperAdmin (non-production + SUPER_ADMIN_ACCOUNTS configured).
+ * Requires allowEnvSuperAdmin (NODE_ENV=development + SUPER_ADMIN_ACCOUNTS configured).
  */
 export function isTransitionalEnvSuperAdminSession(session: SessionData): boolean {
 	const env = getEnv();

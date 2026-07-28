@@ -101,13 +101,23 @@ test('cookie match matrix: aligned session cookie IDs succeed for each role', as
 		baseSession({ role: 'LANDLORD', landlordProfileId: LANDLORD_ID }),
 		createMockDb()
 	);
-	assert.equal(landlord.role, 'LANDLORD');
+	assert.deepEqual(landlord, {
+		kind: 'USER',
+		userId: USER_ID,
+		role: 'LANDLORD',
+		landlordId: LANDLORD_ID
+	});
 
 	const tenant = await getUserActor(
 		baseSession({ role: 'TENANT', tenantProfileId: TENANT_PROFILE_ID }),
 		createMockDb({ findUserById: async () => ({ isActive: true, role: 'TENANT' }) })
 	);
-	assert.equal(tenant.role, 'TENANT');
+	assert.deepEqual(tenant, {
+		kind: 'USER',
+		userId: USER_ID,
+		role: 'TENANT',
+		tenantProfileId: TENANT_PROFILE_ID
+	});
 
 	const staff = await getUserActor(
 		baseSession({
@@ -117,7 +127,15 @@ test('cookie match matrix: aligned session cookie IDs succeed for each role', as
 		}),
 		createMockDb({ findUserById: async () => ({ isActive: true, role: 'STAFF' }) })
 	);
-	assert.equal(staff.role, 'STAFF');
+	assert.deepEqual(staff, {
+		kind: 'USER',
+		userId: USER_ID,
+		role: 'STAFF',
+		staffId: STAFF_ID,
+		landlordId: STAFF_LANDLORD_ID,
+		propertyIds: [],
+		permissions: []
+	});
 });
 
 test('null cookie profile IDs do not block DB authority (mismatch detector only when set)', async () => {
@@ -138,6 +156,19 @@ test('isEnvFakeSuperAdminUserId recognizes legacy env session IDs', () => {
 	assert.equal(isEnvFakeSuperAdminUserId('real-db-user-id'), false);
 });
 
+test('isTransitionalEnvSuperAdminSession is false in staging even with SUPER_ADMIN_ACCOUNTS', () => {
+	resetEnvForTests({
+		NODE_ENV: 'staging',
+		SUPER_ADMIN_ACCOUNTS: 'dev@example.com:dev-password-long-enough'
+	});
+	try {
+		const session = baseSession({ userId: 'env-super-admin', role: 'SUPER_ADMIN' });
+		assert.equal(isTransitionalEnvSuperAdminSession(session), false);
+	} finally {
+		resetEnvForTests();
+	}
+});
+
 test('isTransitionalEnvSuperAdminSession is false in production even with SUPER_ADMIN_ACCOUNTS', () => {
 	resetEnvForTests({
 		NODE_ENV: 'production',
@@ -155,7 +186,7 @@ test('isTransitionalEnvSuperAdminSession is false in production even with SUPER_
 	}
 });
 
-test('isTransitionalEnvSuperAdminSession true only in non-production with SUPER_ADMIN_ACCOUNTS', () => {
+test('isTransitionalEnvSuperAdminSession true only in development with SUPER_ADMIN_ACCOUNTS', () => {
 	resetEnvForTests({
 		NODE_ENV: 'development',
 		SUPER_ADMIN_ACCOUNTS: 'dev@example.com:dev-password-long-enough'

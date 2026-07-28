@@ -292,7 +292,7 @@ test('isEnvFakeSuperAdminUserId recognizes legacy env session IDs', () => {
 	assert.equal(isEnvFakeSuperAdminUserId('real-db-user-id'), false);
 });
 
-test('isTransitionalEnvSuperAdminSession true only in non-production with SUPER_ADMIN_ACCOUNTS', () => {
+test('isTransitionalEnvSuperAdminSession true only in development with SUPER_ADMIN_ACCOUNTS', () => {
 	const envSession: SessionData = {
 		userId: 'env-super-admin',
 		role: 'SUPER_ADMIN',

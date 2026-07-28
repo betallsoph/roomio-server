@@ -161,7 +161,12 @@ if (skipReason) {
 					const actorDb = createActorDbFromHandle(handle);
 					const session = fixtureSession(fixture, 'landlordA');
 					const first = await getUserActor(session, actorDb);
+					assert.equal(first.kind, 'USER');
 					assert.equal(first.role, 'LANDLORD');
+					if (first.role === 'LANDLORD') {
+						assert.equal(first.userId, fixture.ids.landlordA.userId);
+						assert.equal(first.landlordId, fixture.ids.landlordA.landlordProfileId);
+					}
 
 					await handle.db
 						.update(users)
@@ -179,7 +184,11 @@ if (skipReason) {
 				const fixture = await seedSecurityFixturesFromHandle(handle);
 				const actorDb = createActorDbFromHandle(handle);
 				const session = fixtureSession(fixture, 'landlordA');
-				await getUserActor(session, actorDb);
+				const first = await getUserActor(session, actorDb);
+				assert.equal(first.role, 'LANDLORD');
+				if (first.role === 'LANDLORD') {
+					assert.equal(first.landlordId, fixture.ids.landlordA.landlordProfileId);
+				}
 
 				await handle.db
 					.update(users)
@@ -220,6 +229,18 @@ if (skipReason) {
 				await handle.db
 					.delete(tenantProfiles)
 					.where(eq(tenantProfiles.userId, fixture.ids.tenantANow.userId));
+				await expectUnauthorized(() => getUserActor(session, actorDb));
+			});
+		});
+
+		await t.test('staff missing profile row → Unauthorized', async () => {
+			await withSecurityDb(async (handle) => {
+				const fixture = await seedSecurityFixturesFromHandle(handle);
+				const actorDb = createActorDbFromHandle(handle);
+				const session = fixtureSession(fixture, 'staffALimited');
+				await handle.db
+					.delete(staffProfiles)
+					.where(eq(staffProfiles.userId, fixture.ids.staffALimited.userId));
 				await expectUnauthorized(() => getUserActor(session, actorDb));
 			});
 		});
