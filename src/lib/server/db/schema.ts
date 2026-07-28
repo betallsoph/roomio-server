@@ -103,6 +103,61 @@ export const staffProfiles = pgTable('StaffProfile', {
 		.references(() => landlordProfiles.id, { onDelete: 'cascade' })
 });
 
+
+// AUTH-005 — Gán nhân viên theo từng cơ sở; một staff chỉ có tối đa một assignment active trên mỗi property.
+export const staffPropertyAssignments = pgTable(
+	'StaffPropertyAssignment',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		staffId: text('staffId')
+			.notNull()
+			.references(() => staffProfiles.id, { onDelete: 'cascade' }),
+		propertyId: text('propertyId')
+			.notNull()
+			.references(() => properties.id, { onDelete: 'restrict' }),
+		assignedByUserId: text('assignedByUserId')
+			.notNull()
+			.references(() => users.id, { onDelete: 'restrict' }),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		revokedAt: datetime('revokedAt')
+	},
+	(t) => ({
+		activeStaffPropertyUnique: uniqueIndex('StaffPropertyAssignment_active_staff_property_unique')
+			.on(t.staffId, t.propertyId)
+			.where(sql`"revokedAt" IS NULL`),
+		propertyRevokedIdx: index('StaffPropertyAssignment_propertyId_revokedAt_idx').on(
+			t.propertyId,
+			t.revokedAt
+		)
+	})
+);
+
+// AUTH-005 — Capability theo staff (không gắn property); revoke bằng revokedAt.
+export const staffPermissions = pgTable(
+	'StaffPermission',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		staffId: text('staffId')
+			.notNull()
+			.references(() => staffProfiles.id, { onDelete: 'cascade' }),
+		permission: text('permission').notNull(),
+		grantedByUserId: text('grantedByUserId')
+			.notNull()
+			.references(() => users.id, { onDelete: 'restrict' }),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		revokedAt: datetime('revokedAt')
+	},
+	(t) => ({
+		activeStaffPermissionUnique: uniqueIndex('StaffPermission_active_staff_permission_unique')
+			.on(t.staffId, t.permission)
+			.where(sql`"revokedAt" IS NULL`),
+		permissionAllowed: check(
+			'StaffPermission_permission_allowed',
+			sql`"permission" IN ('VIEW_ROOMS','VIEW_TENANTS','MANAGE_METERS','MANAGE_REQUESTS')`
+		)
+	})
+);
+
 export const tenantProfiles = pgTable('TenantProfile', {
 	id: text('id').primaryKey().$defaultFn(uuid),
 	userId: text('userId')
@@ -808,7 +863,13 @@ export const usersRelations = relations(users, ({ one, many }) => ({
 	landlordProfile: one(landlordProfiles),
 	tenantProfile: one(tenantProfiles),
 	staffProfile: one(staffProfiles),
-	auditEventsAsActor: many(auditEvents)
+	auditEventsAsActor: many(auditEvents),
+	staffPropertyAssignmentsAssigned: many(staffPropertyAssignments, {
+		relationName: 'staffPropertyAssignmentAssignedBy'
+	}),
+	staffPermissionsGranted: many(staffPermissions, {
+		relationName: 'staffPermissionGrantedBy'
+	})
 }));
 
 export const landlordProfilesRelations = relations(landlordProfiles, ({ one, many }) => ({
@@ -843,7 +904,9 @@ export const staffProfilesRelations = relations(staffProfiles, ({ one, many }) =
 		fields: [staffProfiles.landlordId],
 		references: [landlordProfiles.id]
 	}),
-	assignedRequests: many(maintenanceRequests)
+	assignedRequests: many(maintenanceRequests),
+	propertyAssignments: many(staffPropertyAssignments),
+	permissions: many(staffPermissions)
 }));
 
 export const tenantProfilesRelations = relations(tenantProfiles, ({ one, many }) => ({
@@ -874,7 +937,8 @@ export const propertiesRelations = relations(properties, ({ one, many }) => ({
 	}),
 	blocks: many(blocks),
 	rooms: many(rooms),
-	expenses: many(expenses)
+	expenses: many(expenses),
+	staffPropertyAssignments: many(staffPropertyAssignments)
 }));
 
 export const blocksRelations = relations(blocks, ({ one, many }) => ({
@@ -1056,5 +1120,33 @@ export const tenanciesRelations = relations(tenancies, ({ one }) => ({
 	managedTenant: one(managedTenants, {
 		fields: [tenancies.managedTenantId],
 		references: [managedTenants.id]
+	})
+}));
+
+export const staffPropertyAssignmentsRelations = relations(staffPropertyAssignments, ({ one }) => ({
+	staff: one(staffProfiles, {
+		fields: [staffPropertyAssignments.staffId],
+		references: [staffProfiles.id]
+	}),
+	property: one(properties, {
+		fields: [staffPropertyAssignments.propertyId],
+		references: [properties.id]
+	}),
+	assignedBy: one(users, {
+		fields: [staffPropertyAssignments.assignedByUserId],
+		references: [users.id],
+		relationName: 'staffPropertyAssignmentAssignedBy'
+	})
+}));
+
+export const staffPermissionsRelations = relations(staffPermissions, ({ one }) => ({
+	staff: one(staffProfiles, {
+		fields: [staffPermissions.staffId],
+		references: [staffProfiles.id]
+	}),
+	grantedBy: one(users, {
+		fields: [staffPermissions.grantedByUserId],
+		references: [users.id],
+		relationName: 'staffPermissionGrantedBy'
 	})
 }));
