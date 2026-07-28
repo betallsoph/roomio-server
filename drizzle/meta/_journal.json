@@ -162,6 +162,13 @@
       "when": 1785239317695,
       "tag": "0022_cool_odin",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785241404866,
+      "tag": "0023_auth004_managed_tenant_tenancy",
+      "breakpoints": true
     }
   ]
 }
