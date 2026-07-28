@@ -8,6 +8,7 @@ import {
 	getUserActor,
 	isTransitionalEnvSuperAdminSession
 } from '$lib/server/authorization/load-user-actor';
+import { isSessionExemptPublicRoute } from '$lib/server/authorization/machine-routes';
 import { UnauthorizedError } from '$lib/server/authorization/errors';
 import type { ActorContext } from '$lib/server/authorization/actor';
 
@@ -15,14 +16,6 @@ registerProcessLifecycle();
 
 const GENERIC_SERVER_ERROR_MESSAGE = 'Đã xảy ra lỗi. Vui lòng thử lại sau.';
 
-// Các API không cần đăng nhập
-const PUBLIC_API = [
-	'/api/auth',
-	'/api/payment-webhook',
-	'/api/payos-webhook',
-	'/api/telegram/webhook',
-	'/api/cron' // tự bảo vệ bằng header x-cron-secret === CRON_SECRET, không dùng session
-];
 
 // Nhân viên (STAFF) chỉ được dùng đúng các API phục vụ "vận hành cơ bản" — mặc định chặn, chỉ mở những path/method dưới đây
 const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
@@ -159,7 +152,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (limited) return finish(limited);
 	}
 
-	if (pathname.startsWith('/api') && !PUBLIC_API.some((p) => pathname.startsWith(p))) {
+	if (pathname.startsWith('/api') && !isSessionExemptPublicRoute(event.request.method, pathname)) {
 		if (!session) {
 			return finish(json({ error: 'Chưa đăng nhập' }, { status: 401 }));
 		}
