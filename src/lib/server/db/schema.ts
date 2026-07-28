@@ -5,7 +5,8 @@ import {
 	boolean,
 	timestamp,
 	doublePrecision,
-	index
+	index,
+	jsonb
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -565,12 +566,49 @@ export const subscriptionChangeRequests = pgTable(
 	})
 );
 
+
+export const auditEvents = pgTable(
+	'AuditEvent',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId').references(() => landlordProfiles.id, {
+			onDelete: 'set null'
+		}),
+		actorType: text('actorType').notNull(), // USER | MACHINE | SYSTEM
+		actorUserId: text('actorUserId').references(() => users.id, { onDelete: 'set null' }),
+		actorRole: text('actorRole'),
+		action: text('action').notNull(),
+		resourceType: text('resourceType').notNull(),
+		resourceId: text('resourceId').notNull(),
+		requestId: text('requestId'),
+		jobId: text('jobId'),
+		metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+		metadataVersion: integer('metadataVersion').notNull().default(1),
+		occurredAt: datetime('occurredAt').notNull(),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		landlordTimelineIdx: index('AuditEvent_landlord_timeline_idx').on(
+			t.landlordId,
+			t.occurredAt.desc(),
+			t.id.desc()
+		),
+		resourceTimelineIdx: index('AuditEvent_resource_timeline_idx').on(
+			t.resourceType,
+			t.resourceId,
+			t.occurredAt
+		),
+		requestIdIdx: index('AuditEvent_requestId_idx').on(t.requestId)
+	})
+);
+
 // Quan hệ giữa các bảng (dùng cho db.query relational API)
 
-export const usersRelations = relations(users, ({ one }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
 	landlordProfile: one(landlordProfiles),
 	tenantProfile: one(tenantProfiles),
-	staffProfile: one(staffProfiles)
+	staffProfile: one(staffProfiles),
+	auditEventsAsActor: many(auditEvents)
 }));
 
 export const landlordProfilesRelations = relations(landlordProfiles, ({ one, many }) => ({
@@ -584,7 +622,8 @@ export const landlordProfilesRelations = relations(landlordProfiles, ({ one, man
 	notificationQueue: many(notificationQueue),
 	paymentTransactions: many(paymentTransactions),
 	paymentAccounts: many(paymentAccounts),
-	subscriptionChangeRequests: many(subscriptionChangeRequests)
+	subscriptionChangeRequests: many(subscriptionChangeRequests),
+	auditEvents: many(auditEvents)
 }));
 
 export const paymentAccountsRelations = relations(paymentAccounts, ({ one, many }) => ({
@@ -785,3 +824,15 @@ export const paymentTransactionsRelations = relations(paymentTransactions, ({ on
 		references: [paymentAccounts.id]
 	})
 }));
+
+export const auditEventsRelations = relations(auditEvents, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [auditEvents.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	actorUser: one(users, {
+		fields: [auditEvents.actorUserId],
+		references: [users.id]
+	})
+}));
+
