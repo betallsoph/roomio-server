@@ -6,6 +6,10 @@ import { users, staffProfiles } from '$lib/server/db/schema';
 import { eq, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
 import { resolveLandlordScopeForList } from '$lib/server/landlord-query-scope';
+import { listStaffAssignmentsPermissions } from '$lib/server/staff/assignments';
+import { appendAudit } from '$lib/server/audit/append';
+import { auditActorFromUserActor } from '$lib/server/audit/actors';
+import type { LandlordActor } from '$lib/server/authorization/actor';
 
 // Cột User công khai cho UI (không trả passwordHash)
 const STAFF_USER_COLUMNS = {
@@ -31,7 +35,17 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 		staff.sort((a, b) => a.user.name.localeCompare(b.user.name, 'vi'));
 
-		return json(staff);
+		const enriched = await Promise.all(
+			staff.map(async (row) => {
+				const { propertyIds, permissions } = await listStaffAssignmentsPermissions(
+					row.id,
+					scope.landlordId
+				);
+				return { ...row, propertyIds, permissions };
+			})
+		);
+
+		return json(enriched);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -62,6 +76,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const passwordHash = await hashPassword(password);
 
+		const landlordActor: LandlordActor = {
+			kind: 'USER',
+			userId: locals.session.userId,
+			role: 'LANDLORD',
+			landlordId
+		};
+
 		const created = await db.transaction(async (tx) => {
 			const user = (
 				await tx
@@ -74,6 +95,15 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				await tx.insert(staffProfiles).values({ userId: user.id, landlordId }).returning()
 			)[0];
 
+			await appendAudit(tx, auditActorFromUserActor(landlordActor), {
+				scope: 'LANDLORD',
+				action: 'STAFF.CREATED',
+				resourceType: 'StaffProfile',
+				resourceId: profile.id,
+				landlordId,
+				metadata: { userId: user.id }
+			});
+
 			return profile;
 		});
 
@@ -82,7 +112,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			with: { user: { columns: STAFF_USER_COLUMNS } }
 		});
 
-		return json(full);
+		if (!full) {
+			return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
+		}
+
+		const { propertyIds, permissions } = await listStaffAssignmentsPermissions(
+			full.id,
+			landlordId
+		);
+
+		return json({ ...full, propertyIds, permissions });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

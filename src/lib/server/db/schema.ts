@@ -153,7 +153,7 @@ export const staffPermissions = pgTable(
 			.where(sql`"revokedAt" IS NULL`),
 		permissionAllowed: check(
 			'StaffPermission_permission_allowed',
-			sql`"permission" IN ('VIEW_ROOMS','VIEW_TENANTS','MANAGE_METERS','MANAGE_REQUESTS')`
+			sql`"permission" IN ('VIEW_ROOMS','VIEW_TENANTS','MANAGE_METERS','MANAGE_REQUESTS','UPLOAD')`
 		)
 	})
 );
