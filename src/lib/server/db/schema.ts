@@ -571,7 +571,7 @@ export const auditEvents = pgTable(
 	{
 		id: text('id').primaryKey().$defaultFn(uuid),
 		landlordId: text('landlordId').references(() => landlordProfiles.id, {
-			onDelete: 'set null'
+			onDelete: 'restrict'
 		}),
 		actorType: text('actorType').notNull(), // USER | MACHINE | SYSTEM
 		actorUserId: text('actorUserId').references(() => users.id, { onDelete: 'set null' }),

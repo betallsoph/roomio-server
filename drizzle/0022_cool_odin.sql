@@ -15,7 +15,7 @@ CREATE TABLE "AuditEvent" (
 	"createdAt" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_landlordId_LandlordProfile_id_fk" FOREIGN KEY ("landlordId") REFERENCES "public"."LandlordProfile"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_landlordId_LandlordProfile_id_fk" FOREIGN KEY ("landlordId") REFERENCES "public"."LandlordProfile"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_actorUserId_User_id_fk" FOREIGN KEY ("actorUserId") REFERENCES "public"."User"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "AuditEvent_landlord_timeline_idx" ON "AuditEvent" USING btree ("landlordId","occurredAt" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "AuditEvent_resource_timeline_idx" ON "AuditEvent" USING btree ("resourceType","resourceId","occurredAt");--> statement-breakpoint
