@@ -142,6 +142,7 @@ export interface EnvConfig {
 	publicAppOrigin: string;
 	cronSecret: string | null;
 	superAdminAccounts: string | null;
+	allowEnvSuperAdmin: boolean;
 	uploadDir: string;
 	logLevel: string;
 	releaseSha: string;
@@ -526,6 +527,7 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 	const qstash = parseQStashFeature(source, isProduction, errors);
 	const ocr = parseOcrFeature(source, isProduction, errors);
 	const superAdminAccounts = trim(source.SUPER_ADMIN_ACCOUNTS);
+	const allowEnvSuperAdmin = !isProduction && !!superAdminAccounts;
 	if (isProduction && !superAdminAccounts) {
 		errors.push('SUPER_ADMIN_ACCOUNTS');
 	} else if (superAdminAccountsAreUnsafe(superAdminAccounts, isProduction)) {
@@ -559,6 +561,7 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 		publicAppOrigin: normalizeOrigin(publicAppOrigin),
 		cronSecret: cronSecret || null,
 		superAdminAccounts: superAdminAccounts || null,
+		allowEnvSuperAdmin,
 		uploadDir: trim(source.UPLOAD_DIR) || 'uploads',
 		logLevel: configuredLogLevel || (isProduction ? 'info' : 'debug'),
 		releaseSha:

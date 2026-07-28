@@ -5,6 +5,8 @@ import { getEnv } from './env';
 export interface SessionData {
 	userId: string;
 	role: string; // 'SUPER_ADMIN' | 'LANDLORD' | 'STAFF' | 'TENANT'
+	// Các profile ID dưới đây chỉ dùng phát hiện mismatch với DB trong getUserActor;
+	// không phải nguồn scope/authority cuối cùng.
 	landlordProfileId: string | null;
 	enabledRentalTypes?: string | null;
 	tenantProfileId: string | null;

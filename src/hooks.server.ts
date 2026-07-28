@@ -1,12 +1,15 @@
 import { json, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { readSession, destroySession } from '$lib/server/session';
-import { db } from '$lib/server/db';
-import { users } from '$lib/server/db/schema';
-import { eq } from 'drizzle-orm';
 import { rateLimit } from '$lib/server/rate-limit';
 import { isPublicHealthPath } from '$lib/server/health';
 import { registerProcessLifecycle } from '$lib/server/lifecycle';
 import { getLogger, logHttpRequest, resolveRequestId } from '$lib/server/logger';
+import {
+	getUserActor,
+	isTransitionalEnvSuperAdminSession
+} from '$lib/server/authorization/load-user-actor';
+import { UnauthorizedError } from '$lib/server/authorization/errors';
+import type { ActorContext } from '$lib/server/authorization/actor';
 
 registerProcessLifecycle();
 
@@ -20,15 +23,6 @@ const PUBLIC_API = [
 	'/api/telegram/webhook',
 	'/api/cron' // tự bảo vệ bằng header x-cron-secret === CRON_SECRET, không dùng session
 ];
-
-function isEnvSuperAdminSession(session: NonNullable<ReturnType<typeof readSession>>) {
-	return (
-		session.role === 'SUPER_ADMIN' &&
-		(session.userId === 'env-super-admin' ||
-			session.userId.startsWith('env-super-admin:') ||
-			session.userId === 'hardcoded-super-admin')
-	);
-}
 
 // Nhân viên (STAFF) chỉ được dùng đúng các API phục vụ "vận hành cơ bản" — mặc định chặn, chỉ mở những path/method dưới đây
 const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
@@ -85,6 +79,10 @@ function beginRequest(event: Parameters<Handle>[0]['event']) {
 	return { requestId, finish };
 }
 
+function isUserActor(actor: ActorContext): actor is Extract<ActorContext, { kind: 'USER' }> {
+	return actor.kind === 'USER';
+}
+
 export const handleError: HandleServerError = ({ error, event, status }) => {
 	const requestId = event.locals.requestId ?? resolveRequestId(null);
 	const route = event.route?.id ?? event.url.pathname;
@@ -115,6 +113,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const { finish } = beginRequest(event);
 	const session = readSession(event.cookies);
 	event.locals.session = session;
+	event.locals.actor = null;
 
 	const { pathname } = event.url;
 
@@ -165,46 +164,57 @@ export const handle: Handle = async ({ event, resolve }) => {
 			return finish(json({ error: 'Chưa đăng nhập' }, { status: 401 }));
 		}
 
-		// Super Admin nằm trong env, không có bản ghi User trong DB. Hỗ trợ cả ID phiên cũ để
-		// những phiên được tạo trước lần chuyển đổi này không bị đăng xuất giữa chừng.
-		if (!isEnvSuperAdminSession(session)) {
-			// Phiên có thể thu hồi: xác thực lại danh tính với DB mỗi request, để việc khóa tài khoản
-			// (isActive=false) hoặc đổi quyền có hiệu lực NGAY thay vì chờ cookie hết hạn (tối đa 7 ngày).
-			const account = await db.query.users.findFirst({
-				where: eq(users.id, session.userId),
-				columns: { isActive: true, role: true }
-			});
-			if (!account || !account.isActive) {
+		try {
+			if (isTransitionalEnvSuperAdminSession(session)) {
+				event.locals.actor = {
+					kind: 'USER',
+					userId: session.userId,
+					role: 'SUPER_ADMIN'
+				};
+			} else {
+				event.locals.actor = await getUserActor(session);
+			}
+		} catch (error) {
+			if (error instanceof UnauthorizedError) {
 				destroySession(event.cookies);
+				event.locals.actor = null;
 				return finish(
-					json({ error: 'Phiên đã hết hiệu lực, vui lòng đăng nhập lại' }, { status: 401 })
+					json(
+						{
+							error: error.message || 'Phiên đã hết hiệu lực, vui lòng đăng nhập lại'
+						},
+						{ status: 401 }
+					)
 				);
 			}
-			if (account.role !== session.role) {
-				destroySession(event.cookies);
-				return finish(
-					json({ error: 'Quyền truy cập đã thay đổi, vui lòng đăng nhập lại' }, { status: 401 })
-				);
-			}
+			throw error;
 		}
 
-		// Chặn truy cập chéo dữ liệu: ID trên query param phải khớp với phiên đăng nhập
-		if (session.role === 'LANDLORD') {
+		const actor = event.locals.actor;
+		if (!actor || !isUserActor(actor)) {
+			destroySession(event.cookies);
+			event.locals.actor = null;
+			return finish(
+				json({ error: 'Phiên đã hết hiệu lực, vui lòng đăng nhập lại' }, { status: 401 })
+			);
+		}
+
+		// Legacy query-param scope checks (AUTH-012 sẽ thay bằng actor-scoped helpers trong endpoint)
+		if (actor.role === 'LANDLORD') {
 			const landlordId = event.url.searchParams.get('landlordId');
-			if (landlordId && landlordId !== session.landlordProfileId) {
+			if (landlordId && landlordId !== actor.landlordId) {
 				return finish(json({ error: 'Không có quyền truy cập dữ liệu này' }, { status: 403 }));
 			}
 		}
 
-		if (session.role === 'TENANT') {
+		if (actor.role === 'TENANT') {
 			const tenantId = event.url.searchParams.get('tenantId');
-			if (tenantId && tenantId !== session.tenantProfileId) {
+			if (tenantId && tenantId !== actor.tenantProfileId) {
 				return finish(json({ error: 'Không có quyền truy cập dữ liệu này' }, { status: 403 }));
 			}
 		}
 
-		if (session.role === 'STAFF') {
-			// Mặc định chặn: chỉ cho qua path/method nằm trong allowlist
+		if (actor.role === 'STAFF') {
 			const allowed = STAFF_ALLOWLIST.some(
 				(rule) => pathname.startsWith(rule.prefix) && rule.methods.includes(event.request.method)
 			);
@@ -214,18 +224,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 				);
 			}
 
-			// Nhân viên chỉ thao tác trong phạm vi chủ trọ của mình và trên dữ liệu của chính mình
 			const landlordId = event.url.searchParams.get('landlordId');
-			if (landlordId && landlordId !== session.staffLandlordId) {
+			if (landlordId && landlordId !== actor.landlordId) {
 				return finish(json({ error: 'Không có quyền truy cập dữ liệu này' }, { status: 403 }));
 			}
 			const staffId = event.url.searchParams.get('staffId');
-			if (staffId && staffId !== session.staffProfileId) {
+			if (staffId && staffId !== actor.staffId) {
 				return finish(json({ error: 'Không có quyền truy cập dữ liệu này' }, { status: 403 }));
 			}
 		}
 
-		if (pathname.startsWith('/api/super-admin') && session.role !== 'SUPER_ADMIN') {
+		if (pathname.startsWith('/api/super-admin') && actor.role !== 'SUPER_ADMIN') {
 			return finish(json({ error: 'Chỉ Super Admin được phép truy cập' }, { status: 403 }));
 		}
 	}
