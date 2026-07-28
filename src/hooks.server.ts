@@ -16,7 +16,6 @@ registerProcessLifecycle();
 
 const GENERIC_SERVER_ERROR_MESSAGE = 'Đã xảy ra lỗi. Vui lòng thử lại sau.';
 
-
 // Nhân viên (STAFF) chỉ được dùng đúng các API phục vụ "vận hành cơ bản" — mặc định chặn, chỉ mở những path/method dưới đây
 const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
 	{ prefix: '/api/requests', methods: ['GET', 'PUT'] }, // xem & cập nhật sự cố được giao

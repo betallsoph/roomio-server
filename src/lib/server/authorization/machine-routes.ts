@@ -4,6 +4,9 @@
  * Registry membership only skips the hooks.session gate — it does NOT authenticate
  * the caller. MACHINE routes must verify secrets, signatures, or other credentials
  * inside their handlers.
+ *
+ * Deferred (do not invent here): AUTH-022 password routes; JOB-001/CORE-003 QStash
+ * routes — register only when those handlers land in tracked base.
  */
 
 export type PublicRouteKind = 'USER_PUBLIC' | 'MACHINE';
