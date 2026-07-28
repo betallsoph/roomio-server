@@ -5,10 +5,14 @@ import {
 	boolean,
 	timestamp,
 	doublePrecision,
+	bigint,
+	date,
 	index,
+	uniqueIndex,
+	check,
 	jsonb
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 const uuid = () => crypto.randomUUID();
 const now = () => new Date();
@@ -106,31 +110,192 @@ export const tenantProfiles = pgTable('TenantProfile', {
 		.unique()
 		.references(() => users.id, { onDelete: 'cascade' }),
 	telegramUserId: text('telegramUserId').unique(), // ID Telegram để auto-login trong Mini App (null = chưa liên kết)
-	idNumber: text('idNumber').notNull(), // CCCD
+	// AUTH-004: identity có thể tồn tại mà KHÔNG cần dữ liệu do chủ trọ quản lý.
+	// Các field dưới đây chuyển sang nullable; dữ liệu vận hành thuộc ManagedTenant.
+	idNumber: text('idNumber'), // CCCD
 	idFrontImage: text('idFrontImage'), // Ảnh chụp CCCD trước
 	idBackImage: text('idBackImage'), // Ảnh chụp CCCD sau
 	vehicleImage: text('vehicleImage'), // Ảnh xe máy/Cà vẹt
 	checkInImage: text('checkInImage'), // Ảnh chụp lúc bàn giao phòng
-	moveInDate: text('moveInDate').notNull(),
-	deposit: doublePrecision('deposit').notNull(),
+	moveInDate: text('moveInDate'),
+	deposit: doublePrecision('deposit'),
 	notes: text('notes')
 });
 
+// AUTH-004 — Hồ sơ người thuê do MỘT chủ trọ quản lý, tách khỏi danh tính đăng nhập.
+// `ManagedTenant.id` chính là thứ API/UI hiện tại đang gọi là `tenantId`.
+// Contact chỉ là snapshot vận hành: KHÔNG unique, KHÔNG dùng để tự động claim/login.
+export const managedTenants = pgTable(
+	'ManagedTenant',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		displayName: text('displayName').notNull(),
+		// Snapshot liên hệ do chủ trọ nhập — không phải bằng chứng sở hữu danh tính.
+		emailSnapshot: text('emailSnapshot'),
+		phoneSnapshot: text('phoneSnapshot'),
+		// Null khi chưa ai claim; chỉ set qua invite đã xác minh. KHÔNG unique:
+		// một User được phép claim nhiều ManagedTenant của nhiều chủ trọ khác nhau.
+		claimedByUserId: text('claimedByUserId').references(() => users.id, { onDelete: 'set null' }),
+		// Tăng atomically mỗi lần claim/recovery để token cũ không đổi được claimant mới.
+		claimVersion: integer('claimVersion').notNull().default(0),
+		// Khác null = claimant bị fail-closed trong lúc recovery; chủ trọ vẫn quản lý record.
+		claimAccessSuspendedAt: datetime('claimAccessSuspendedAt'),
+		status: text('status').notNull().default('ACTIVE'), // 'ACTIVE' | 'ARCHIVED'
+		// Chỉ phục vụ backfill/reconciliation idempotent — KHÔNG dùng để cấp quyền.
+		legacyTenantProfileId: text('legacyTenantProfileId'),
+		backfillSource: text('backfillSource'), // null cho row app tạo; ví dụ 'LEGACY_TENANT_PROFILE'
+		needsReview: boolean('needsReview').notNull().default(false),
+		createdByActorType: text('createdByActorType').notNull().default('USER'), // 'USER' | 'SYSTEM'
+		createdByUserId: text('createdByUserId').references(() => users.id, { onDelete: 'set null' }),
+		archivedAt: datetime('archivedAt'),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now)
+	},
+	(t) => ({
+		directoryIdx: index('ManagedTenant_landlord_status_createdAt_idx').on(
+			t.landlordId,
+			t.status,
+			t.createdAt
+		),
+		claimantIdx: index('ManagedTenant_claimedByUserId_idx').on(t.claimedByUserId),
+		// Backfill chạy lại không tạo row trùng; partial để row do app tạo không bị ràng buộc.
+		legacyUnique: uniqueIndex('ManagedTenant_landlord_legacyProfile_unique')
+			.on(t.landlordId, t.legacyTenantProfileId)
+			.where(sql`"legacyTenantProfileId" IS NOT NULL`)
+	})
+);
+
+// AUTH-004 — Một LẦN THUÊ: một managed tenant thuê một phòng trong một khoảng thời gian.
+// Đây mới là nguồn cấp quyền lịch sử, không phải "ai đang ở phòng hôm nay".
+export const tenancies = pgTable(
+	'Tenancy',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		// landlordId/propertyId là SNAPSHOT chủ động để scoped query không phụ thuộc
+		// ownership hiện tại của room.
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		propertyId: text('propertyId')
+			.notNull()
+			.references(() => properties.id, { onDelete: 'restrict' }),
+		roomId: text('roomId')
+			.notNull()
+			.references(() => rooms.id, { onDelete: 'restrict' }),
+		// Bắt buộc với mọi row mới. Để nullable ở DDL cho backfill legacy;
+		// siết NOT NULL ở phase cleanup (AUTH-019).
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'restrict'
+		}),
+		status: text('status').notNull().default('ACTIVE'), // 'ACTIVE' | 'ENDED' | 'CANCELLED'
+		startDate: date('startDate', { mode: 'string' }).notNull(), // YYYY-MM-DD giờ Việt Nam
+		plannedEndDate: date('plannedEndDate', { mode: 'string' }),
+		endDate: date('endDate', { mode: 'string' }),
+		// VND lưu bigint theo canonical contract §4; không dùng doublePrecision cho tiền.
+		depositRequired: bigint('depositRequired', { mode: 'number' }).notNull().default(0),
+		financeInitializedAt: datetime('financeInitializedAt'),
+		// 'OPENING_BALANCE_PENDING' | 'OPENING_BALANCE' | 'CONFIRMED_ZERO' | 'FIRST_ACTIVITY'
+		financeInitializationSource: text('financeInitializationSource'),
+		financeInitializationVersion: integer('financeInitializationVersion').notNull().default(0),
+		createdByActorType: text('createdByActorType').notNull().default('USER'), // 'USER' | 'SYSTEM'
+		createdByUserId: text('createdByUserId').references(() => users.id, { onDelete: 'set null' }),
+		endedByUserId: text('endedByUserId').references(() => users.id, { onDelete: 'set null' }),
+		backfillSource: text('backfillSource'), // 'CURRENT_ROOM' | 'CONTRACT' | 'MANUAL_REVIEW'
+		needsReview: boolean('needsReview').notNull().default(false),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now)
+	},
+	(t) => ({
+		landlordStatusIdx: index('Tenancy_landlord_status_idx').on(t.landlordId, t.status),
+		managedTenantIdx: index('Tenancy_managedTenant_startDate_idx').on(
+			t.managedTenantId,
+			t.startDate
+		),
+		roomIdx: index('Tenancy_room_startDate_idx').on(t.roomId, t.startDate),
+		// Hàng rào cuối cho race "hai request start cùng lúc": tối đa một ACTIVE mỗi phòng.
+		activeRoomUnique: uniqueIndex('Tenancy_active_room_unique')
+			.on(t.roomId)
+			.where(sql`status = 'ACTIVE'`),
+		// Luật MVP: một managed tenant tối đa một lần thuê ACTIVE.
+		activeManagedTenantUnique: uniqueIndex('Tenancy_active_managedTenant_unique')
+			.on(t.managedTenantId)
+			.where(sql`status = 'ACTIVE' AND "managedTenantId" IS NOT NULL`),
+		activeHasNoEndDate: check(
+			'Tenancy_active_no_end_date',
+			sql`status <> 'ACTIVE' OR "endDate" IS NULL`
+		),
+		endedHasValidEndDate: check(
+			'Tenancy_ended_end_date_valid',
+			sql`status <> 'ENDED' OR ("endDate" IS NOT NULL AND "endDate" >= "startDate")`
+		),
+		plannedEndAfterStart: check(
+			'Tenancy_planned_end_after_start',
+			sql`"plannedEndDate" IS NULL OR "plannedEndDate" >= "startDate"`
+		),
+		depositNonNegative: check('Tenancy_deposit_non_negative', sql`"depositRequired" >= 0`)
+	})
+);
+
 // Lời mời liên kết khách thuê với Telegram: chủ trọ sinh token 1 lần, khách mở Mini App qua
 // deep-link ?startapp=<token> để gắn tài khoản Telegram của họ vào đúng TenantProfile.
-export const tenantInvites = pgTable('TenantInvite', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	landlordId: text('landlordId')
-		.notNull()
-		.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
-	tenantId: text('tenantId')
-		.notNull()
-		.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
-	token: text('token').notNull().unique(),
-	expiresAt: datetime('expiresAt').notNull(),
-	usedAt: datetime('usedAt'), // null = chưa dùng
-	createdAt: datetime('createdAt').notNull().$defaultFn(now)
-});
+//
+// AUTH-004 mở rộng theo canonical contract (mục 10.3): invite bind landlord + managed tenant
+// + tenancy, lưu tokenHash thay vì token thô, và có state machine PENDING/ACCEPTED/EXPIRED/
+// REVOKED. Cột mới để NULLABLE vì row legacy không có dữ liệu tương ứng; AUTH-009 backfill
+// rồi AUTH-019 mới siết NOT NULL.
+export const tenantInvites = pgTable(
+	'TenantInvite',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		tenantId: text('tenantId')
+			.notNull()
+			.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+		token: text('token').notNull().unique(),
+		expiresAt: datetime('expiresAt').notNull(),
+		usedAt: datetime('usedAt'), // null = chưa dùng
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+
+		// --- AUTH-004 additive ---
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'cascade'
+		}),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'cascade' }),
+		// Không lưu plaintext token mới; plaintext chỉ trả đúng một lần lúc phát hành.
+		tokenHash: text('tokenHash'),
+		status: text('status'), // 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED'
+		revokedAt: datetime('revokedAt'),
+		acceptedByUserId: text('acceptedByUserId').references(() => users.id, {
+			onDelete: 'set null'
+		}),
+		purpose: text('purpose'), // 'INITIAL_CLAIM' | 'RECOVERY_CLAIM'
+		// Snapshot ManagedTenant.claimVersion lúc phát hành; accept phải conditional match.
+		expectedClaimVersion: integer('expectedClaimVersion'),
+		claimRecoveryId: text('claimRecoveryId'), // bắt buộc với recovery invite của AUTH-023
+		// NULLABLE có chủ đích: thêm NOT NULL không DEFAULT vào bảng đã có dữ liệu sẽ làm
+		// migration fail. Row mới luôn được ORM điền; AUTH-009 backfill row cũ, AUTH-019 siết.
+		updatedAt: datetime('updatedAt').$defaultFn(now).$onUpdateFn(now)
+	},
+	(t) => ({
+		scopeIdx: index('TenantInvite_landlord_managedTenant_tenancy_idx').on(
+			t.landlordId,
+			t.managedTenantId,
+			t.tenancyId
+		),
+		tokenHashUnique: uniqueIndex('TenantInvite_tokenHash_unique')
+			.on(t.tokenHash)
+			.where(sql`"tokenHash" IS NOT NULL`),
+		// Tối đa một invite PENDING trên mỗi tenancy; hàng rào race khi phát invite mới.
+		pendingPerTenancyUnique: uniqueIndex('TenantInvite_pending_per_tenancy_unique')
+			.on(t.tenancyId)
+			.where(sql`status = 'PENDING' AND "tenancyId" IS NOT NULL`)
+	})
+);
 
 export const properties = pgTable(
 	'Property',
@@ -195,10 +360,16 @@ export const rooms = pgTable(
 		paymentAccountId: text('paymentAccountId').references(() => paymentAccounts.id, {
 			onDelete: 'set null'
 		}),
-		tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'set null' })
+		tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'set null' }),
+		// AUTH-004 — CACHE TƯƠNG THÍCH cho UI/code đang migrate. KHÔNG phải nguồn phân quyền:
+		// quyền lịch sử luôn đi qua Tenancy + ManagedTenant.claimedByUserId, không đọc cột này.
+		currentManagedTenantId: text('currentManagedTenantId').references(() => managedTenants.id, {
+			onDelete: 'set null'
+		})
 	},
 	(t) => ({
 		propertyIdx: index('Room_propertyId_idx').on(t.propertyId),
+		currentManagedTenantIdx: index('Room_currentManagedTenantId_idx').on(t.currentManagedTenantId),
 		tenantIdx: index('Room_tenantId_idx').on(t.tenantId),
 		paymentAccountIdx: index('Room_paymentAccountId_idx').on(t.paymentAccountId)
 	})
@@ -241,7 +412,12 @@ export const meterReadings = pgTable(
 		ocrRawText: text('ocrRawText'), // Phản hồi thô từ Gemini (debug)
 		status: text('status').notNull().default('approved'), // 'pending' | 'approved' | 'rejected'
 		submittedBy: text('submittedBy').notNull().default('LANDLORD'), // 'LANDLORD' | 'TENANT'
-		isAnomalous: boolean('isAnomalous').notNull().default(false) // Lệch quá ngưỡng so với trung bình 3 tháng
+		isAnomalous: boolean('isAnomalous').notNull().default(false), // Lệch quá ngưỡng so với trung bình 3 tháng
+		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'set null'
+		}),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
 	},
 	(t) => ({
 		roomIdx: index('MeterReading_roomId_idx').on(t.roomId),
@@ -282,7 +458,12 @@ export const invoices = pgTable(
 		payosQrCode: text('payosQrCode'),
 		payosStatus: text('payosStatus'),
 		createdAt: text('createdAt').notNull(), // YYYY-MM-DD
-		notes: text('notes')
+		notes: text('notes'),
+		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'set null'
+		}),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
 	},
 	(t) => ({
 		roomIdx: index('Invoice_roomId_idx').on(t.roomId),
@@ -326,7 +507,12 @@ export const maintenanceRequests = pgTable(
 		createdAt: datetime('createdAt').notNull().$defaultFn(now),
 		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now),
 		response: text('response'),
-		assignedToId: text('assignedToId').references(() => staffProfiles.id, { onDelete: 'set null' })
+		assignedToId: text('assignedToId').references(() => staffProfiles.id, { onDelete: 'set null' }),
+		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'set null'
+		}),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
 	},
 	(t) => ({
 		tenantIdx: index('MaintenanceRequest_tenantId_idx').on(t.tenantId),
@@ -342,7 +528,12 @@ export const specialNotes = pgTable('SpecialNote', {
 	content: text('content').notNull(),
 	sender: text('sender').notNull().default('TENANT'), // 'TENANT' | 'LANDLORD' — chiều gửi của lời nhắn
 	isRead: boolean('isRead').notNull().default(false),
-	createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	createdAt: datetime('createdAt').notNull().$defaultFn(now),
+	// AUTH-004 snapshot (nullable, chưa đổi read path).
+	managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+		onDelete: 'set null'
+	}),
+	tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
 });
 
 export const roomAssets = pgTable('RoomAsset', {
@@ -396,7 +587,12 @@ export const contracts = pgTable(
 			onDelete: 'set null'
 		}),
 		notes: text('notes'),
-		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'set null'
+		}),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
 	},
 	(t) => ({
 		tenantIdx: index('Contract_tenantId_idx').on(t.tenantId),
@@ -481,7 +677,12 @@ export const notificationQueue = pgTable(
 		relatedId: text('relatedId'),
 		scheduledFor: text('scheduledFor').notNull(), // YYYY-MM-DD
 		sentAt: datetime('sentAt'),
-		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'set null'
+		}),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
 	},
 	(t) => ({
 		landlordIdx: index('NotificationQueue_landlordId_idx').on(t.landlordId),
@@ -832,5 +1033,28 @@ export const auditEventsRelations = relations(auditEvents, ({ one }) => ({
 	actorUser: one(users, {
 		fields: [auditEvents.actorUserId],
 		references: [users.id]
+	})
+}));
+
+// AUTH-004 relations (chỉ để query tiện; KHÔNG đổi read path hiện tại).
+export const managedTenantsRelations = relations(managedTenants, ({ one, many }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [managedTenants.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	claimedBy: one(users, { fields: [managedTenants.claimedByUserId], references: [users.id] }),
+	tenancies: many(tenancies)
+}));
+
+export const tenanciesRelations = relations(tenancies, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [tenancies.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	property: one(properties, { fields: [tenancies.propertyId], references: [properties.id] }),
+	room: one(rooms, { fields: [tenancies.roomId], references: [rooms.id] }),
+	managedTenant: one(managedTenants, {
+		fields: [tenancies.managedTenantId],
+		references: [managedTenants.id]
 	})
 }));
