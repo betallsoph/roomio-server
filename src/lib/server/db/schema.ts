@@ -103,7 +103,6 @@ export const staffProfiles = pgTable('StaffProfile', {
 		.references(() => landlordProfiles.id, { onDelete: 'cascade' })
 });
 
-
 // AUTH-005 — Gán nhân viên theo từng cơ sở; một staff chỉ có tối đa một assignment active trên mỗi property.
 export const staffPropertyAssignments = pgTable(
 	'StaffPropertyAssignment',
@@ -153,7 +152,7 @@ export const staffPermissions = pgTable(
 			.where(sql`"revokedAt" IS NULL`),
 		permissionAllowed: check(
 			'StaffPermission_permission_allowed',
-			sql`"permission" IN ('VIEW_ROOMS','VIEW_TENANTS','MANAGE_METERS','MANAGE_REQUESTS','UPLOAD')`
+			sql`"permission" IN ('VIEW_ROOMS','VIEW_TENANTS','MANAGE_METERS','MANAGE_REQUESTS')`
 		)
 	})
 );

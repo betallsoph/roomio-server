@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import type { SessionData } from '../session.js';
 import { landlordProfiles, staffProfiles, tenantProfiles, users } from '../db/schema.js';
 import { UnauthorizedError } from './errors.js';
-import type { ActorDb } from './load-user-actor.js';
+import { createDrizzleActorDb, type ActorDb } from './load-user-actor.js';
 import {
 	fixtureSession,
 	seedSecurityFixturesFromHandle,
@@ -21,37 +21,7 @@ import {
 const skipReason = getSecurityIntegrationSkipReason();
 
 function createActorDbFromHandle(handle: SecurityDbHandle): ActorDb {
-	const { db } = handle;
-	return {
-		async findUserById(userId) {
-			const row = await db.query.users.findFirst({
-				where: eq(users.id, userId),
-				columns: { isActive: true, role: true }
-			});
-			return row ?? null;
-		},
-		async findLandlordProfileByUserId(userId) {
-			const row = await db.query.landlordProfiles.findFirst({
-				where: eq(landlordProfiles.userId, userId),
-				columns: { id: true }
-			});
-			return row ?? null;
-		},
-		async findTenantProfileByUserId(userId) {
-			const row = await db.query.tenantProfiles.findFirst({
-				where: eq(tenantProfiles.userId, userId),
-				columns: { id: true }
-			});
-			return row ?? null;
-		},
-		async findStaffProfileByUserId(userId) {
-			const row = await db.query.staffProfiles.findFirst({
-				where: eq(staffProfiles.userId, userId),
-				columns: { id: true, landlordId: true }
-			});
-			return row ?? null;
-		}
-	};
+	return createDrizzleActorDb(handle.db);
 }
 
 async function expectUnauthorized(run: () => Promise<unknown>): Promise<void> {
@@ -113,8 +83,8 @@ const HAPPY_ACTOR_CASES: HappyActorCase[] = [
 			assert.equal(actor.userId, fixture.ids.staffALimited.userId);
 			assert.equal(actor.staffId, fixture.ids.staffALimited.staffProfileId);
 			assert.equal(actor.landlordId, fixture.ids.staffALimited.staffLandlordId);
-			assert.deepEqual(actor.propertyIds, []);
-			assert.deepEqual(actor.permissions, []);
+			assert.deepEqual(actor.propertyIds, [fixture.ids.propertyA1.propertyId]);
+			assert.deepEqual(actor.permissions, ['VIEW_ROOMS', 'MANAGE_METERS']);
 		}
 	},
 	{

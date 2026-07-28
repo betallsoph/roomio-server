@@ -33,6 +33,8 @@ function createMockDb(overrides: Partial<ActorDb> = {}): ActorDb {
 		findLandlordProfileByUserId: async () => ({ id: LANDLORD_ID }),
 		findTenantProfileByUserId: async () => ({ id: TENANT_PROFILE_ID }),
 		findStaffProfileByUserId: async () => ({ id: STAFF_ID, landlordId: STAFF_LANDLORD_ID }),
+		listActiveStaffPropertyIds: async () => [],
+		listActiveStaffPermissions: async () => [],
 		...overrides
 	};
 }

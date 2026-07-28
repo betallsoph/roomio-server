@@ -41,6 +41,8 @@ function createMockDb(overrides: Partial<ActorDb> = {}): ActorDb {
 		findLandlordProfileByUserId: async () => ({ id: LANDLORD_ID }),
 		findTenantProfileByUserId: async () => ({ id: TENANT_PROFILE_ID }),
 		findStaffProfileByUserId: async () => ({ id: STAFF_ID, landlordId: STAFF_LANDLORD_ID }),
+		listActiveStaffPropertyIds: async () => [],
+		listActiveStaffPermissions: async () => [],
 		...overrides
 	};
 }
@@ -103,6 +105,31 @@ test('active staff → staff ActorContext with empty propertyIds and permissions
 		landlordId: STAFF_LANDLORD_ID,
 		propertyIds: [],
 		permissions: []
+	});
+});
+
+test('active staff → loads active propertyIds and permissions from DB', async () => {
+	const actor = await getUserActor(
+		baseSession({
+			role: 'STAFF',
+			staffProfileId: STAFF_ID,
+			staffLandlordId: STAFF_LANDLORD_ID
+		}),
+		createMockDb({
+			findUserById: async () => ({ isActive: true, role: 'STAFF' }),
+			listActiveStaffPropertyIds: async () => ['property-a1'],
+			listActiveStaffPermissions: async () => ['VIEW_ROOMS', 'MANAGE_METERS']
+		})
+	);
+
+	assert.deepEqual(actor, {
+		kind: 'USER',
+		userId: USER_ID,
+		role: 'STAFF',
+		staffId: STAFF_ID,
+		landlordId: STAFF_LANDLORD_ID,
+		propertyIds: ['property-a1'],
+		permissions: ['VIEW_ROOMS', 'MANAGE_METERS']
 	});
 });
 

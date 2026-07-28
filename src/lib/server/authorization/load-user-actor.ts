@@ -1,12 +1,21 @@
-import { eq } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { SessionData } from '$lib/server/session';
 import { getEnv } from '$lib/server/env';
-import { users, landlordProfiles, tenantProfiles, staffProfiles } from '$lib/server/db/schema';
-import type { ActorContext } from './actor.js';
+import {
+	users,
+	landlordProfiles,
+	tenantProfiles,
+	staffProfiles,
+	staffPropertyAssignments,
+	staffPermissions
+} from '$lib/server/db/schema';
+import type * as schema from '$lib/server/db/schema';
+import type { ActorContext, StaffPermission } from './actor.js';
 import { UnauthorizedError } from './errors.js';
-import type { db } from '$lib/server/db';
+import { isStaffCapability } from './staff-scope.js';
+import { and, eq, isNull } from 'drizzle-orm';
 
-type DrizzleDb = typeof db;
+type DrizzleDb = NodePgDatabase<typeof schema>;
 
 /** USER-kind slice of ActorContext returned by getUserActor. */
 export type UserActorContext = Extract<ActorContext, { kind: 'USER' }>;
@@ -38,6 +47,8 @@ export interface ActorDb {
 	findLandlordProfileByUserId(userId: string): Promise<LandlordProfileRow | null>;
 	findTenantProfileByUserId(userId: string): Promise<TenantProfileRow | null>;
 	findStaffProfileByUserId(userId: string): Promise<StaffProfileRow | null>;
+	listActiveStaffPropertyIds(staffId: string): Promise<string[]>;
+	listActiveStaffPermissions(staffId: string): Promise<StaffPermission[]>;
 }
 
 const ENV_FAKE_SUPER_ADMIN_USER_IDS = new Set(['env-super-admin', 'hardcoded-super-admin']);
@@ -103,6 +114,29 @@ export function createDrizzleActorDb(database: DrizzleDb): ActorDb {
 				columns: { id: true, landlordId: true }
 			});
 			return row ?? null;
+		},
+		async listActiveStaffPropertyIds(staffId) {
+			const rows = await database.query.staffPropertyAssignments.findMany({
+				where: and(
+					eq(staffPropertyAssignments.staffId, staffId),
+					isNull(staffPropertyAssignments.revokedAt)
+				),
+				columns: { propertyId: true }
+			});
+			return rows.map((row) => row.propertyId);
+		},
+		async listActiveStaffPermissions(staffId) {
+			const rows = await database.query.staffPermissions.findMany({
+				where: and(eq(staffPermissions.staffId, staffId), isNull(staffPermissions.revokedAt)),
+				columns: { permission: true }
+			});
+			const out: StaffPermission[] = [];
+			for (const row of rows) {
+				if (isStaffCapability(row.permission)) {
+					out.push(row.permission);
+				}
+			}
+			return out;
 		}
 	};
 }
@@ -187,15 +221,18 @@ export async function getUserActor(
 			}
 			assertNoSessionProfileMismatch(session.staffProfileId, profile.id);
 			assertNoSessionProfileMismatch(session.staffLandlordId, profile.landlordId);
+			const [propertyIds, permissions] = await Promise.all([
+				db.listActiveStaffPropertyIds(profile.id),
+				db.listActiveStaffPermissions(profile.id)
+			]);
 			return {
 				kind: 'USER',
 				userId: session.userId,
 				role: 'STAFF',
 				staffId: profile.id,
 				landlordId: profile.landlordId,
-				// AUTH-005 will load property assignments and staff permissions from DB.
-				propertyIds: [],
-				permissions: []
+				propertyIds,
+				permissions
 			};
 		}
 

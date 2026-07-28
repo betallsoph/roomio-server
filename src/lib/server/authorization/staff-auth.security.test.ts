@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { and, eq, isNull } from 'drizzle-orm';
-import type { SessionData } from '../session.js';
 import {
 	fixtureSession,
 	seedSecurityFixturesFromHandle,
@@ -14,7 +13,7 @@ import {
 } from '../testing/test-db.js';
 import { staffPropertyAssignments } from '../db/schema.js';
 import { listStaffAssignmentsPermissions } from '../staff/assignments.js';
-import { getUserActor, type ActorDb } from './load-user-actor.js';
+import { createDrizzleActorDb, getUserActor } from './load-user-actor.js';
 import { expectNoForbiddenKeys } from './security-assertions.js';
 
 const skipReason = getSecurityIntegrationSkipReason();
@@ -33,17 +32,6 @@ async function readJson(response: Response): Promise<{ status: number; body: unk
 	return { status: response.status, body };
 }
 
-function landlordActorFromSession(session: SessionData) {
-	assert.equal(session.role, 'LANDLORD');
-	assert.ok(session.landlordProfileId);
-	return {
-		kind: 'USER' as const,
-		userId: session.userId,
-		role: 'LANDLORD' as const,
-		landlordId: session.landlordProfileId
-	};
-}
-
 if (skipReason) {
 	test('AUTH-005 staff assignment security suite', { skip: skipReason }, () => {});
 } else {
@@ -56,12 +44,10 @@ if (skipReason) {
 			const fixture: SecurityFixtureMap = await seedSecurityFixturesFromHandle(handle);
 			const ids = fixture.ids;
 
-			const { POST: postAssignment, DELETE: deleteAssignment } = await import(
-				'../../../routes/api/staff/[id]/assignments/+server.js'
-			);
-			const { POST: postPermission, PUT: putPermissions } = await import(
-				'../../../routes/api/staff/[id]/permissions/+server.js'
-			);
+			const { POST: postAssignment, DELETE: deleteAssignment } =
+				await import('../../../routes/api/staff/[id]/assignments/+server.js');
+			const { POST: postPermission, PUT: putPermissions } =
+				await import('../../../routes/api/staff/[id]/permissions/+server.js');
 
 			const landlordA = fixtureSession(fixture, 'landlordA');
 
@@ -198,31 +184,28 @@ if (skipReason) {
 				assert.deepEqual(afterSecond.propertyIds, []);
 			});
 
-			await t.test('getUserActor for staffAEmpty still returns empty scope until loader wires DB', async () => {
-				const mockDb: ActorDb = {
-					async findUserById() {
-						return { isActive: true, role: 'STAFF' };
-					},
-					async findLandlordProfileByUserId() {
-						return null;
-					},
-					async findTenantProfileByUserId() {
-						return null;
-					},
-					async findStaffProfileByUserId() {
-						return {
-							id: ids.staffAEmpty.staffProfileId,
-							landlordId: ids.landlordA.landlordProfileId
-						};
-					}
-				};
-				const session = fixtureSession(fixture, 'staffAEmpty');
-				const first = await getUserActor(session, mockDb);
-				const second = await getUserActor(session, mockDb);
-				assert.equal(first.role, 'STAFF');
-				assert.deepEqual(first.propertyIds, []);
-				assert.deepEqual(second.propertyIds, []);
-			});
+			await t.test(
+				'getUserActor loads empty scope for staffAEmpty and A1 scope for staffALimited',
+				async () => {
+					const actorDb = createDrizzleActorDb(handle.db);
+					const empty = await getUserActor(fixtureSession(fixture, 'staffAEmpty'), actorDb);
+					assert.equal(empty.role, 'STAFF');
+					if (empty.role !== 'STAFF') return;
+					assert.deepEqual(empty.propertyIds, []);
+					assert.deepEqual(empty.permissions, []);
+
+					const limited = await getUserActor(fixtureSession(fixture, 'staffALimited'), actorDb);
+					assert.equal(limited.role, 'STAFF');
+					if (limited.role !== 'STAFF') return;
+					assert.deepEqual(limited.propertyIds, [ids.propertyA1.propertyId]);
+					assert.deepEqual(limited.permissions, ['VIEW_ROOMS', 'MANAGE_METERS']);
+
+					const afterAgain = await getUserActor(fixtureSession(fixture, 'staffAEmpty'), actorDb);
+					assert.equal(afterAgain.role, 'STAFF');
+					if (afterAgain.role !== 'STAFF') return;
+					assert.deepEqual(afterAgain.propertyIds, []);
+				}
+			);
 		});
 	});
 }

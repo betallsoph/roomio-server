@@ -33,7 +33,8 @@ function createNotFoundConn() {
 
 test('grantStaffPermission rejects unknown permission with 422-class error', async () => {
 	await assert.rejects(
-		() => grantStaffPermission(createNotFoundConn(), landlordA, { staffId: 's1', permission: 'NOPE' }),
+		() =>
+			grantStaffPermission(createNotFoundConn(), landlordA, { staffId: 's1', permission: 'NOPE' }),
 		(err: unknown) => {
 			assert.ok(err instanceof InvalidStaffPermissionError);
 			assert.equal(err.status, 422);

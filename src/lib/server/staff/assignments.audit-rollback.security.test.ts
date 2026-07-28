@@ -23,7 +23,7 @@ if (skipReason) {
 		mock.module('../audit/append.js', {
 			namedExports: {
 				appendAudit: async () => {
-					throw new AuditValidationError('forced audit failure');
+					throw new AuditValidationError('INVALID_ACTION', 'forced audit failure');
 				}
 			}
 		});
@@ -37,12 +37,16 @@ if (skipReason) {
 
 			await assert.rejects(
 				() =>
-					assignStaffProperty(handle.db, {
-						kind: 'USER',
-						userId: fixture.ids.landlordA.userId,
-						role: 'LANDLORD',
-						landlordId: fixture.ids.landlordA.landlordProfileId
-					}, { staffId, propertyId }),
+					assignStaffProperty(
+						handle.db,
+						{
+							kind: 'USER',
+							userId: fixture.ids.landlordA.userId,
+							role: 'LANDLORD',
+							landlordId: fixture.ids.landlordA.landlordProfileId
+						},
+						{ staffId, propertyId }
+					),
 				AuditValidationError
 			);
 

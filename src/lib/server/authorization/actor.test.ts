@@ -39,7 +39,7 @@ const staff: StaffActor = {
 	staffId: 'staff-1',
 	landlordId: 'landlord-1',
 	propertyIds: ['property-1'],
-	permissions: ['VIEW_ROOMS', 'MANAGE_METERS', 'UPLOAD']
+	permissions: ['VIEW_ROOMS', 'MANAGE_METERS']
 };
 
 const tenant: TenantActor = {
@@ -110,7 +110,7 @@ test('requireStaffActor preserves staff scope fields', () => {
 	const scope = staffScopeFrom(result.value);
 	assert.equal(scope.staffId, 'staff-1');
 	assert.deepEqual(scope.propertyIds, ['property-1']);
-	assert.deepEqual(result.value.permissions, ['VIEW_ROOMS', 'MANAGE_METERS', 'UPLOAD']);
+	assert.deepEqual(result.value.permissions, ['VIEW_ROOMS', 'MANAGE_METERS']);
 });
 
 test('requireTenantActor exposes only userId and tenantProfileId', () => {

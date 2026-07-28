@@ -45,7 +45,11 @@ function parseStaffPermission(permission: string): StaffPermission {
 	return permission as StaffPermission;
 }
 
-async function assertStaffOwnedByLandlord(staffConn: StaffDb | AuditTx, staffId: string, landlordId: string) {
+async function assertStaffOwnedByLandlord(
+	staffConn: StaffDb | AuditTx,
+	staffId: string,
+	landlordId: string
+) {
 	const staff = await staffConn.query.staffProfiles.findFirst({
 		where: and(eq(staffProfiles.id, staffId), eq(staffProfiles.landlordId, landlordId))
 	});
@@ -55,7 +59,11 @@ async function assertStaffOwnedByLandlord(staffConn: StaffDb | AuditTx, staffId:
 	return staff;
 }
 
-async function assertPropertyOwnedByLandlord(staffConn: StaffDb | AuditTx, propertyId: string, landlordId: string) {
+async function assertPropertyOwnedByLandlord(
+	staffConn: StaffDb | AuditTx,
+	propertyId: string,
+	landlordId: string
+) {
 	const property = await staffConn.query.properties.findFirst({
 		where: and(eq(properties.id, propertyId), eq(properties.landlordId, landlordId))
 	});
@@ -65,10 +73,7 @@ async function assertPropertyOwnedByLandlord(staffConn: StaffDb | AuditTx, prope
 	return property;
 }
 
-async function withStaffMutation<T>(
-	conn: StaffDb,
-	fn: (tx: AuditTx) => Promise<T>
-): Promise<T> {
+async function withStaffMutation<T>(conn: StaffDb, fn: (tx: AuditTx) => Promise<T>): Promise<T> {
 	return conn.transaction(fn);
 }
 
@@ -263,7 +268,9 @@ export async function grantStaffPermission(
 	input: { staffId: string; permission: string }
 ): Promise<MutationOutcome<StaffPermissionRow>> {
 	const permission = parseStaffPermission(input.permission);
-	return withStaffMutation(conn, (tx) => grantStaffPermissionTx(tx, actor, { ...input, permission }));
+	return withStaffMutation(conn, (tx) =>
+		grantStaffPermissionTx(tx, actor, { ...input, permission })
+	);
 }
 
 async function revokeStaffPermissionTx(
@@ -314,7 +321,9 @@ export async function revokeStaffPermission(
 	input: { staffId: string; permission: string }
 ): Promise<MutationOutcome<StaffPermissionRow | null>> {
 	const permission = parseStaffPermission(input.permission);
-	return withStaffMutation(conn, (tx) => revokeStaffPermissionTx(tx, actor, { ...input, permission }));
+	return withStaffMutation(conn, (tx) =>
+		revokeStaffPermissionTx(tx, actor, { ...input, permission })
+	);
 }
 
 export async function replaceStaffPermissionsAllowlist(

@@ -13,19 +13,14 @@ import {
 
 export type UserRole = 'SUPER_ADMIN' | 'LANDLORD' | 'STAFF' | 'TENANT';
 
-export type StaffPermission =
-	| 'VIEW_ROOMS'
-	| 'VIEW_TENANTS'
-	| 'MANAGE_METERS'
-	| 'MANAGE_REQUESTS'
-	| 'UPLOAD';
+/** AUTH-005 MVP capabilities only — no wildcard; UPLOAD is hook allowlist until AUTH-008. */
+export type StaffPermission = 'VIEW_ROOMS' | 'VIEW_TENANTS' | 'MANAGE_METERS' | 'MANAGE_REQUESTS';
 
 export const STAFF_PERMISSIONS = [
 	'VIEW_ROOMS',
 	'VIEW_TENANTS',
 	'MANAGE_METERS',
-	'MANAGE_REQUESTS',
-	'UPLOAD'
+	'MANAGE_REQUESTS'
 ] as const satisfies readonly StaffPermission[];
 
 export type MachineChannel = 'PAYMENT_WEBHOOK' | 'TELEGRAM_WEBHOOK' | 'QSTASH' | 'CRON';

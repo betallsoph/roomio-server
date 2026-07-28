@@ -116,10 +116,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
 		}
 
-		const { propertyIds, permissions } = await listStaffAssignmentsPermissions(
-			full.id,
-			landlordId
-		);
+		const { propertyIds, permissions } = await listStaffAssignmentsPermissions(full.id, landlordId);
 
 		return json({ ...full, propertyIds, permissions });
 	} catch (error) {

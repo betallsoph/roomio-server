@@ -86,7 +86,9 @@ test('SECURITY_FIXTURE_KNOWN_GAPS documents AUTH-004 and AUTH-008 deferrals', ()
 		SECURITY_FIXTURE_KNOWN_GAPS.some((gap) => gap.includes('AUTH-008') && gap.includes('endpoint'))
 	);
 	assert.ok(
-		!SECURITY_FIXTURE_KNOWN_GAPS.some((gap) => gap.includes('AUTH-005') && gap.includes('not in schema'))
+		!SECURITY_FIXTURE_KNOWN_GAPS.some(
+			(gap) => gap.includes('AUTH-005') && gap.includes('not in schema')
+		)
 	);
 });
 

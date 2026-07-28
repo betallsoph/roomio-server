@@ -2,10 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { errorMessage } from '$lib/server/api';
 import { db } from '$lib/server/db';
-import {
-	assignStaffProperty,
-	revokeStaffProperty
-} from '$lib/server/staff/assignments';
+import { assignStaffProperty, revokeStaffProperty } from '$lib/server/staff/assignments';
 import {
 	resolveLandlordActorFromRequest,
 	staffRouteErrorResponse

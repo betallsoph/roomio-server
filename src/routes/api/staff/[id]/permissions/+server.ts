@@ -66,11 +66,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 			permissions: body.permissions
 		});
 
-		const snapshot = await listStaffAssignmentsPermissions(
-			params.id,
-			guard.actor.landlordId,
-			db
-		);
+		const snapshot = await listStaffAssignmentsPermissions(params.id, guard.actor.landlordId, db);
 
 		return json({
 			granted: result.granted,

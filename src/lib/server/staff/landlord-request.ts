@@ -1,8 +1,5 @@
 import { json } from '@sveltejs/kit';
-import {
-	requireLandlordActor,
-	type LandlordActor
-} from '$lib/server/authorization/actor';
+import { requireLandlordActor, type LandlordActor } from '$lib/server/authorization/actor';
 import { authorizationErrorToResponse } from '$lib/server/authorization/errors';
 import type { ActorContext } from '$lib/server/authorization/actor';
 import type { SessionData } from '$lib/server/session';
