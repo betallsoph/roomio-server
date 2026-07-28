@@ -105,25 +105,43 @@ if (!RUN) {
 	test('idle_in_transaction_session_timeout kills a transaction left open', async () => {
 		const pool = poolFor({ DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: '400', API_DB_POOL_MAX: '2' });
 		const client = await pool.connect();
+
+		// Postgres terminate backend BẤT ĐỒNG BỘ trong lúc client đang rảnh, và pg đưa việc đó
+		// ra bằng EVENT 'error' trên client. Phải gắn listener NGAY sau connect, trước BEGIN:
+		// nếu chờ tới lúc gọi query mới bắt thì Node coi đó là unhandled EventEmitter error và
+		// giết cả process test (đây chính là nguyên nhân CI đỏ, không phải lỗi của Postgres).
+		let settleTimer: ReturnType<typeof setTimeout> | undefined;
+		let onClientError: ((error: Error) => void) | undefined;
+		const terminated = new Promise<Error>((resolve, reject) => {
+			onClientError = (error: Error) => resolve(error);
+			client.once('error', onClientError);
+			settleTimer = setTimeout(() => {
+				reject(
+					new Error(
+						'idle_in_transaction_session_timeout did not terminate the connection within 5000ms'
+					)
+				);
+			}, 5_000);
+		});
+
 		try {
 			await client.query('BEGIN');
 			await client.query('SELECT 1');
-			await new Promise((resolve) => setTimeout(resolve, 1_500));
 
-			await assert.rejects(
-				() => client.query('SELECT 1'),
-				(error: unknown) => {
-					// 25P03 = idle_in_transaction_session_timeout; driver có thể báo connection đã đóng.
-					const code = (error as { code?: string }).code;
-					assert.ok(
-						code === '25P03' || code === undefined || code === '08006' || code === '08003',
-						`unexpected error code: ${String(code)}`
-					);
-					return true;
-				}
+			// Chờ đúng sự kiện terminate thay vì sleep rồi đoán; quá 5s là fail rõ ràng.
+			const error = await terminated;
+			const code = (error as { code?: string }).code;
+			assert.ok(
+				// 25P03 = idle_in_transaction_session_timeout (mã Postgres mong đợi).
+				// Còn lại là mã connection-closed, giữ để không giòn khi đổi phiên bản pg/PG.
+				code === '25P03' || code === '08006' || code === '08003' || code === '57P01',
+				`unexpected error code: ${String(code)}`
 			);
 		} finally {
-			client.release();
+			if (settleTimer) clearTimeout(settleTimer);
+			if (onClientError) client.removeListener('error', onClientError);
+			// Connection đã chết: hủy hẳn thay vì trả lại pool để pool không tái dùng nó.
+			client.release(true);
 			await pool.end();
 		}
 	});
