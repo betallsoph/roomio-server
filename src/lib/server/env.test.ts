@@ -108,6 +108,27 @@ test('production rejects unsafe SuperAdmin credentials without logging their val
 	assert.equal(valid.superAdminAccounts?.startsWith('owner@example.com:'), true);
 });
 
+test('allowEnvSuperAdmin is true only in development with SUPER_ADMIN_ACCOUNTS', () => {
+	const dev = parseEnv({
+		NODE_ENV: 'development',
+		SUPER_ADMIN_ACCOUNTS: 'dev@example.com:dev-password-long-enough'
+	});
+	assert.equal(dev.allowEnvSuperAdmin, true);
+
+	const staging = parseEnv({
+		NODE_ENV: 'staging',
+		SUPER_ADMIN_ACCOUNTS: 'dev@example.com:dev-password-long-enough'
+	});
+	assert.equal(staging.allowEnvSuperAdmin, false);
+
+	const prod = parseEnv(
+		withBaseEnv({
+			SUPER_ADMIN_ACCOUNTS: 'owner@example.com:a-long-random-owner-passphrase-2026'
+		})
+	);
+	assert.equal(prod.allowEnvSuperAdmin, false);
+});
+
 test('parseEnv rejects localhost DATABASE_URL in production', () => {
 	assert.throws(
 		() =>

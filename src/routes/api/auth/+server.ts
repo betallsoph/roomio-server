@@ -32,13 +32,30 @@ function getEnvSuperAdmins(): EnvSuperAdmin[] {
 			throw new Error(`SUPER_ADMIN_ACCOUNTS item #${index + 1} phải có dạng email:password[:name]`);
 		}
 		return {
-			// Nhiều thông tin đăng nhập, nhưng tất cả cùng đại diện cho một Super Admin Roomio.
 			id: ENV_SUPER_ADMIN_ID,
 			email: email.toLowerCase(),
 			password,
 			name: name || 'Super Admin'
 		};
 	});
+}
+
+function superAdminLoginResponse(
+	superAdmin: Pick<EnvSuperAdmin, 'id' | 'email' | 'name'>,
+	userId: string
+) {
+	return {
+		id: userId,
+		email: superAdmin.email,
+		phone: null,
+		name: superAdmin.name,
+		role: 'SUPER_ADMIN' as const,
+		landlordProfileId: null,
+		enabledRentalTypes: null,
+		tenantProfileId: null,
+		staffProfileId: null,
+		staffLandlordId: null
+	};
 }
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
@@ -59,7 +76,91 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				return json({ error: 'Thiếu tài khoản hoặc mật khẩu' }, { status: 400 });
 			}
 
-			if (email) {
+			const conditions = [];
+			if (email) conditions.push(eq(users.email, requiredEmail(email)));
+			if (phone) conditions.push(eq(users.phone, requiredPhone(phone)));
+
+			const user =
+				conditions.length > 0 ? await db.query.users.findFirst({ where: or(...conditions) }) : null;
+
+			if (user) {
+				const { valid, needsRehash } = await verifyPassword(password, user.passwordHash);
+				if (!valid) {
+					return json({ error: 'Mật khẩu không chính xác' }, { status: 401 });
+				}
+
+				if (!user.isActive) {
+					return json({ error: 'Tài khoản đã bị tạm khóa' }, { status: 403 });
+				}
+
+				if (needsRehash) {
+					await db
+						.update(users)
+						.set({ passwordHash: await hashPassword(password) })
+						.where(eq(users.id, user.id));
+				}
+
+				if (user.role === 'SUPER_ADMIN') {
+					createSession(cookies, {
+						userId: user.id,
+						role: 'SUPER_ADMIN',
+						landlordProfileId: null,
+						enabledRentalTypes: null,
+						tenantProfileId: null,
+						staffProfileId: null,
+						staffLandlordId: null
+					});
+
+					return json(
+						superAdminLoginResponse({ id: user.id, email: user.email, name: user.name }, user.id)
+					);
+				}
+
+				const landlordProfile =
+					user.role === 'LANDLORD'
+						? await db.query.landlordProfiles.findFirst({
+								where: eq(landlordProfiles.userId, user.id)
+							})
+						: null;
+				const tenantProfile =
+					user.role === 'TENANT'
+						? await db.query.tenantProfiles.findFirst({
+								where: eq(tenantProfiles.userId, user.id)
+							})
+						: null;
+				const staffProfile =
+					user.role === 'STAFF'
+						? await db.query.staffProfiles.findFirst({
+								where: eq(staffProfiles.userId, user.id)
+							})
+						: null;
+
+				createSession(cookies, {
+					userId: user.id,
+					role: user.role,
+					landlordProfileId: landlordProfile?.id || null,
+					enabledRentalTypes: landlordProfile?.enabledRentalTypes || null,
+					tenantProfileId: tenantProfile?.id || null,
+					staffProfileId: staffProfile?.id || null,
+					staffLandlordId: staffProfile?.landlordId || null
+				});
+
+				return json({
+					id: user.id,
+					email: user.email,
+					phone: user.phone,
+					name: user.name,
+					role: user.role,
+					landlordProfileId: landlordProfile?.id || null,
+					enabledRentalTypes: landlordProfile?.enabledRentalTypes || null,
+					tenantProfileId: tenantProfile?.id || null,
+					staffProfileId: staffProfile?.id || null,
+					staffLandlordId: staffProfile?.landlordId || null
+				});
+			}
+
+			// Transitional dev-only: plaintext env Super Admin. Blocked in production (allowEnvSuperAdmin=false).
+			if (email && getEnv().allowEnvSuperAdmin) {
 				const superAdmin = getEnvSuperAdmins().find(
 					(admin) => admin.email === requiredEmail(email) && admin.password === password
 				);
@@ -75,85 +176,11 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 						staffLandlordId: null
 					});
 
-					return json({
-						id: superAdmin.id,
-						email: superAdmin.email,
-						phone: null,
-						name: superAdmin.name,
-						role: 'SUPER_ADMIN',
-						landlordProfileId: null,
-						enabledRentalTypes: null,
-						tenantProfileId: null,
-						staffProfileId: null,
-						staffLandlordId: null
-					});
+					return json(superAdminLoginResponse(superAdmin, superAdmin.id));
 				}
 			}
 
-			const conditions = [];
-			if (email) conditions.push(eq(users.email, requiredEmail(email)));
-			if (phone) conditions.push(eq(users.phone, requiredPhone(phone)));
-
-			const user = await db.query.users.findFirst({ where: or(...conditions) });
-
-			if (!user) {
-				return json({ error: 'Tài khoản không tồn tại' }, { status: 401 });
-			}
-
-			const { valid, needsRehash } = await verifyPassword(password, user.passwordHash);
-			if (!valid) {
-				return json({ error: 'Mật khẩu không chính xác' }, { status: 401 });
-			}
-
-			if (!user.isActive) {
-				return json({ error: 'Tài khoản đã bị tạm khóa' }, { status: 403 });
-			}
-
-			// Nâng cấp mượt: tài khoản còn hash SHA-256 cũ thì băm lại sang bcrypt sau khi đăng nhập đúng
-			if (needsRehash) {
-				await db
-					.update(users)
-					.set({ passwordHash: await hashPassword(password) })
-					.where(eq(users.id, user.id));
-			}
-
-			const landlordProfile =
-				user.role === 'LANDLORD'
-					? await db.query.landlordProfiles.findFirst({
-							where: eq(landlordProfiles.userId, user.id)
-						})
-					: null;
-			const tenantProfile =
-				user.role === 'TENANT'
-					? await db.query.tenantProfiles.findFirst({ where: eq(tenantProfiles.userId, user.id) })
-					: null;
-			const staffProfile =
-				user.role === 'STAFF'
-					? await db.query.staffProfiles.findFirst({ where: eq(staffProfiles.userId, user.id) })
-					: null;
-
-			createSession(cookies, {
-				userId: user.id,
-				role: user.role,
-				landlordProfileId: landlordProfile?.id || null,
-				enabledRentalTypes: landlordProfile?.enabledRentalTypes || null,
-				tenantProfileId: tenantProfile?.id || null,
-				staffProfileId: staffProfile?.id || null,
-				staffLandlordId: staffProfile?.landlordId || null
-			});
-
-			return json({
-				id: user.id,
-				email: user.email,
-				phone: user.phone,
-				name: user.name,
-				role: user.role,
-				landlordProfileId: landlordProfile?.id || null,
-				enabledRentalTypes: landlordProfile?.enabledRentalTypes || null,
-				tenantProfileId: tenantProfile?.id || null,
-				staffProfileId: staffProfile?.id || null,
-				staffLandlordId: staffProfile?.landlordId || null
-			});
+			return json({ error: 'Tài khoản không tồn tại' }, { status: 401 });
 		}
 
 		return json({ error: 'Hành động không hợp lệ' }, { status: 400 });

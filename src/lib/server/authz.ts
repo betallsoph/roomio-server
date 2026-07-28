@@ -6,6 +6,10 @@ import { and, eq } from 'drizzle-orm';
 
 export type AuthResult<T> = { ok: true; value: T } | { ok: false; response: Response };
 
+/**
+ * @deprecated Use `requireLandlordActor` from `$lib/server/authorization/actor` instead.
+ * Session/profile scope is resolved via `getUserActor` + `event.locals.actor`.
+ */
 export function requireLandlord(session: SessionData | null): AuthResult<string> {
 	if (session?.role !== 'LANDLORD' || !session.landlordProfileId) {
 		return {
@@ -16,6 +20,10 @@ export function requireLandlord(session: SessionData | null): AuthResult<string>
 	return { ok: true, value: session.landlordProfileId };
 }
 
+/**
+ * @deprecated Use `requireTenantActor` from `$lib/server/authorization/actor` instead.
+ * Session/profile scope is resolved via `getUserActor` + `event.locals.actor`.
+ */
 export function requireTenant(session: SessionData | null): AuthResult<string> {
 	if (session?.role !== 'TENANT' || !session.tenantProfileId) {
 		return {
