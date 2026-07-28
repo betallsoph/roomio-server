@@ -75,7 +75,7 @@ function mockFixture(): SecurityFixtureMap {
 	};
 }
 
-test('SECURITY_FIXTURE_KNOWN_GAPS documents AUTH-004 and AUTH-005 deferrals', () => {
+test('SECURITY_FIXTURE_KNOWN_GAPS documents AUTH-004 and AUTH-008 deferrals', () => {
 	assert.ok(SECURITY_FIXTURE_KNOWN_GAPS.length >= 3);
 	assert.ok(
 		SECURITY_FIXTURE_KNOWN_GAPS.some(
@@ -83,7 +83,10 @@ test('SECURITY_FIXTURE_KNOWN_GAPS documents AUTH-004 and AUTH-005 deferrals', ()
 		)
 	);
 	assert.ok(
-		SECURITY_FIXTURE_KNOWN_GAPS.some((gap) => gap.includes('AUTH-005') && gap.includes('Staff'))
+		SECURITY_FIXTURE_KNOWN_GAPS.some((gap) => gap.includes('AUTH-008') && gap.includes('endpoint'))
+	);
+	assert.ok(
+		!SECURITY_FIXTURE_KNOWN_GAPS.some((gap) => gap.includes('AUTH-005') && gap.includes('not in schema'))
 	);
 });
 
