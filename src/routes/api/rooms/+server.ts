@@ -20,6 +20,14 @@ import {
 } from '$lib/server/authz';
 import { normalizeRoomTextKey } from '$lib/server/room-code';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
+import { requireLandlordActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import { isTenancyDualWriteEnabled } from '$lib/server/env';
+import { endActiveTenancyForRoom } from '$lib/server/tenancies/service';
+import { isTenancyServiceError, toTenancyErrorBody } from '$lib/server/tenancies/state';
 import {
 	SUBSCRIPTION_TIERS,
 	pricingGroupForRentalType,
@@ -458,14 +466,43 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				}
 			}
 		} else if (action === 'checkout') {
-			await db
-				.update(rooms)
-				.set({
-					status: 'empty',
-					tenantId: null,
-					debtAmount: 0
-				})
-				.where(eq(rooms.id, id));
+			// AUTH-006 — khi flag bật, check-out đi qua service Tenancy: kết thúc lần thuê,
+			// dọn cache tương thích có điều kiện, revoke invite pending và ghi audit cùng
+			// transaction. Trạng thái vận hành/công nợ của Room vẫn thuộc FIN-027/FIN-020.
+			if (isTenancyDualWriteEnabled()) {
+				if (!locals.actor) {
+					return authorizationErrorToResponse(unauthenticatedError());
+				}
+				const actorResult = requireLandlordActor(locals.actor);
+				if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
+
+				try {
+					await db.transaction(async (tx) => {
+						await endActiveTenancyForRoom(
+							tx,
+							actorResult.value,
+							{ roomId: id, endDate: data.endDate ?? null },
+							{ requestId: locals.requestId }
+						);
+						await tx.update(rooms).set({ status: 'empty', debtAmount: 0 }).where(eq(rooms.id, id));
+					});
+				} catch (error) {
+					if (isTenancyServiceError(error)) {
+						return json(toTenancyErrorBody(error, locals.requestId), { status: error.status });
+					}
+					throw error;
+				}
+			} else {
+				// Luồng legacy (flag off): chỉ dọn cache occupant, không có lịch sử tenancy.
+				await db
+					.update(rooms)
+					.set({
+						status: 'empty',
+						tenantId: null,
+						debtAmount: 0
+					})
+					.where(eq(rooms.id, id));
+			}
 		} else {
 			// Standard room update
 			const updateData: Record<string, unknown> = {};

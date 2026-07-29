@@ -12,6 +12,13 @@ import {
 	requireLandlord
 } from '$lib/server/authz';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
+import { requireLandlordActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import { isTenancyDualWriteEnabled } from '$lib/server/env';
+import { findActiveTenancyForRoom } from '$lib/server/tenancies/service';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
@@ -67,8 +74,14 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		// AUTH-006 — actor lấy từ locals.actor; landlordId KHÔNG bao giờ đọc từ body/query.
+		if (!locals.actor) {
+			return authorizationErrorToResponse(unauthenticatedError());
+		}
+		const actorResult = requireLandlordActor(locals.actor);
+		if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
+		const actor = actorResult.value;
+		const auth = { ok: true as const, value: actor.landlordId };
 
 		const body = await request.json();
 		const {
@@ -104,6 +117,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
 		}
 
+		// AUTH-006 — contract mới phải mang snapshot lần thuê đang hiệu lực của phòng.
+		// Nguồn là Tenancy trong scope actor, KHÔNG phải Room.currentManagedTenantId.
+		const activeTenancy = isTenancyDualWriteEnabled()
+			? await findActiveTenancyForRoom(db, actor, roomId)
+			: null;
+
 		const created = await db
 			.insert(contracts)
 			.values({
@@ -116,7 +135,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				fileUrl: fileUrl || null,
 				paymentAccountId: selectedPaymentAccount.id,
 				notes: notes || null,
-				status: 'active'
+				status: 'active',
+				managedTenantId: activeTenancy?.managedTenantId ?? null,
+				tenancyId: activeTenancy?.id ?? null
 			})
 			.returning();
 
