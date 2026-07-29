@@ -279,6 +279,7 @@ export async function findTenancyForStaff(
 		where: and(
 			eq(tenancies.id, tenancyId),
 			eq(tenancies.landlordId, actor.landlordId),
+			eq(tenancies.status, 'ACTIVE'),
 			inArray(tenancies.propertyId, actor.propertyIds)
 		)
 	});

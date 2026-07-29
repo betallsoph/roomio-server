@@ -25,6 +25,7 @@ import {
 	findRoomForLandlord,
 	findRoomForStaff,
 	findTenancyForLandlord,
+	findTenancyForStaff,
 	type ScopedQueryDb,
 	type TenantHistoryScope
 } from './scoped-queries.js';
@@ -167,6 +168,37 @@ test('landlord tenancy scoped by landlordId snapshot', async () => {
 	} as never);
 	const row = await findTenancyForLandlord(ownedDb, LANDLORD_A, 'tenancy-a');
 	assert.equal(row.id, 'tenancy-a');
+});
+
+test('staff tenancy requires ACTIVE status (ended ≡ missing)', async () => {
+	const staffViewer: StaffActor = {
+		...STAFF_ASSIGNED,
+		permissions: ['VIEW_TENANTS']
+	};
+
+	const activeDb = queryOnlyDb({
+		tenancies: {
+			findFirst: async () => ({
+				id: 'tenancy-active',
+				landlordId: 'landlord-a',
+				propertyId: 'property-a1',
+				status: 'ACTIVE'
+			})
+		}
+	} as never);
+	const active = await findTenancyForStaff(activeDb, staffViewer, 'tenancy-active');
+	assert.equal(active.id, 'tenancy-active');
+
+	// SQL ACTIVE filter: ENDED/CANCELLED rows do not match → NotFound (same as missing)
+	const endedDb = queryOnlyDb({
+		tenancies: { findFirst: async () => null }
+	} as never);
+	for (const id of ['tenancy-ended', 'tenancy-missing']) {
+		await assert.rejects(
+			() => findTenancyForStaff(endedDb, staffViewer, id),
+			(err: unknown) => err instanceof ScopedResourceNotFoundError
+		);
+	}
 });
 
 test('staff without assignment or capability returns forbidden', async () => {
