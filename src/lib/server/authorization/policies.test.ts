@@ -218,24 +218,39 @@ test('tenant denied for unclaimed managed tenant and landlord-only actions', () 
 	assert.equal(createProperty.reason, 'DEFAULT_DENY');
 });
 
-test('tenant file read denies LANDLORD_ONLY visibility', () => {
-	const hidden = authorizeActor(
-		tenant,
-		'file',
-		'detail',
-		baseContext({ fileVisibility: 'LANDLORD_ONLY' })
-	);
-	assert.equal(hidden.ok, false);
-	if (hidden.ok) return;
-	assert.equal(hidden.reason, 'TENANT_VISIBILITY');
+test('tenant asset / conversation / file surfaces default deny until resolvers land', () => {
+	for (const action of ['list', 'detail', 'create', 'update'] as const) {
+		const asset = authorizeActor(tenant, 'asset', action, baseContext());
+		assert.equal(asset.ok, false);
+		if (!asset.ok) assert.equal(asset.reason, 'DEFAULT_DENY');
 
-	const visible = authorizeActor(
-		tenant,
-		'file',
-		'detail',
-		baseContext({ fileVisibility: 'TENANT_CAN_VIEW' })
-	);
-	assert.equal(visible.ok, true);
+		const conversation = authorizeActor(tenant, 'conversation', action, baseContext());
+		assert.equal(conversation.ok, false);
+		if (!conversation.ok) assert.equal(conversation.reason, 'DEFAULT_DENY');
+	}
+
+	for (const visibility of ['LANDLORD_ONLY', 'TENANT_CAN_VIEW', undefined] as const) {
+		const result = authorizeActor(
+			tenant,
+			'file',
+			'detail',
+			baseContext(visibility === undefined ? {} : { fileVisibility: visibility })
+		);
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.equal(result.reason, 'DEFAULT_DENY');
+	}
+});
+
+test('landlord conversation and file surfaces default deny until AUTH-014/DATA-002', () => {
+	for (const action of ['list', 'detail', 'create', 'update', 'delete'] as const) {
+		const conversation = authorizeActor(landlordA, 'conversation', action, baseContext());
+		assert.equal(conversation.ok, false);
+		if (!conversation.ok) assert.equal(conversation.reason, 'DEFAULT_DENY');
+
+		const file = authorizeActor(landlordA, 'file', action, baseContext());
+		assert.equal(file.ok, false);
+		if (!file.ok) assert.equal(file.reason, 'DEFAULT_DENY');
+	}
 });
 
 test('tenant file mutations default deny until self-upload policy exists', () => {

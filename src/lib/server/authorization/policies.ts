@@ -291,27 +291,11 @@ function evaluateLandlordPolicy(
 					return deny('DEFAULT_DENY');
 			}
 		case 'conversation':
-			switch (action) {
-				case 'list':
-				case 'detail':
-				case 'create':
-				case 'update':
-				case 'delete':
-					return allow();
-				default:
-					return deny('DEFAULT_DENY');
-			}
+			// AUTH-014 — no tenancy-scoped conversation resolver yet; fail closed.
+			return deny('DEFAULT_DENY');
 		case 'file':
-			switch (action) {
-				case 'list':
-				case 'detail':
-				case 'create':
-				case 'update':
-				case 'delete':
-					return allow();
-				default:
-					return deny('DEFAULT_DENY');
-			}
+			// DATA-002 — TenantFile schema/helpers not production-ready; fail closed.
+			return deny('DEFAULT_DENY');
 		default: {
 			const _exhaustive: never = resource;
 			return _exhaustive;
@@ -402,13 +386,8 @@ function evaluateTenantPolicy(
 					return deny('DEFAULT_DENY');
 			}
 		case 'asset':
-			switch (action) {
-				case 'list':
-				case 'detail':
-					return tenantOwnsTenancy(context) ? allow() : deny('TENANT_SCOPE');
-				default:
-					return deny('DEFAULT_DENY');
-			}
+			// AUTH-013 — RoomAsset has no tenancy handover link; no trusted tenant scoped SQL yet.
+			return deny('DEFAULT_DENY');
 		case 'service':
 			switch (action) {
 				case 'list':
@@ -418,33 +397,12 @@ function evaluateTenantPolicy(
 					return deny('DEFAULT_DENY');
 			}
 		case 'conversation':
-			switch (action) {
-				case 'list':
-				case 'detail':
-				case 'create':
-				case 'update':
-					return tenantOwnsTenancy(context) ? allow() : deny('TENANT_SCOPE');
-				default:
-					return deny('DEFAULT_DENY');
-			}
+			// AUTH-014 — legacy conversationId is not tenancy-scoped; fail closed until resolver exists.
+			return deny('DEFAULT_DENY');
 		case 'file':
-			switch (action) {
-				case 'list':
-				case 'detail':
-					if (!tenantClaimsManagedTenant(actor, context)) {
-						return deny('TENANT_CLAIM');
-					}
-					if (context.resource.fileVisibility === 'LANDLORD_ONLY') {
-						return deny('TENANT_VISIBILITY');
-					}
-					return allow();
-				case 'create':
-				case 'update':
-				case 'delete':
-					return deny('DEFAULT_DENY');
-				default:
-					return deny('DEFAULT_DENY');
-			}
+			// DATA-002 — fileVisibility missing/undefined must not allow; foundation denies all file actions.
+			// Re-open only with production TenantFile + visibility-aware scoped helpers.
+			return deny('DEFAULT_DENY');
 		default: {
 			const _exhaustive: never = resource;
 			return _exhaustive;

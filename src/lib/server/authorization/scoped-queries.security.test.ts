@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import {
 	contracts,
 	invoices,
@@ -25,14 +25,23 @@ import {
 	findMaintenanceRequestForLandlord,
 	findMaintenanceRequestForStaff,
 	findMaintenanceRequestForTenantHistory,
+	findManagedTenantForLandlord,
+	findManagedTenantForStaff,
 	findManagedTenantForTenant,
+	findMeterReadingForLandlord,
 	findMeterReadingForStaff,
+	findMeterReadingForTenantHistory,
+	findPaymentAccountForLandlord,
+	findPaymentAccountForTenantHistory,
+	findPropertyForLandlord,
+	findPropertyForStaff,
 	findPropertyForTenant,
 	findRoomAssetForLandlord,
 	findRoomAssetForStaff,
 	findRoomForLandlord,
 	findRoomForStaff,
 	findRoomForTenant,
+	findServiceForLandlord,
 	findServiceForStaff,
 	findServiceForTenant,
 	findTenancyForLandlord,
@@ -174,6 +183,14 @@ async function seedScopedSqlExtensions(
 		permission: 'VIEW_TENANTS',
 		grantedByUserId: ids.landlordA.userId
 	});
+
+	// Secrets exist in DB but scoped helpers must never project them.
+	await db.execute(sql`
+		UPDATE "PaymentAccount"
+		SET "payosApiKeyEnc" = 'secret-api-key',
+		    "payosChecksumKeyEnc" = 'secret-checksum'
+		WHERE "id" = ${ids.paymentAccountA.paymentAccountId}
+	`);
 
 	return {
 		managedTenantANow,
@@ -457,6 +474,118 @@ if (skipReason) {
 
 				await expectNotFound(() =>
 					findContractForLandlord(db, landlordB, ids.contractANow.contractId)
+				);
+			});
+
+			await t.test(
+				'matrix: landlord property/managedTenant/service/meter/payment own vs foreign',
+				async () => {
+					assert.equal(
+						(await findPropertyForLandlord(db, landlordA, ids.propertyA1.propertyId)).id,
+						ids.propertyA1.propertyId
+					);
+					await expectNotFound(() =>
+						findPropertyForLandlord(db, landlordA, ids.propertyB1.propertyId)
+					);
+
+					assert.equal(
+						(await findManagedTenantForLandlord(db, landlordA, ext.managedTenantANow)).id,
+						ext.managedTenantANow
+					);
+					await expectNotFound(() =>
+						findManagedTenantForLandlord(db, landlordB, ext.managedTenantANow)
+					);
+
+					assert.equal(
+						(await findServiceForLandlord(db, landlordA, ids.serviceA.serviceId)).id,
+						ids.serviceA.serviceId
+					);
+					await expectNotFound(() => findServiceForLandlord(db, landlordB, ids.serviceA.serviceId));
+
+					assert.equal(
+						(await findMeterReadingForLandlord(db, landlordA, ids.meterReadingANow.meterReadingId))
+							.id,
+						ids.meterReadingANow.meterReadingId
+					);
+					await expectNotFound(() =>
+						findMeterReadingForLandlord(db, landlordB, ids.meterReadingANow.meterReadingId)
+					);
+
+					const payA = await findPaymentAccountForLandlord(
+						db,
+						landlordA,
+						ids.paymentAccountA.paymentAccountId
+					);
+					assert.equal(payA.id, ids.paymentAccountA.paymentAccountId);
+					assert.equal('payosApiKeyEnc' in payA, false);
+					assert.equal('payosChecksumKeyEnc' in payA, false);
+					await expectNotFound(() =>
+						findPaymentAccountForLandlord(db, landlordB, ids.paymentAccountA.paymentAccountId)
+					);
+				}
+			);
+
+			await t.test('matrix: staff property / managedTenant own vs foreign assignment', async () => {
+				assert.equal(
+					(await findPropertyForStaff(db, staffLimited, ids.propertyA1.propertyId)).id,
+					ids.propertyA1.propertyId
+				);
+				await expectNotFound(() =>
+					findPropertyForStaff(db, staffLimited, ids.propertyA2.propertyId)
+				);
+				await expectNotFound(() =>
+					findPropertyForStaff(db, staffLimited, ids.propertyB1.propertyId)
+				);
+
+				assert.equal(
+					(await findManagedTenantForStaff(db, staffLimited, ext.managedTenantANow)).id,
+					ext.managedTenantANow
+				);
+				await expectNotFound(() =>
+					findManagedTenantForStaff(db, staffEmpty, ext.managedTenantANow)
+				);
+			});
+
+			await t.test('matrix: tenant meter history and payment account via invoice', async () => {
+				const meter = await findMeterReadingForTenantHistory(
+					db,
+					tenantANow,
+					historyNow,
+					ids.meterReadingANow.meterReadingId
+				);
+				assert.equal(meter.id, ids.meterReadingANow.meterReadingId);
+				await expectNotFound(() =>
+					findMeterReadingForTenantHistory(
+						db,
+						tenantANow,
+						historyNow,
+						ids.meterReadingAOld.meterReadingId
+					)
+				);
+				await expectNotFound(() =>
+					findMeterReadingForTenantHistory(
+						db,
+						tenantAOld,
+						historyNow,
+						ids.meterReadingANow.meterReadingId
+					)
+				);
+
+				const pay = await findPaymentAccountForTenantHistory(
+					db,
+					tenantANow,
+					historyNow,
+					ids.invoiceANow.invoiceId
+				);
+				assert.equal(pay.id, ids.paymentAccountA.paymentAccountId);
+				assert.equal('payosApiKeyEnc' in pay, false);
+				assert.equal('payosChecksumKeyEnc' in pay, false);
+
+				await expectNotFound(() =>
+					findPaymentAccountForTenantHistory(db, tenantANow, historyNow, ids.invoiceBNow.invoiceId)
+				);
+				await expectNotFound(() =>
+					findPaymentAccountForTenantHistory(db, tenantAOld, historyNow, ids.invoiceANow.invoiceId)
 				);
 			});
 

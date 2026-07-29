@@ -106,35 +106,73 @@ async function assertTenantHistoryClaim(
 	}
 }
 
-/** SQL predicate for landlord-owned properties (single-table list/detail). */
-export function landlordPropertyWhere(landlordId: string): SQL {
-	return eq(properties.landlordId, landlordId);
+/** SQL predicates — private; authority always from LandlordActor, never raw landlordId strings. */
+function landlordPropertyWhere(actor: LandlordActor): SQL {
+	return eq(properties.landlordId, actor.landlordId);
 }
 
-/** SQL predicate after joining rooms → properties. */
-export function landlordRoomWhere(landlordId: string): SQL {
-	return eq(properties.landlordId, landlordId);
+function landlordRoomWhere(actor: LandlordActor): SQL {
+	return eq(properties.landlordId, actor.landlordId);
 }
 
-export function landlordManagedTenantWhere(landlordId: string): SQL {
-	return eq(managedTenants.landlordId, landlordId);
+function landlordManagedTenantWhere(actor: LandlordActor): SQL {
+	return eq(managedTenants.landlordId, actor.landlordId);
 }
 
-export function landlordTenancyWhere(landlordId: string): SQL {
-	return eq(tenancies.landlordId, landlordId);
+function landlordTenancyWhere(actor: LandlordActor): SQL {
+	return eq(tenancies.landlordId, actor.landlordId);
 }
 
-export function landlordPaymentAccountWhere(landlordId: string): SQL {
-	return eq(paymentAccounts.landlordId, landlordId);
+function landlordPaymentAccountWhere(actor: LandlordActor): SQL {
+	return eq(paymentAccounts.landlordId, actor.landlordId);
 }
 
-export function landlordServiceWhere(landlordId: string): SQL {
-	return eq(services.landlordId, landlordId);
+function landlordServiceWhere(actor: LandlordActor): SQL {
+	return eq(services.landlordId, actor.landlordId);
 }
 
 export function staffAssignedPropertiesWhere(actor: StaffActor): SQL {
 	return inArray(properties.id, assignedPropertyIds(actor));
 }
+
+/** Safe payment-account projection — never includes payosApiKeyEnc / payosChecksumKeyEnc. */
+export type SafePaymentAccount = {
+	id: string;
+	landlordId: string;
+	name: string;
+	provider: string;
+	isDefault: boolean;
+	isActive: boolean;
+	bankName: string;
+	bankCode: string;
+	accountNumber: string;
+	accountName: string;
+	bankBranch: string | null;
+	momoNumber: string | null;
+	payosClientId: string | null;
+	payosConnectedAt: Date | null;
+	createdAt: Date;
+	updatedAt: Date;
+};
+
+const SAFE_PAYMENT_ACCOUNT_COLUMNS = {
+	id: true,
+	landlordId: true,
+	name: true,
+	provider: true,
+	isDefault: true,
+	isActive: true,
+	bankName: true,
+	bankCode: true,
+	accountNumber: true,
+	accountName: true,
+	bankBranch: true,
+	momoNumber: true,
+	payosClientId: true,
+	payosConnectedAt: true,
+	createdAt: true,
+	updatedAt: true
+} as const;
 
 // --- Property ---
 
@@ -144,7 +182,7 @@ export async function findPropertyForLandlord(
 	propertyId: string
 ) {
 	const row = await database.query.properties.findFirst({
-		where: and(eq(properties.id, propertyId), landlordPropertyWhere(actor.landlordId))
+		where: and(eq(properties.id, propertyId), landlordPropertyWhere(actor))
 	});
 	if (!row) {
 		throwScopedNotFound();
@@ -182,7 +220,7 @@ export async function findRoomForLandlord(
 		.select({ room: rooms })
 		.from(rooms)
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(rooms.id, roomId), landlordRoomWhere(actor.landlordId)))
+		.where(and(eq(rooms.id, roomId), landlordRoomWhere(actor)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -218,7 +256,7 @@ export async function findManagedTenantForLandlord(
 	managedTenantId: string
 ) {
 	const row = await database.query.managedTenants.findFirst({
-		where: and(eq(managedTenants.id, managedTenantId), landlordManagedTenantWhere(actor.landlordId))
+		where: and(eq(managedTenants.id, managedTenantId), landlordManagedTenantWhere(actor))
 	});
 	if (!row) {
 		throwScopedNotFound();
@@ -279,7 +317,7 @@ export async function findTenancyForLandlord(
 	tenancyId: string
 ) {
 	const row = await database.query.tenancies.findFirst({
-		where: and(eq(tenancies.id, tenancyId), landlordTenancyWhere(actor.landlordId))
+		where: and(eq(tenancies.id, tenancyId), landlordTenancyWhere(actor))
 	});
 	if (!row) {
 		throwScopedNotFound();
@@ -342,7 +380,7 @@ export async function findServiceForLandlord(
 	serviceId: string
 ) {
 	const row = await database.query.services.findFirst({
-		where: and(eq(services.id, serviceId), landlordServiceWhere(actor.landlordId))
+		where: and(eq(services.id, serviceId), landlordServiceWhere(actor))
 	});
 	if (!row) {
 		throwScopedNotFound();
@@ -415,7 +453,7 @@ export async function findInvoiceForLandlord(
 		.from(invoices)
 		.innerJoin(rooms, eq(invoices.roomId, rooms.id))
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(invoices.id, invoiceId), landlordRoomWhere(actor.landlordId)))
+		.where(and(eq(invoices.id, invoiceId), landlordRoomWhere(actor)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -456,7 +494,7 @@ export async function findContractForLandlord(
 		.from(contracts)
 		.innerJoin(rooms, eq(contracts.roomId, rooms.id))
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(contracts.id, contractId), landlordRoomWhere(actor.landlordId)))
+		.where(and(eq(contracts.id, contractId), landlordRoomWhere(actor)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -497,7 +535,7 @@ export async function findMeterReadingForLandlord(
 		.from(meterReadings)
 		.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(meterReadings.id, meterReadingId), landlordRoomWhere(actor.landlordId)))
+		.where(and(eq(meterReadings.id, meterReadingId), landlordRoomWhere(actor)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -562,7 +600,7 @@ export async function findMaintenanceRequestForLandlord(
 		.select({ request: maintenanceRequests })
 		.from(maintenanceRequests)
 		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
-		.where(and(eq(maintenanceRequests.id, requestId), landlordTenancyWhere(actor.landlordId)))
+		.where(and(eq(maintenanceRequests.id, requestId), landlordTenancyWhere(actor)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -615,18 +653,51 @@ export async function findMaintenanceRequestForTenantHistory(
 	return row;
 }
 
-// --- Payment account ---
+// --- Payment account (safe projection only) ---
 
 export async function findPaymentAccountForLandlord(
 	database: ScopedQueryDb,
 	actor: LandlordActor,
 	paymentAccountId: string
-) {
+): Promise<SafePaymentAccount> {
 	const row = await database.query.paymentAccounts.findFirst({
+		where: and(eq(paymentAccounts.id, paymentAccountId), landlordPaymentAccountWhere(actor)),
+		columns: SAFE_PAYMENT_ACCOUNT_COLUMNS
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+/**
+ * Tenant reads payment instructions only via an invoice in claimed history scope.
+ * Binds claimedByUserId + managedTenantId + tenancyId + invoice.paymentAccountId.
+ * Foreign account / invoice without account → 404. Never returns PayOS secrets.
+ */
+export async function findPaymentAccountForTenantHistory(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	invoiceId: string
+): Promise<SafePaymentAccount> {
+	await assertTenantHistoryClaim(database, actor, scope);
+
+	const invoice = await database.query.invoices.findFirst({
 		where: and(
-			eq(paymentAccounts.id, paymentAccountId),
-			landlordPaymentAccountWhere(actor.landlordId)
-		)
+			eq(invoices.id, invoiceId),
+			eq(invoices.managedTenantId, scope.managedTenantId),
+			eq(invoices.tenancyId, scope.tenancyId)
+		),
+		columns: { id: true, paymentAccountId: true }
+	});
+	if (!invoice?.paymentAccountId) {
+		throwScopedNotFound();
+	}
+
+	const row = await database.query.paymentAccounts.findFirst({
+		where: eq(paymentAccounts.id, invoice.paymentAccountId),
+		columns: SAFE_PAYMENT_ACCOUNT_COLUMNS
 	});
 	if (!row) {
 		throwScopedNotFound();
@@ -695,7 +766,7 @@ export async function findRoomAssetForLandlord(
 			and(
 				eq(roomAssets.id, input.assetId),
 				eq(roomAssets.roomId, input.roomId),
-				landlordRoomWhere(actor.landlordId)
+				landlordRoomWhere(actor)
 			)
 		)
 		.limit(1);
