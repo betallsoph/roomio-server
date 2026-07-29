@@ -20,6 +20,14 @@ import {
 } from '$lib/server/authz';
 import { normalizeRoomTextKey } from '$lib/server/room-code';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
+import { requireLandlordActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import { isTenancyDualWriteEnabled } from '$lib/server/env';
+import { endActiveTenancyForRoom, hasActiveTenancyForRoom } from '$lib/server/tenancies/service';
+import { isTenancyServiceError, toTenancyErrorBody } from '$lib/server/tenancies/state';
 import {
 	SUBSCRIPTION_TIERS,
 	pricingGroupForRentalType,
@@ -363,13 +371,55 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	}
 };
 
+/**
+ * AUTH-006 — check-out canonical: kết thúc Tenancy, dọn cache tương thích có điều kiện,
+ * revoke invite pending và ghi audit trong MỘT transaction.
+ *
+ * KHÔNG đụng `Room.status` hay `Room.debtAmount`: công nợ do FIN ledger quyết toán
+ * (FIN-020/FIN-021) và trạng thái vận hành phòng thuộc FIN-027. Xóa nợ ở đây là mất tiền.
+ */
+async function checkoutWithTenancyService(
+	locals: App.Locals,
+	roomId: string,
+	endDate: string | null
+): Promise<Response> {
+	if (!locals.actor) {
+		return authorizationErrorToResponse(unauthenticatedError());
+	}
+	const actorResult = requireLandlordActor(locals.actor);
+	if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
+
+	try {
+		const ended = await endActiveTenancyForRoom(
+			db,
+			actorResult.value,
+			{ roomId, endDate },
+			{ requestId: locals.requestId }
+		);
+		return json({ tenancy: ended.tenancy, room: { id: roomId } });
+	} catch (error) {
+		if (isTenancyServiceError(error)) {
+			return json(toTenancyErrorBody(error, locals.requestId), { status: error.status });
+		}
+		throw error;
+	}
+}
+
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const body = await request.json();
+		const { id, action, ...data } = body ?? {};
+
+		// AUTH-006 — check-out phải đi qua tenancy service TRƯỚC guard legacy, nếu không
+		// `landlordOwnsRoom` sẽ trả 403 và làm lộ khác biệt giữa "phòng không tồn tại" và
+		// "phòng của chủ khác". Service trả 404 giống nhau cho cả hai.
+		if (action === 'checkout' && isTenancyDualWriteEnabled()) {
+			if (!id) return json({ error: 'Missing room ID' }, { status: 400 });
+			return await checkoutWithTenancyService(locals, String(id), data?.endDate ?? null);
+		}
+
 		const auth = requireLandlord(locals.session);
 		if (!auth.ok) return auth.response;
-
-		const body = await request.json();
-		const { id, action, ...data } = body;
 
 		if (!id) {
 			return json({ error: 'Missing room ID' }, { status: 400 });
@@ -458,6 +508,19 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				}
 			}
 		} else if (action === 'checkout') {
+			// Tới đây flag đang TẮT (nhánh bật đã return ở đầu handler).
+			// Chống split-brain khi rollback flag: phòng đã có Tenancy ACTIVE thì vẫn phải
+			// kết thúc bằng canonical service, không được chỉ xóa cache legacy.
+			if (await hasActiveTenancyForRoom(db, id)) {
+				const canonical = await checkoutWithTenancyService(
+					locals,
+					String(id),
+					data?.endDate ?? null
+				);
+				return canonical;
+			}
+
+			// Luồng legacy thuần: phòng chưa từng có Tenancy, giữ nguyên hành vi cũ.
 			await db
 				.update(rooms)
 				.set({

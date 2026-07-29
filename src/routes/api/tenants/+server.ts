@@ -20,6 +20,20 @@ import {
 	requireLandlord
 } from '$lib/server/authz';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
+import { requireLandlordActor, type LandlordActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import { isTenancyDualWriteEnabled } from '$lib/server/env';
+import { hasActiveTenancyForRoom, startTenancy } from '$lib/server/tenancies/service';
+import {
+	addYearsToCalendarDate,
+	isTenancyServiceError,
+	toTenancyErrorBody,
+	todayInVietnam,
+	type TenancyDto
+} from '$lib/server/tenancies/state';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -62,8 +76,180 @@ export const GET: RequestHandler = async ({ locals }) => {
 	}
 };
 
+type CheckInResponse = {
+	tenancy: TenancyDto;
+	contract: { id: string | null; created: boolean; skippedReason: string | null };
+	room: { id: string };
+	managedTenant: { id: string };
+};
+
+/**
+ * AUTH-006 — check-in mới: MỘT service duy nhất tạo Tenancy + cache tương thích + audit.
+ * KHÔNG tạo `User`/`TenantProfile`: hồ sơ người thuê phải tồn tại trước dưới dạng
+ * `ManagedTenant` (endpoint quản lý hồ sơ thuộc AUTH-009).
+ */
+async function checkInWithTenancyService(
+	request: Request,
+	actor: LandlordActor,
+	requestId: string
+): Promise<Response> {
+	const body = await request.json();
+	const {
+		roomId,
+		managedTenantId,
+		moveInDate,
+		deposit,
+		notes,
+		paymentAccountId,
+		initialElectricity,
+		initialWater,
+		contractEndDate,
+		plannedEndDate
+	} = body ?? {};
+
+	if (typeof managedTenantId !== 'string' || managedTenantId.trim() === '') {
+		return json(
+			{
+				error: 'Cần chọn hồ sơ người thuê đã có trước khi bắt đầu lần thuê',
+				code: 'MANAGED_TENANT_REQUIRED',
+				requestId
+			},
+			{ status: 422 }
+		);
+	}
+
+	// Tài khoản nhận tiền vẫn resolve bằng helper cũ (đã scope theo landlord).
+	let selectedPaymentAccountId: string | null = null;
+	try {
+		const selectedPaymentAccount = await getPaymentAccountForLandlord(
+			actor.landlordId,
+			paymentAccountId || null
+		);
+		if (!selectedPaymentAccount.isActive) {
+			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
+		}
+		selectedPaymentAccountId = selectedPaymentAccount.id;
+	} catch (error) {
+		return json({ error: errorMessage(error) }, { status: 400 });
+	}
+
+	const startDate = typeof moveInDate === 'string' && moveInDate ? moveInDate : todayInVietnam();
+
+	try {
+		const result = await db.transaction(async (tx) => {
+			const started = await startTenancy(
+				tx,
+				actor,
+				{
+					roomId,
+					managedTenantId,
+					startDate,
+					plannedEndDate: plannedEndDate ?? null,
+					depositRequired: deposit,
+					contract: {
+						// Mặc định hợp đồng 12 tháng như luồng cũ, tính trên lịch chứ không qua epoch.
+						endDate: contractEndDate || addYearsToCalendarDate(startDate, 1),
+						deposit,
+						notes: notes ?? null,
+						paymentAccountId: selectedPaymentAccountId
+					}
+				},
+				{ requestId }
+			);
+
+			// Chỉ số đầu kỳ: giữ nguyên hành vi check-in cũ nhưng gắn snapshot tenancy.
+			await recordInitialMeterReadings(tx, actor, {
+				roomId: started.tenancy.roomId,
+				tenancyId: started.tenancy.id,
+				managedTenantId,
+				month: started.tenancy.startDate.slice(0, 7),
+				recordedAt: started.tenancy.startDate,
+				initialElectricity,
+				initialWater
+			});
+
+			return started;
+		});
+
+		const response: CheckInResponse = {
+			tenancy: result.tenancy,
+			contract: {
+				id: result.contract.id,
+				created: result.contract.created,
+				skippedReason: result.contract.skippedReason
+			},
+			room: { id: result.tenancy.roomId },
+			managedTenant: { id: managedTenantId }
+		};
+		return json(response, { status: 201 });
+	} catch (error) {
+		if (isTenancyServiceError(error)) {
+			return json(toTenancyErrorBody(error, requestId), { status: error.status });
+		}
+		throw error;
+	}
+}
+
+type InitialMeterInput = {
+	roomId: string;
+	tenancyId: string;
+	managedTenantId: string;
+	month: string;
+	recordedAt: string;
+	initialElectricity: unknown;
+	initialWater: unknown;
+};
+
+async function recordInitialMeterReadings(
+	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+	actor: LandlordActor,
+	input: InitialMeterInput
+): Promise<void> {
+	const entries: Array<{ pattern: string; value: unknown }> = [
+		{ pattern: '%Điện%', value: input.initialElectricity },
+		{ pattern: '%Nước%', value: input.initialWater }
+	];
+
+	for (const entry of entries) {
+		if (entry.value === undefined || entry.value === null || entry.value === '') continue;
+		const numeric = Number(entry.value);
+		if (!Number.isFinite(numeric)) continue;
+
+		const service = (
+			await tx
+				.select({ id: services.id })
+				.from(services)
+				.where(and(eq(services.landlordId, actor.landlordId), like(services.name, entry.pattern)))
+				.limit(1)
+		)[0];
+		if (!service) continue;
+
+		await tx.insert(meterReadings).values({
+			roomId: input.roomId,
+			serviceId: service.id,
+			month: input.month,
+			prevValue: numeric,
+			currValue: numeric,
+			recordedAt: input.recordedAt,
+			managedTenantId: input.managedTenantId,
+			tenancyId: input.tenancyId
+		});
+	}
+}
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		// AUTH-006 — khi flag bật, MỌI check-in mới đi qua service Tenancy duy nhất.
+		if (isTenancyDualWriteEnabled()) {
+			if (!locals.actor) {
+				return authorizationErrorToResponse(unauthenticatedError());
+			}
+			const actorResult = requireLandlordActor(locals.actor);
+			if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
+			return await checkInWithTenancyService(request, actorResult.value, locals.requestId);
+		}
+
+		// Luồng legacy (flag off) — giữ nguyên đến khi AUTH-009 thay identity/invite.
 		const auth = requireLandlord(locals.session);
 		if (!auth.ok) return auth.response;
 
@@ -97,6 +283,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 		if (!(await landlordOwnsRoom(auth.value, roomId))) {
 			return forbidden();
+		}
+		// AUTH-006 — chống split-brain khi rollback flag: phòng đã có Tenancy ACTIVE thì
+		// luồng legacy KHÔNG được tạo thêm occupant/identity đè lên lần thuê canonical.
+		if (await hasActiveTenancyForRoom(db, roomId)) {
+			return json(
+				{
+					error: 'Phòng đang có lần thuê hiệu lực',
+					code: 'ROOM_OCCUPIED',
+					requestId: locals.requestId
+				},
+				{ status: 409 }
+			);
 		}
 		const selectedPaymentAccount = await getPaymentAccountForLandlord(
 			auth.value,
