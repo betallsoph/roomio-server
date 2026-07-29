@@ -3268,7 +3268,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "StaffPermission_grantedByUserId_User_id_fk": {
@@ -3459,7 +3459,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "StaffPropertyAssignment_propertyId_Property_id_fk": {

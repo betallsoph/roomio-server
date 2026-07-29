@@ -11,10 +11,7 @@ import { AuditValidationError } from '$lib/server/audit/metadata';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const guard = resolveLandlordActorFromRequest({
-			actor: locals.actor,
-			session: locals.session
-		});
+		const guard = resolveLandlordActorFromRequest({ actor: locals.actor });
 		if (!guard.ok) {
 			return guard.response;
 		}
@@ -43,10 +40,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 
 export const DELETE: RequestHandler = async ({ params, url, locals }) => {
 	try {
-		const guard = resolveLandlordActorFromRequest({
-			actor: locals.actor,
-			session: locals.session
-		});
+		const guard = resolveLandlordActorFromRequest({ actor: locals.actor });
 		if (!guard.ok) {
 			return guard.response;
 		}

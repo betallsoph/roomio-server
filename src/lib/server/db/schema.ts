@@ -110,7 +110,7 @@ export const staffPropertyAssignments = pgTable(
 		id: text('id').primaryKey().$defaultFn(uuid),
 		staffId: text('staffId')
 			.notNull()
-			.references(() => staffProfiles.id, { onDelete: 'cascade' }),
+			.references(() => staffProfiles.id, { onDelete: 'restrict' }),
 		propertyId: text('propertyId')
 			.notNull()
 			.references(() => properties.id, { onDelete: 'restrict' }),
@@ -138,7 +138,7 @@ export const staffPermissions = pgTable(
 		id: text('id').primaryKey().$defaultFn(uuid),
 		staffId: text('staffId')
 			.notNull()
-			.references(() => staffProfiles.id, { onDelete: 'cascade' }),
+			.references(() => staffProfiles.id, { onDelete: 'restrict' }),
 		permission: text('permission').notNull(),
 		grantedByUserId: text('grantedByUserId')
 			.notNull()

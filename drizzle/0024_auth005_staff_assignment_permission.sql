@@ -17,9 +17,9 @@ CREATE TABLE "StaffPropertyAssignment" (
 	"revokedAt" timestamp with time zone
 );
 --> statement-breakpoint
-ALTER TABLE "StaffPermission" ADD CONSTRAINT "StaffPermission_staffId_StaffProfile_id_fk" FOREIGN KEY ("staffId") REFERENCES "public"."StaffProfile"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "StaffPermission" ADD CONSTRAINT "StaffPermission_staffId_StaffProfile_id_fk" FOREIGN KEY ("staffId") REFERENCES "public"."StaffProfile"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "StaffPermission" ADD CONSTRAINT "StaffPermission_grantedByUserId_User_id_fk" FOREIGN KEY ("grantedByUserId") REFERENCES "public"."User"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "StaffPropertyAssignment" ADD CONSTRAINT "StaffPropertyAssignment_staffId_StaffProfile_id_fk" FOREIGN KEY ("staffId") REFERENCES "public"."StaffProfile"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "StaffPropertyAssignment" ADD CONSTRAINT "StaffPropertyAssignment_staffId_StaffProfile_id_fk" FOREIGN KEY ("staffId") REFERENCES "public"."StaffProfile"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "StaffPropertyAssignment" ADD CONSTRAINT "StaffPropertyAssignment_propertyId_Property_id_fk" FOREIGN KEY ("propertyId") REFERENCES "public"."Property"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "StaffPropertyAssignment" ADD CONSTRAINT "StaffPropertyAssignment_assignedByUserId_User_id_fk" FOREIGN KEY ("assignedByUserId") REFERENCES "public"."User"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "StaffPermission_active_staff_permission_unique" ON "StaffPermission" USING btree ("staffId","permission") WHERE "revokedAt" IS NULL;--> statement-breakpoint
