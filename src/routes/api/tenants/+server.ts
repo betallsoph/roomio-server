@@ -34,6 +34,7 @@ import {
 	todayInVietnam,
 	type TenancyDto
 } from '$lib/server/tenancies/state';
+import { TENANT_DETAIL_WITH, toTenantSummaryDto } from '$lib/server/dto/tenants';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -54,23 +55,12 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 		const tenants = await db.query.tenantProfiles.findMany({
 			where: inArray(tenantProfiles.id, tenantIdsSubquery),
-			with: {
-				user: {
-					columns: { id: true, name: true, email: true, phone: true }
-				},
-				rooms: {
-					with: {
-						property: true,
-						block: true,
-						paymentAccount: true
-					}
-				}
-			}
+			with: TENANT_DETAIL_WITH
 		});
 
 		tenants.sort((a, b) => a.user.name.localeCompare(b.user.name, 'vi'));
 
-		return json(tenants);
+		return json(tenants.map(toTenantSummaryDto));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -427,15 +417,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const fullTenant = await db.query.tenantProfiles.findFirst({
 			where: eq(tenantProfiles.id, tenant.id),
-			with: {
-				user: true,
-				rooms: {
-					with: { property: true, paymentAccount: true }
-				}
-			}
+			with: TENANT_DETAIL_WITH
 		});
 
-		return json(fullTenant);
+		return json(fullTenant ? toTenantSummaryDto(fullTenant) : null);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -474,15 +459,10 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 
 		const updated = await db.query.tenantProfiles.findFirst({
 			where: eq(tenantProfiles.id, id),
-			with: {
-				user: true,
-				rooms: {
-					with: { property: true, paymentAccount: true }
-				}
-			}
+			with: TENANT_DETAIL_WITH
 		});
 
-		return json(updated);
+		return json(updated ? toTenantSummaryDto(updated) : null);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
