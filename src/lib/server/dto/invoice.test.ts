@@ -116,7 +116,7 @@ test('toInvoiceDto strips nested secrets and raw row spreads', () => {
 					userId: 'user-1',
 					payosApiKeyEnc: 'cipher:landlord-key',
 					payosChecksumKeyEnc: 'cipher:landlord-checksum'
-				}
+				} as { id: string } & Record<string, unknown>
 			},
 			block: null
 		}

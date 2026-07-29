@@ -138,7 +138,8 @@ type InvoiceRowForDto = {
 		paymentAccountId: string | null;
 		tenantId: string | null;
 		currentManagedTenantId: string | null;
-		property: {
+		/** Present on detail reads; mutation `.returning()` / shallow loads may omit it. */
+		property?: {
 			id: string;
 			landlordId: string;
 			name: string;
@@ -191,7 +192,10 @@ function toPropertySummaryDto(
 	};
 }
 
-function toInvoiceRoomDto(room: NonNullable<InvoiceRowForDto['room']>): InvoiceRoomDto {
+function toInvoiceRoomDto(room: NonNullable<InvoiceRowForDto['room']>): InvoiceRoomDto | null {
+	if (!room.property) {
+		return null;
+	}
 	return {
 		id: room.id,
 		propertyId: room.propertyId,
@@ -254,7 +258,10 @@ export function toInvoiceDto(row: InvoiceRowForDto): InvoiceDto {
 		dto.paymentAccount = row.paymentAccount ? toPaymentAccountDto(row.paymentAccount) : null;
 	}
 	if (row.room) {
-		dto.room = toInvoiceRoomDto(row.room);
+		const roomDto = toInvoiceRoomDto(row.room);
+		if (roomDto) {
+			dto.room = roomDto;
+		}
 	}
 
 	return dto;

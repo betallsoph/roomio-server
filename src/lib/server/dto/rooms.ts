@@ -510,6 +510,8 @@ export function toMeterReadingDto(row: {
 	isAnomalous: boolean;
 	managedTenantId: string | null;
 	tenancyId: string | null;
+	/** Accepted then discarded — never appears on MeterReadingDto. */
+	ocrRawText?: string | null;
 }): MeterReadingDto {
 	return {
 		id: row.id,
@@ -598,6 +600,7 @@ export function toRoomDto(row: {
 		isAnomalous: boolean;
 		managedTenantId: string | null;
 		tenancyId: string | null;
+		ocrRawText?: string | null;
 	}>;
 }): RoomDto {
 	return {
