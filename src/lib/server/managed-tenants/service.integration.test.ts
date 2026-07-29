@@ -19,7 +19,7 @@ import { resetEnvForTests } from '../env.js';
 import { createManagedTenant } from './service.js';
 import { issueTenantInvite, acceptTenantInvite } from '../tenant-invites/service.js';
 import { hashInviteToken } from '../tenant-invites/token.js';
-import { isTenantInviteServiceError } from '../tenant-invites/state.js';
+import { isManagedTenantServiceError } from './state.js';
 import {
 	cleanupTenancyFixture,
 	createTenancyTestDb,
@@ -254,15 +254,13 @@ if (skipReason) {
 			.where(eq(tenancies.landlordId, fixture.landlordA.landlordId));
 		assert.equal(tenancyCountAfter[0]?.count, tenancyCountBefore[0]?.count);
 
-		await assert.rejects(
-			() =>
-				acceptTenantInvite(db, {
-					token: issued.token,
-					actorUserId: tenantUserId,
-					actorTenantProfileId: tenantProfileId
-				}),
-			(error: unknown) => isTenantInviteServiceError(error) && error.code === 'INVITE_USED'
-		);
+		const replay = await acceptTenantInvite(db, {
+			token: issued.token,
+			actorUserId: tenantUserId,
+			actorTenantProfileId: tenantProfileId
+		});
+		assert.equal(replay.idempotent, true);
+		assert.equal(replay.managedTenantId, managed.id);
 	});
 
 	test('foreign landlord cannot issue invite for managed tenant B', async () => {
@@ -273,7 +271,7 @@ if (skipReason) {
 					tenancyId: 'missing-tenancy'
 				}),
 			(error: unknown) =>
-				isTenantInviteServiceError(error) && error.code === 'MANAGED_TENANT_NOT_FOUND'
+				isManagedTenantServiceError(error) && error.code === 'MANAGED_TENANT_NOT_FOUND'
 		);
 	});
 
