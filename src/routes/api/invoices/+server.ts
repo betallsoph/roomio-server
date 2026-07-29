@@ -5,6 +5,7 @@ import { db } from '$lib/server/db';
 import { contracts, invoices, invoiceItems, rooms, properties } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
+import { toInvoiceDto } from '$lib/server/dto/invoice';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
@@ -85,7 +86,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			orderBy: [desc(invoices.month), desc(invoices.createdAt)]
 		});
 
-		return json(result);
+		return json(result.map(toInvoiceDto));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -212,7 +213,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			with: { items: true, paymentAccount: true }
 		});
 
-		return json(fullInvoice);
+		return json(fullInvoice ? toInvoiceDto(fullInvoice) : null);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

@@ -5,6 +5,7 @@ import { db } from '$lib/server/db';
 import { invoices, paymentTransactions, rooms } from '$lib/server/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsInvoice, tenantOwnsInvoice } from '$lib/server/authz';
+import { toInvoiceDto } from '$lib/server/dto/invoice';
 
 export const GET: RequestHandler = async ({ params, locals }) => {
 	try {
@@ -47,7 +48,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 			return forbidden();
 		}
 
-		return json(invoice);
+		return json(toInvoiceDto(invoice));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -145,7 +146,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 				return inv;
 			});
 
-			return json(updated);
+			return json(toInvoiceDto(updated));
 		} else if (action === 'uploadProof') {
 			if (!paymentProofImage) {
 				return json({ error: 'Missing payment proof image url' }, { status: 400 });
@@ -160,7 +161,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 				.where(eq(invoices.id, id))
 				.returning();
 
-			return json(updated[0]);
+			return json(toInvoiceDto(updated[0]));
 		} else {
 			// Standard update
 			const updateData: Record<string, unknown> = {};
@@ -173,7 +174,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 			}
 
 			if (Object.keys(updateData).length === 0) {
-				return json(invoice);
+				return json(toInvoiceDto(invoice));
 			}
 
 			const updated = await db
@@ -182,7 +183,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 				.where(eq(invoices.id, id))
 				.returning();
 
-			return json(updated[0]);
+			return json(toInvoiceDto(updated[0]));
 		}
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });

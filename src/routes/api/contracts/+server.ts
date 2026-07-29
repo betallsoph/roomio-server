@@ -11,6 +11,7 @@ import {
 	landlordOwnsTenant,
 	requireLandlord
 } from '$lib/server/authz';
+import { toContractDto } from '$lib/server/dto/contract';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import { requireLandlordActor } from '$lib/server/authorization/actor';
 import {
@@ -70,7 +71,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			orderBy: desc(contracts.createdAt)
 		});
 
-		return json(result);
+		return json(result.map(toContractDto));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -242,7 +243,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			})
 			.returning();
 
-		return json(created[0]);
+		return json(toContractDto(created[0]));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -302,7 +303,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			.where(eq(contracts.id, id))
 			.returning();
 
-		return json(updated[0]);
+		return json(toContractDto(updated[0]));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
