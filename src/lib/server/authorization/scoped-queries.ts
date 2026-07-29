@@ -1,0 +1,831 @@
+import { and, eq, inArray, isNull, type SQL } from 'drizzle-orm';
+import type { db as AppDb } from '$lib/server/db';
+import {
+	contracts,
+	invoices,
+	maintenanceRequests,
+	managedTenants,
+	meterReadings,
+	paymentAccounts,
+	properties,
+	roomAssets,
+	roomServiceConfigs,
+	rooms,
+	services,
+	tenancies
+} from '$lib/server/db/schema';
+import type { LandlordActor, StaffActor, TenantActor } from './actor.js';
+import {
+	type StaffCapabilityCheck,
+	staffHasPropertyReadCapability,
+	staffServiceReadCapability
+} from './capabilities.js';
+import { forbiddenError } from './errors.js';
+import { isOperationalUserActor } from './policies.js';
+import { staffHasPermission } from './staff-scope.js';
+
+export { isOperationalUserActor };
+export type { StaffCapabilityCheck, StaffScopedCapability } from './capabilities.js';
+
+/**
+ * AUTH-008 — typed scoped query helpers.
+ * Authority comes from ActorContext only; never from body/query landlordId.
+ * Foreign ID and missing row both surface ScopedResourceNotFoundError (§12.2).
+ * Staff outside property assignment → 404; missing capability on in-scope resource → 403.
+ */
+
+export class ScopedResourceNotFoundError extends Error {
+	readonly status = 404 as const;
+
+	constructor(message = 'Không tìm thấy') {
+		super(message);
+		this.name = 'ScopedResourceNotFoundError';
+		Object.setPrototypeOf(this, new.target.prototype);
+	}
+}
+
+export type TenantHistoryScope = {
+	managedTenantId: string;
+	tenancyId: string;
+};
+
+export type ScopedQueryDb = Pick<typeof AppDb, 'query' | 'select'>;
+
+function throwScopedNotFound(): never {
+	throw new ScopedResourceNotFoundError();
+}
+
+function assignedPropertyIds(actor: StaffActor): string[] {
+	return actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__'];
+}
+
+function assertStaffPermission(actor: StaffActor, permission: StaffCapabilityCheck): void {
+	if (!staffHasPermission(actor, permission)) {
+		throw forbiddenError();
+	}
+}
+
+function assertStaffPropertyRead(actor: StaffActor): void {
+	if (!staffHasPropertyReadCapability(actor.permissions)) {
+		throw forbiddenError();
+	}
+}
+
+function assertStaffServiceRead(actor: StaffActor): void {
+	if (!staffServiceReadCapability(actor.permissions)) {
+		throw forbiddenError();
+	}
+}
+
+async function assertTenantHistoryClaim(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope
+): Promise<void> {
+	const managedTenant = await database.query.managedTenants.findFirst({
+		where: and(
+			eq(managedTenants.id, scope.managedTenantId),
+			eq(managedTenants.claimedByUserId, actor.userId),
+			isNull(managedTenants.claimAccessSuspendedAt)
+		),
+		columns: { id: true }
+	});
+	if (!managedTenant) {
+		throwScopedNotFound();
+	}
+
+	const tenancy = await database.query.tenancies.findFirst({
+		where: and(
+			eq(tenancies.id, scope.tenancyId),
+			eq(tenancies.managedTenantId, scope.managedTenantId)
+		),
+		columns: { id: true }
+	});
+	if (!tenancy) {
+		throwScopedNotFound();
+	}
+}
+
+/** SQL predicates — private; authority always from LandlordActor, never raw landlordId strings. */
+function landlordPropertyWhere(actor: LandlordActor): SQL {
+	return eq(properties.landlordId, actor.landlordId);
+}
+
+function landlordRoomWhere(actor: LandlordActor): SQL {
+	return eq(properties.landlordId, actor.landlordId);
+}
+
+function landlordManagedTenantWhere(actor: LandlordActor): SQL {
+	return eq(managedTenants.landlordId, actor.landlordId);
+}
+
+function landlordTenancyWhere(actor: LandlordActor): SQL {
+	return eq(tenancies.landlordId, actor.landlordId);
+}
+
+function landlordPaymentAccountWhere(actor: LandlordActor): SQL {
+	return eq(paymentAccounts.landlordId, actor.landlordId);
+}
+
+function landlordServiceWhere(actor: LandlordActor): SQL {
+	return eq(services.landlordId, actor.landlordId);
+}
+
+export function staffAssignedPropertiesWhere(actor: StaffActor): SQL {
+	return inArray(properties.id, assignedPropertyIds(actor));
+}
+
+/** Safe payment-account projection — never includes payosApiKeyEnc / payosChecksumKeyEnc. */
+export type SafePaymentAccount = {
+	id: string;
+	landlordId: string;
+	name: string;
+	provider: string;
+	isDefault: boolean;
+	isActive: boolean;
+	bankName: string;
+	bankCode: string;
+	accountNumber: string;
+	accountName: string;
+	bankBranch: string | null;
+	momoNumber: string | null;
+	payosClientId: string | null;
+	payosConnectedAt: Date | null;
+	createdAt: Date;
+	updatedAt: Date;
+};
+
+const SAFE_PAYMENT_ACCOUNT_COLUMNS = {
+	id: true,
+	landlordId: true,
+	name: true,
+	provider: true,
+	isDefault: true,
+	isActive: true,
+	bankName: true,
+	bankCode: true,
+	accountNumber: true,
+	accountName: true,
+	bankBranch: true,
+	momoNumber: true,
+	payosClientId: true,
+	payosConnectedAt: true,
+	createdAt: true,
+	updatedAt: true
+} as const;
+
+// --- Property ---
+
+export async function findPropertyForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	propertyId: string
+) {
+	const row = await database.query.properties.findFirst({
+		where: and(eq(properties.id, propertyId), landlordPropertyWhere(actor))
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+export async function findPropertyForStaff(
+	database: ScopedQueryDb,
+	actor: StaffActor,
+	propertyId: string
+) {
+	const row = await database.query.properties.findFirst({
+		where: and(
+			eq(properties.id, propertyId),
+			eq(properties.landlordId, actor.landlordId),
+			inArray(properties.id, assignedPropertyIds(actor))
+		)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	assertStaffPropertyRead(actor);
+	return row;
+}
+
+// --- Room ---
+
+export async function findRoomForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	roomId: string
+) {
+	const rows = await database
+		.select({ room: rooms })
+		.from(rooms)
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(and(eq(rooms.id, roomId), landlordRoomWhere(actor)))
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].room;
+}
+
+export async function findRoomForStaff(database: ScopedQueryDb, actor: StaffActor, roomId: string) {
+	const rows = await database
+		.select({ room: rooms })
+		.from(rooms)
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(
+			and(
+				eq(rooms.id, roomId),
+				eq(properties.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	assertStaffPropertyRead(actor);
+	return rows[0].room;
+}
+
+// --- Managed tenant ---
+
+export async function findManagedTenantForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	managedTenantId: string
+) {
+	const row = await database.query.managedTenants.findFirst({
+		where: and(eq(managedTenants.id, managedTenantId), landlordManagedTenantWhere(actor))
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+export async function findManagedTenantForStaff(
+	database: ScopedQueryDb,
+	actor: StaffActor,
+	managedTenantId: string
+) {
+	const rows = await database
+		.select({ managedTenant: managedTenants })
+		.from(managedTenants)
+		.innerJoin(
+			tenancies,
+			and(
+				eq(tenancies.managedTenantId, managedTenants.id),
+				eq(tenancies.status, 'ACTIVE'),
+				inArray(tenancies.propertyId, assignedPropertyIds(actor))
+			)
+		)
+		.where(
+			and(eq(managedTenants.id, managedTenantId), eq(managedTenants.landlordId, actor.landlordId))
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	assertStaffPermission(actor, 'VIEW_TENANTS');
+	return rows[0].managedTenant;
+}
+
+export async function findManagedTenantForTenant(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	managedTenantId: string
+) {
+	const row = await database.query.managedTenants.findFirst({
+		where: and(
+			eq(managedTenants.id, managedTenantId),
+			eq(managedTenants.claimedByUserId, actor.userId),
+			isNull(managedTenants.claimAccessSuspendedAt)
+		)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+// --- Tenancy ---
+
+export async function findTenancyForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	tenancyId: string
+) {
+	const row = await database.query.tenancies.findFirst({
+		where: and(eq(tenancies.id, tenancyId), landlordTenancyWhere(actor))
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+export async function findTenancyForStaff(
+	database: ScopedQueryDb,
+	actor: StaffActor,
+	tenancyId: string
+) {
+	const row = await database.query.tenancies.findFirst({
+		where: and(
+			eq(tenancies.id, tenancyId),
+			eq(tenancies.landlordId, actor.landlordId),
+			eq(tenancies.status, 'ACTIVE'),
+			inArray(tenancies.propertyId, assignedPropertyIds(actor))
+		)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	assertStaffPermission(actor, 'VIEW_TENANTS');
+	return row;
+}
+
+export async function findTenancyForTenant(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	options: { requireActive?: boolean } = { requireActive: true }
+) {
+	await assertTenantHistoryClaim(database, actor, scope);
+
+	const row = await database.query.tenancies.findFirst({
+		where:
+			options.requireActive !== false
+				? and(
+						eq(tenancies.id, scope.tenancyId),
+						eq(tenancies.managedTenantId, scope.managedTenantId),
+						eq(tenancies.status, 'ACTIVE')
+					)
+				: and(
+						eq(tenancies.id, scope.tenancyId),
+						eq(tenancies.managedTenantId, scope.managedTenantId)
+					)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+// --- Service catalog ---
+
+export async function findServiceForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	serviceId: string
+) {
+	const row = await database.query.services.findFirst({
+		where: and(eq(services.id, serviceId), landlordServiceWhere(actor))
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+export async function findServiceForStaff(
+	database: ScopedQueryDb,
+	actor: StaffActor,
+	serviceId: string
+) {
+	const rows = await database
+		.select({ service: services })
+		.from(services)
+		.innerJoin(roomServiceConfigs, eq(roomServiceConfigs.serviceId, services.id))
+		.innerJoin(rooms, eq(roomServiceConfigs.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(
+			and(
+				eq(services.id, serviceId),
+				eq(services.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	assertStaffServiceRead(actor);
+	return rows[0].service;
+}
+
+export async function findServiceForTenant(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	serviceId: string
+) {
+	const tenancy = await findTenancyForTenant(database, actor, scope);
+
+	const rows = await database
+		.select({ service: services })
+		.from(services)
+		.innerJoin(roomServiceConfigs, eq(roomServiceConfigs.serviceId, services.id))
+		.innerJoin(rooms, eq(roomServiceConfigs.roomId, rooms.id))
+		.where(
+			and(
+				eq(services.id, serviceId),
+				eq(rooms.id, tenancy.roomId),
+				eq(services.landlordId, tenancy.landlordId)
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].service;
+}
+
+// --- Invoice (landlord/tenant history only; staff finance blocked in MVP) ---
+
+export async function findInvoiceForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	invoiceId: string
+) {
+	const rows = await database
+		.select({ invoice: invoices })
+		.from(invoices)
+		.innerJoin(rooms, eq(invoices.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(and(eq(invoices.id, invoiceId), landlordRoomWhere(actor)))
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].invoice;
+}
+
+export async function findInvoiceForTenantHistory(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	invoiceId: string
+) {
+	await assertTenantHistoryClaim(database, actor, scope);
+
+	const row = await database.query.invoices.findFirst({
+		where: and(
+			eq(invoices.id, invoiceId),
+			eq(invoices.managedTenantId, scope.managedTenantId),
+			eq(invoices.tenancyId, scope.tenancyId)
+		)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+// --- Contract (landlord/tenant history only; staff finance blocked in MVP) ---
+
+export async function findContractForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	contractId: string
+) {
+	const rows = await database
+		.select({ contract: contracts })
+		.from(contracts)
+		.innerJoin(rooms, eq(contracts.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(and(eq(contracts.id, contractId), landlordRoomWhere(actor)))
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].contract;
+}
+
+export async function findContractForTenantHistory(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	contractId: string
+) {
+	await assertTenantHistoryClaim(database, actor, scope);
+
+	const row = await database.query.contracts.findFirst({
+		where: and(
+			eq(contracts.id, contractId),
+			eq(contracts.managedTenantId, scope.managedTenantId),
+			eq(contracts.tenancyId, scope.tenancyId)
+		)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+// --- Meter reading ---
+
+export async function findMeterReadingForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	meterReadingId: string
+) {
+	const rows = await database
+		.select({ meterReading: meterReadings })
+		.from(meterReadings)
+		.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(and(eq(meterReadings.id, meterReadingId), landlordRoomWhere(actor)))
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].meterReading;
+}
+
+export async function findMeterReadingForStaff(
+	database: ScopedQueryDb,
+	actor: StaffActor,
+	meterReadingId: string
+) {
+	const rows = await database
+		.select({ meterReading: meterReadings })
+		.from(meterReadings)
+		.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(
+			and(
+				eq(meterReadings.id, meterReadingId),
+				eq(properties.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	assertStaffPermission(actor, 'MANAGE_METERS');
+	return rows[0].meterReading;
+}
+
+export async function findMeterReadingForTenantHistory(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	meterReadingId: string
+) {
+	await assertTenantHistoryClaim(database, actor, scope);
+
+	const row = await database.query.meterReadings.findFirst({
+		where: and(
+			eq(meterReadings.id, meterReadingId),
+			eq(meterReadings.managedTenantId, scope.managedTenantId),
+			eq(meterReadings.tenancyId, scope.tenancyId)
+		)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+// --- Maintenance request ---
+
+export async function findMaintenanceRequestForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	requestId: string
+) {
+	const rows = await database
+		.select({ request: maintenanceRequests })
+		.from(maintenanceRequests)
+		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
+		.where(and(eq(maintenanceRequests.id, requestId), landlordTenancyWhere(actor)))
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].request;
+}
+
+export async function findMaintenanceRequestForStaff(
+	database: ScopedQueryDb,
+	actor: StaffActor,
+	requestId: string
+) {
+	const rows = await database
+		.select({ request: maintenanceRequests })
+		.from(maintenanceRequests)
+		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
+		.where(
+			and(
+				eq(maintenanceRequests.id, requestId),
+				eq(tenancies.landlordId, actor.landlordId),
+				inArray(tenancies.propertyId, assignedPropertyIds(actor))
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	assertStaffPermission(actor, 'MANAGE_REQUESTS');
+	return rows[0].request;
+}
+
+export async function findMaintenanceRequestForTenantHistory(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	requestId: string
+) {
+	await assertTenantHistoryClaim(database, actor, scope);
+
+	const row = await database.query.maintenanceRequests.findFirst({
+		where: and(
+			eq(maintenanceRequests.id, requestId),
+			eq(maintenanceRequests.managedTenantId, scope.managedTenantId),
+			eq(maintenanceRequests.tenancyId, scope.tenancyId)
+		)
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+// --- Payment account (safe projection only) ---
+
+export async function findPaymentAccountForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	paymentAccountId: string
+): Promise<SafePaymentAccount> {
+	const row = await database.query.paymentAccounts.findFirst({
+		where: and(eq(paymentAccounts.id, paymentAccountId), landlordPaymentAccountWhere(actor)),
+		columns: SAFE_PAYMENT_ACCOUNT_COLUMNS
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+/**
+ * Tenant reads payment instructions only via an invoice in claimed history scope.
+ * Join invoice → tenancy → paymentAccount; require paymentAccounts.landlordId = tenancies.landlordId.
+ * Cross-landlord account on an otherwise in-scope invoice → 404. Never returns PayOS secrets.
+ */
+export async function findPaymentAccountForTenantHistory(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	invoiceId: string
+): Promise<SafePaymentAccount> {
+	await assertTenantHistoryClaim(database, actor, scope);
+
+	const rows = await database
+		.select({
+			id: paymentAccounts.id,
+			landlordId: paymentAccounts.landlordId,
+			name: paymentAccounts.name,
+			provider: paymentAccounts.provider,
+			isDefault: paymentAccounts.isDefault,
+			isActive: paymentAccounts.isActive,
+			bankName: paymentAccounts.bankName,
+			bankCode: paymentAccounts.bankCode,
+			accountNumber: paymentAccounts.accountNumber,
+			accountName: paymentAccounts.accountName,
+			bankBranch: paymentAccounts.bankBranch,
+			momoNumber: paymentAccounts.momoNumber,
+			payosClientId: paymentAccounts.payosClientId,
+			payosConnectedAt: paymentAccounts.payosConnectedAt,
+			createdAt: paymentAccounts.createdAt,
+			updatedAt: paymentAccounts.updatedAt
+		})
+		.from(invoices)
+		.innerJoin(
+			tenancies,
+			and(
+				eq(invoices.tenancyId, tenancies.id),
+				eq(tenancies.id, scope.tenancyId),
+				eq(tenancies.managedTenantId, scope.managedTenantId)
+			)
+		)
+		.innerJoin(
+			paymentAccounts,
+			and(
+				eq(paymentAccounts.id, invoices.paymentAccountId),
+				eq(paymentAccounts.landlordId, tenancies.landlordId)
+			)
+		)
+		.where(
+			and(
+				eq(invoices.id, invoiceId),
+				eq(invoices.managedTenantId, scope.managedTenantId),
+				eq(invoices.tenancyId, scope.tenancyId)
+			)
+		)
+		.limit(1);
+
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0];
+}
+
+// --- Tenant property/room snapshot via tenancy ---
+
+export async function findPropertyForTenant(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	propertyId: string
+) {
+	const tenancy = await findTenancyForTenant(database, actor, scope);
+	if (tenancy.propertyId !== propertyId) {
+		throwScopedNotFound();
+	}
+
+	const row = await database.query.properties.findFirst({
+		where: and(eq(properties.id, propertyId), eq(properties.landlordId, tenancy.landlordId))
+	});
+	if (!row) {
+		throwScopedNotFound();
+	}
+	return row;
+}
+
+export async function findRoomForTenant(
+	database: ScopedQueryDb,
+	actor: TenantActor,
+	scope: TenantHistoryScope,
+	roomId: string
+) {
+	const tenancy = await findTenancyForTenant(database, actor, scope);
+	if (tenancy.roomId !== roomId) {
+		throwScopedNotFound();
+	}
+
+	const rows = await database
+		.select({ room: rooms })
+		.from(rooms)
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(and(eq(rooms.id, roomId), eq(properties.landlordId, tenancy.landlordId)))
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].room;
+}
+
+// --- Child mutation: room asset bound to room + landlord ---
+
+export async function findRoomAssetForLandlord(
+	database: ScopedQueryDb,
+	actor: LandlordActor,
+	input: { roomId: string; assetId: string }
+) {
+	const rows = await database
+		.select({ asset: roomAssets })
+		.from(roomAssets)
+		.innerJoin(rooms, eq(roomAssets.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(
+			and(
+				eq(roomAssets.id, input.assetId),
+				eq(roomAssets.roomId, input.roomId),
+				landlordRoomWhere(actor)
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	return rows[0].asset;
+}
+
+export async function findRoomAssetForStaff(
+	database: ScopedQueryDb,
+	actor: StaffActor,
+	input: { roomId: string; assetId: string }
+) {
+	const rows = await database
+		.select({ asset: roomAssets })
+		.from(roomAssets)
+		.innerJoin(rooms, eq(roomAssets.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(
+			and(
+				eq(roomAssets.id, input.assetId),
+				eq(roomAssets.roomId, input.roomId),
+				eq(properties.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
+		throwScopedNotFound();
+	}
+	assertStaffPermission(actor, 'VIEW_ROOMS');
+	return rows[0].asset;
+}
