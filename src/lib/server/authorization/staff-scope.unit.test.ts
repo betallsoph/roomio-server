@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { StaffActor } from './actor.js';
-import { isStaffCapability, staffHasCapability, staffHasPropertyAccess } from './staff-scope.js';
+import {
+	isStaffCapability,
+	normalizeStaffPermissions,
+	staffHasCapability,
+	staffHasPropertyAccess
+} from './staff-scope.js';
 
 const staff: StaffActor = {
 	kind: 'USER',
@@ -18,6 +23,17 @@ test('isStaffCapability accepts known permissions and rejects unknown and wildca
 	assert.equal(isStaffCapability('MANAGE_METERS'), true);
 	assert.equal(isStaffCapability('NOT_REAL'), false);
 	assert.equal(isStaffCapability('*'), false);
+});
+
+test('normalizeStaffPermissions uses STAFF_PERMISSIONS order, drops unknown and duplicates', () => {
+	assert.deepEqual(
+		normalizeStaffPermissions(['MANAGE_METERS', 'VIEW_ROOMS', 'MANAGE_METERS', '*', 'NOPE']),
+		['VIEW_ROOMS', 'MANAGE_METERS']
+	);
+	assert.deepEqual(
+		normalizeStaffPermissions(['MANAGE_REQUESTS', 'VIEW_TENANTS', 'VIEW_ROOMS', 'MANAGE_METERS']),
+		['VIEW_ROOMS', 'VIEW_TENANTS', 'MANAGE_METERS', 'MANAGE_REQUESTS']
+	);
 });
 
 test('staffHasPropertyAccess and staffHasCapability reflect actor slices', () => {

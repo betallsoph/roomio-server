@@ -24,6 +24,20 @@ export function assertStaffCapability(value: string): StaffPermission {
 	return value;
 }
 
+/**
+ * Filter unknown/wildcard values, drop duplicates, and order by `STAFF_PERMISSIONS`
+ * (VIEW_* before MANAGE_*) — never alphabetical.
+ */
+export function normalizeStaffPermissions(values: readonly string[]): StaffPermission[] {
+	const seen = new Set<StaffPermission>();
+	for (const value of values) {
+		if (isStaffCapability(value)) {
+			seen.add(value);
+		}
+	}
+	return STAFF_PERMISSIONS.filter((permission) => seen.has(permission));
+}
+
 export async function loadActiveStaffPropertyIds(
 	database: StaffScopeDb,
 	staffId: string
@@ -46,13 +60,7 @@ export async function loadActiveStaffPermissions(
 		where: and(eq(staffPermissions.staffId, staffId), isNull(staffPermissions.revokedAt)),
 		columns: { permission: true }
 	});
-	const out: StaffPermission[] = [];
-	for (const row of rows) {
-		if (isStaffCapability(row.permission)) {
-			out.push(row.permission);
-		}
-	}
-	return out;
+	return normalizeStaffPermissions(rows.map((row) => row.permission));
 }
 
 export function staffHasProperty(actor: StaffActor, propertyId: string): boolean {

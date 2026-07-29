@@ -1,19 +1,12 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { SessionData } from '$lib/server/session';
 import { getEnv } from '$lib/server/env';
-import {
-	users,
-	landlordProfiles,
-	tenantProfiles,
-	staffProfiles,
-	staffPropertyAssignments,
-	staffPermissions
-} from '$lib/server/db/schema';
+import { users, landlordProfiles, tenantProfiles, staffProfiles } from '$lib/server/db/schema';
 import type * as schema from '$lib/server/db/schema';
 import type { ActorContext, StaffPermission } from './actor.js';
 import { UnauthorizedError } from './errors.js';
-import { isStaffCapability } from './staff-scope.js';
-import { and, eq, isNull } from 'drizzle-orm';
+import { loadActiveStaffPermissions, loadActiveStaffPropertyIds } from './staff-scope.js';
+import { eq } from 'drizzle-orm';
 
 type DrizzleDb = NodePgDatabase<typeof schema>;
 
@@ -116,27 +109,10 @@ export function createDrizzleActorDb(database: DrizzleDb): ActorDb {
 			return row ?? null;
 		},
 		async listActiveStaffPropertyIds(staffId) {
-			const rows = await database.query.staffPropertyAssignments.findMany({
-				where: and(
-					eq(staffPropertyAssignments.staffId, staffId),
-					isNull(staffPropertyAssignments.revokedAt)
-				),
-				columns: { propertyId: true }
-			});
-			return rows.map((row) => row.propertyId);
+			return loadActiveStaffPropertyIds(database, staffId);
 		},
 		async listActiveStaffPermissions(staffId) {
-			const rows = await database.query.staffPermissions.findMany({
-				where: and(eq(staffPermissions.staffId, staffId), isNull(staffPermissions.revokedAt)),
-				columns: { permission: true }
-			});
-			const out: StaffPermission[] = [];
-			for (const row of rows) {
-				if (isStaffCapability(row.permission)) {
-					out.push(row.permission);
-				}
-			}
-			return out;
+			return loadActiveStaffPermissions(database, staffId);
 		}
 	};
 }
