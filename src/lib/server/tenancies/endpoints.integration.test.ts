@@ -684,6 +684,119 @@ if (skipReason) {
 		assert.equal(roomRows[0]?.currentManagedTenantId, fixture.managedTenantUnclaimed);
 	});
 
+	test('turning the flag off still binds a new contract to the existing tenancy', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+
+		// Rollback flag: luồng legacy KHÔNG được tạo contract mồ côi song song lịch sử canonical.
+		setDualWriteFlag(false);
+
+		const { POST } = await import('../../../routes/api/contracts/+server.js');
+		const { status, body } = await readJson(
+			await POST(
+				requestEvent(
+					{
+						tenantId: fixture.legacyTenantProfileId,
+						roomId: fixture.roomA1,
+						startDate: '2026-07-01',
+						endDate: '2027-07-01',
+						monthlyRent: 3_000_000
+					},
+					landlordLocals()
+				)
+			)
+		);
+
+		assert.equal(status, 201);
+		assert.equal(body.tenancyId, started.tenancy.id);
+		assert.equal(body.managedTenantId, fixture.managedTenantLegacy);
+
+		const rows = await db
+			.select({ tenancyId: contracts.tenancyId, managedTenantId: contracts.managedTenantId })
+			.from(contracts)
+			.where(eq(contracts.roomId, fixture.roomA1));
+		assert.equal(rows.length, 1);
+		assert.notEqual(rows[0]?.tenancyId, null, 'no orphan contract beside a canonical tenancy');
+	});
+
+	test('turning the flag off rejects a contract for the wrong tenant on a tenancy room', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+
+		setDualWriteFlag(false);
+
+		// TenantProfile hợp lệ với luồng legacy (đang ở phòng khác) nhưng KHÔNG phải người
+		// thuê của lần thuê này — legacy guard cũ sẽ cho qua, guard mới phải chặn.
+		const { POST } = await import('../../../routes/api/contracts/+server.js');
+		const { status, body } = await readJson(
+			await POST(
+				requestEvent(
+					{
+						tenantId: `${fixture.runId}-not-the-occupant`,
+						roomId: fixture.roomA1,
+						startDate: '2026-07-01',
+						endDate: '2027-07-01',
+						monthlyRent: 3_000_000
+					},
+					landlordLocals()
+				)
+			)
+		);
+
+		// Body tenantId không thuộc phòng nào của chủ trọ → legacy ownership guard trả 403;
+		// điều quan trọng là KHÔNG có contract nào được ghi.
+		assert.ok(status === 403 || status === 409, `unexpected status ${status}`);
+		if (status === 409) assert.equal(body.code, 'CONTRACT_TENANT_MISMATCH');
+		assert.equal(await countContractsForRoomA1(), 0);
+	});
+
+	test('with the flag off and no tenancy the legacy contract flow is unchanged', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(false);
+
+		// Phòng legacy: có occupant cache cũ, chưa có Tenancy nào.
+		await db
+			.update(rooms)
+			.set({ tenantId: fixture.legacyTenantProfileId })
+			.where(eq(rooms.id, fixture.roomA1));
+
+		const { POST } = await import('../../../routes/api/contracts/+server.js');
+		const { status } = await readJson(
+			await POST(
+				requestEvent(
+					{
+						tenantId: fixture.legacyTenantProfileId,
+						roomId: fixture.roomA1,
+						startDate: '2026-07-01',
+						endDate: '2027-07-01',
+						monthlyRent: 3_000_000
+					},
+					landlordLocals()
+				)
+			)
+		);
+
+		assert.equal(status, 200, 'legacy response shape must not change while the flag is off');
+		const rows = await db
+			.select({ tenancyId: contracts.tenancyId })
+			.from(contracts)
+			.where(eq(contracts.roomId, fixture.roomA1));
+		assert.equal(rows.length, 1);
+		assert.equal(rows[0]?.tenancyId, null);
+	});
+
 	test('turning the flag off still ends an existing tenancy on checkout', async () => {
 		await resetBusinessRows();
 		setDualWriteFlag(true);

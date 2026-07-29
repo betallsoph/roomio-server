@@ -18,7 +18,10 @@ import {
 	unauthenticatedError
 } from '$lib/server/authorization/errors';
 import { isTenancyDualWriteEnabled } from '$lib/server/env';
-import { createContractForActiveTenancy } from '$lib/server/tenancies/service';
+import {
+	createContractForActiveTenancy,
+	hasActiveTenancyForRoom
+} from '$lib/server/tenancies/service';
 import { isTenancyServiceError, toTenancyErrorBody } from '$lib/server/tenancies/state';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
@@ -178,6 +181,39 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		) {
 			return forbidden();
 		}
+
+		// AUTH-006 rollback guard — flag đã tắt nhưng phòng vẫn có Tenancy ACTIVE do lần bật
+		// trước. Không được insert contract mồ côi (tenancyId null) song song lịch sử canonical:
+		// đi tiếp qua service để hợp đồng gắn đúng lần thuê, hoặc từ chối rõ ràng.
+		if (await hasActiveTenancyForRoom(db, roomId)) {
+			try {
+				const roomPaymentAccount = await resolveRoomPaymentAccount(
+					actor.landlordId,
+					roomId,
+					paymentAccountId
+				);
+				if ('response' in roomPaymentAccount) return roomPaymentAccount.response;
+
+				const contract = await createContractForActiveTenancy(db, actor, {
+					roomId,
+					startDate,
+					endDate,
+					monthlyRent,
+					deposit,
+					fileUrl,
+					notes,
+					paymentAccountId: roomPaymentAccount.paymentAccountId,
+					expectedLegacyTenantProfileId: tenantId
+				});
+				return json(contract, { status: 201 });
+			} catch (error) {
+				if (isTenancyServiceError(error)) {
+					return json(toTenancyErrorBody(error, locals.requestId), { status: error.status });
+				}
+				throw error;
+			}
+		}
+
 		const room = await db.query.rooms.findFirst({
 			where: eq(rooms.id, roomId),
 			columns: { paymentAccountId: true }
