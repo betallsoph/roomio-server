@@ -27,6 +27,8 @@ import {
 } from '$lib/server/authorization/errors';
 import { isTenancyDualWriteEnabled } from '$lib/server/env';
 import { hasActiveTenancyForRoom, startTenancy } from '$lib/server/tenancies/service';
+import { createManagedTenant } from '$lib/server/managed-tenants/service';
+import { isManagedTenantServiceError } from '$lib/server/managed-tenants/state';
 import {
 	addYearsToCalendarDate,
 	isTenancyServiceError,
@@ -79,23 +81,29 @@ type CheckInResponse = {
  * `ManagedTenant` (endpoint quản lý hồ sơ thuộc AUTH-009).
  */
 async function checkInWithTenancyService(
-	request: Request,
+	body: unknown,
 	actor: LandlordActor,
 	requestId: string
 ): Promise<Response> {
-	const body = await request.json();
-	const {
-		roomId,
-		managedTenantId,
-		moveInDate,
-		deposit,
-		notes,
-		paymentAccountId,
-		initialElectricity,
-		initialWater,
-		contractEndDate,
-		plannedEndDate
-	} = body ?? {};
+	const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+	const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
+	const managedTenantId =
+		typeof payload.managedTenantId === 'string' ? payload.managedTenantId : '';
+	const moveInDate = payload.moveInDate;
+	const deposit = payload.deposit;
+	const notes = payload.notes;
+	const paymentAccountId =
+		typeof payload.paymentAccountId === 'string' ? payload.paymentAccountId : null;
+	const initialElectricity = payload.initialElectricity;
+	const initialWater = payload.initialWater;
+	const contractEndDate =
+		typeof payload.contractEndDate === 'string' ? payload.contractEndDate : undefined;
+	const plannedEndDate =
+		typeof payload.plannedEndDate === 'string' ? payload.plannedEndDate : null;
+
+	if (!roomId.trim()) {
+		return json({ error: 'Thiếu roomId' }, { status: 400 });
+	}
 
 	if (typeof managedTenantId !== 'string' || managedTenantId.trim() === '') {
 		return json(
@@ -134,13 +142,13 @@ async function checkInWithTenancyService(
 					roomId,
 					managedTenantId,
 					startDate,
-					plannedEndDate: plannedEndDate ?? null,
-					depositRequired: deposit,
+					plannedEndDate,
+					depositRequired: deposit as number,
 					contract: {
 						// Mặc định hợp đồng 12 tháng như luồng cũ, tính trên lịch chứ không qua epoch.
 						endDate: contractEndDate || addYearsToCalendarDate(startDate, 1),
-						deposit,
-						notes: notes ?? null,
+						deposit: deposit as number,
+						notes: typeof notes === 'string' ? notes : null,
 						paymentAccountId: selectedPaymentAccountId
 					}
 				},
@@ -229,14 +237,36 @@ async function recordInitialMeterReadings(
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		// AUTH-006 — khi flag bật, MỌI check-in mới đi qua service Tenancy duy nhất.
+		// AUTH-006 / AUTH-009 — khi flag bật, POST phân nhánh theo body:
+		// - `roomId` + `managedTenantId` → check-in (startTenancy)
+		// - `displayName` → tạo ManagedTenant (không tạo/link User từ contact)
 		if (isTenancyDualWriteEnabled()) {
 			if (!locals.actor) {
 				return authorizationErrorToResponse(unauthenticatedError());
 			}
 			const actorResult = requireLandlordActor(locals.actor);
 			if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
-			return await checkInWithTenancyService(request, actorResult.value, locals.requestId);
+
+			const body = await request.json().catch(() => ({}));
+			const hasRoomId = typeof body?.roomId === 'string' && body.roomId.trim() !== '';
+			if (hasRoomId) {
+				return await checkInWithTenancyService(body, actorResult.value, locals.requestId);
+			}
+
+			try {
+				const managedTenant = await createManagedTenant(db, actorResult.value, body, {
+					requestId: locals.requestId
+				});
+				return json(managedTenant, { status: 201 });
+			} catch (error) {
+				if (isManagedTenantServiceError(error)) {
+					return json(
+						{ error: error.message, code: error.code, requestId: locals.requestId },
+						{ status: error.status }
+					);
+				}
+				throw error;
+			}
 		}
 
 		// Luồng legacy (flag off) — giữ nguyên đến khi AUTH-009 thay identity/invite.
