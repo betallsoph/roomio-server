@@ -63,7 +63,7 @@ test('resolveStaffCapabilityRequirement maps operational resources to capabiliti
 		permission: 'VIEW_TENANTS'
 	});
 	assert.deepEqual(resolveStaffCapabilityRequirement('service', 'detail'), {
-		kind: 'PROPERTY_ASSIGNMENT_ONLY'
+		kind: 'SERVICE_READ'
 	});
 	assert.deepEqual(resolveStaffCapabilityRequirement('property', 'create'), { kind: 'DENY' });
 });
@@ -93,15 +93,12 @@ test('staffScopedCapabilityFromRequirement maps finite unions without callbacks'
 		'MANAGE_METERS'
 	);
 	assert.equal(staffScopedCapabilityFromRequirement({ kind: 'PROPERTY_READ' }), 'PROPERTY_READ');
-	assert.equal(
-		staffScopedCapabilityFromRequirement({ kind: 'PROPERTY_ASSIGNMENT_ONLY' }),
-		'PROPERTY_ASSIGNMENT_ONLY'
-	);
+	assert.equal(staffScopedCapabilityFromRequirement({ kind: 'SERVICE_READ' }), 'SERVICE_READ');
 });
 
 test('staffScopedCapabilityForAction resolves scoped SQL tokens from resource/action', () => {
 	assert.equal(staffScopedCapabilityForAction('meter', 'detail'), 'MANAGE_METERS');
 	assert.equal(staffScopedCapabilityForAction('property', 'list'), 'PROPERTY_READ');
-	assert.equal(staffScopedCapabilityForAction('service', 'detail'), 'PROPERTY_ASSIGNMENT_ONLY');
+	assert.equal(staffScopedCapabilityForAction('service', 'detail'), 'SERVICE_READ');
 	assert.equal(staffScopedCapabilityForAction('invoice', 'detail'), null);
 });

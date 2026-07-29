@@ -6,7 +6,8 @@ import {
 	maintenanceRequests,
 	meterReadings,
 	roomAssets,
-	rooms
+	rooms,
+	services
 } from '$lib/server/db/schema';
 import type { LandlordActor, StaffActor, SuperAdminActor, TenantActor } from './actor.js';
 import { AuthorizationError } from './errors.js';
@@ -14,9 +15,6 @@ import {
 	ScopedResourceNotFoundError,
 	findContractForLandlord,
 	findContractForTenantHistory,
-	findConversationForLandlord,
-	findFileForLandlord,
-	findFileForTenant,
 	findInvoiceForLandlord,
 	findInvoiceForTenantHistory,
 	findManagedTenantForLandlord,
@@ -24,7 +22,6 @@ import {
 	findMaintenanceRequestForLandlord,
 	findMeterReadingForLandlord,
 	findPaymentAccountForLandlord,
-	findPaymentAccountForTenant,
 	findPropertyForLandlord,
 	findPropertyForTenant,
 	findRoomAssetForLandlord,
@@ -95,6 +92,11 @@ function emptySelect(): ScopedQueryDb['select'] {
 			from: () => ({
 				innerJoin: () => ({
 					innerJoin: () => ({
+						innerJoin: () => ({
+							where: () => ({
+								limit: async () => []
+							})
+						}),
 						where: () => ({
 							limit: async () => []
 						})
@@ -111,13 +113,18 @@ function emptySelect(): ScopedQueryDb['select'] {
 }
 
 function joinSelect(
-	resolver: (table: unknown, depth: 'single' | 'double' | 'plain') => unknown[]
+	resolver: (table: unknown, depth: 'single' | 'double' | 'triple' | 'plain') => unknown[]
 ): ScopedQueryDb['select'] {
 	return () =>
 		({
 			from: (table: unknown) => ({
 				innerJoin: () => ({
 					innerJoin: () => ({
+						innerJoin: () => ({
+							where: () => ({
+								limit: async () => resolver(table, 'triple')
+							})
+						}),
 						where: () => ({
 							limit: async () => resolver(table, 'double')
 						})
@@ -229,20 +236,25 @@ test('staff outside assignment is NotFound; missing capability on assigned resou
 		{} as never,
 		joinSelect((table) => {
 			if (table === rooms) {
-				return [{ room: { id: 'room-a1' }, propertyId: 'property-a1' }];
+				return [{ room: { id: 'room-a1' } }];
 			}
 			return [];
 		})
 	);
 
+	const staffRoomDbUnassigned = queryOnlyDb(
+		{} as never,
+		joinSelect(() => [])
+	);
+
 	await assert.rejects(
-		() => findRoomForStaff(staffRoomDb, STAFF_UNASSIGNED, 'room-a1', 'PROPERTY_READ'),
+		() => findRoomForStaff(staffRoomDbUnassigned, STAFF_UNASSIGNED, 'room-a1'),
 		(err: unknown) => err instanceof ScopedResourceNotFoundError
 	);
 
 	const staffNoPerm: StaffActor = { ...STAFF_ASSIGNED, permissions: [] };
 	await assert.rejects(
-		() => findRoomForStaff(staffRoomDb, staffNoPerm, 'room-a1', 'PROPERTY_READ'),
+		() => findRoomForStaff(staffRoomDb, staffNoPerm, 'room-a1'),
 		(err: unknown) => {
 			assert.ok(err instanceof AuthorizationError);
 			assert.equal(err.status, 403);
@@ -252,17 +264,25 @@ test('staff outside assignment is NotFound; missing capability on assigned resou
 });
 
 test('staff service read requires assignment and operational capability', async () => {
-	const serviceDb = queryOnlyDb({
-		services: {
-			findFirst: async () => ({ id: 'svc-1', landlordId: 'landlord-a', name: 'Điện' })
-		}
-	} as never);
+	const serviceDb = queryOnlyDb(
+		{} as never,
+		joinSelect((table, depth) => {
+			if (table === services && depth === 'triple') {
+				return [{ service: { id: 'svc-1', landlordId: 'landlord-a', name: 'Điện' } }];
+			}
+			return [];
+		})
+	);
 
 	const reader: StaffActor = { ...STAFF_ASSIGNED, permissions: ['VIEW_ROOMS'] };
 	assert.equal((await findServiceForStaff(serviceDb, reader, 'svc-1')).id, 'svc-1');
 
+	const serviceDbUnassigned = queryOnlyDb(
+		{} as never,
+		joinSelect(() => [])
+	);
 	await assert.rejects(
-		() => findServiceForStaff(serviceDb, STAFF_UNASSIGNED, 'svc-1'),
+		() => findServiceForStaff(serviceDbUnassigned, STAFF_UNASSIGNED, 'svc-1'),
 		(err: unknown) => err instanceof ScopedResourceNotFoundError
 	);
 
@@ -277,12 +297,12 @@ test('staff service read requires assignment and operational capability', async 
 	);
 });
 
-test('staff MANAGE_METERS-only can property-read via PROPERTY_READ token', async () => {
+test('staff MANAGE_METERS-only can property-read via owned PROPERTY_READ gate', async () => {
 	const db = queryOnlyDb(
 		{} as never,
 		joinSelect((table) => {
 			if (table === rooms) {
-				return [{ room: { id: 'room-a1' }, propertyId: 'property-a1' }];
+				return [{ room: { id: 'room-a1' } }];
 			}
 			return [];
 		})
@@ -292,7 +312,7 @@ test('staff MANAGE_METERS-only can property-read via PROPERTY_READ token', async
 		...STAFF_ASSIGNED,
 		permissions: ['MANAGE_METERS']
 	};
-	const room = await findRoomForStaff(db, meterStaff, 'room-a1', 'PROPERTY_READ');
+	const room = await findRoomForStaff(db, meterStaff, 'room-a1');
 	assert.equal(room.id, 'room-a1');
 });
 
@@ -307,26 +327,6 @@ test('tenant history rejects suspended claim access', async () => {
 		() => findInvoiceForTenantHistory(suspendedDb, TENANT_ACTOR, HISTORY_SCOPE, 'inv-1'),
 		(err: unknown) => err instanceof ScopedResourceNotFoundError
 	);
-});
-
-test('tenant payment account scoped via active tenancy landlord', async () => {
-	const db = queryOnlyDb({
-		managedTenants: { findFirst: async () => ({ id: HISTORY_SCOPE.managedTenantId }) },
-		tenancies: {
-			findFirst: async () => ({
-				id: HISTORY_SCOPE.tenancyId,
-				managedTenantId: HISTORY_SCOPE.managedTenantId,
-				status: 'ACTIVE',
-				landlordId: 'landlord-a'
-			})
-		},
-		paymentAccounts: {
-			findFirst: async () => ({ id: 'pay-a', landlordId: 'landlord-a' })
-		}
-	} as never);
-
-	const account = await findPaymentAccountForTenant(db, TENANT_ACTOR, HISTORY_SCOPE, 'pay-a');
-	assert.equal(account.id, 'pay-a');
 });
 
 test('tenant history requires claimant and tenancy scope from DB', async () => {
@@ -461,25 +461,30 @@ test('tenant scoped property and room bind to active tenancy snapshot', async ()
 	);
 });
 
-test('tenant managed tenant and service require claimant scope', async () => {
-	const db = queryOnlyDb({
-		managedTenants: {
-			findFirst: async () => ({ id: 'mt-1', claimedByUserId: TENANT_ACTOR.userId })
-		},
-		tenancies: {
-			findFirst: async () => ({
-				id: HISTORY_SCOPE.tenancyId,
-				managedTenantId: HISTORY_SCOPE.managedTenantId,
-				status: 'ACTIVE',
-				landlordId: 'landlord-a',
-				propertyId: 'property-a1',
-				roomId: 'room-a1'
-			})
-		},
-		services: {
-			findFirst: async () => ({ id: 'svc-1', landlordId: 'landlord-a' })
-		}
-	} as never);
+test('tenant managed tenant and service require claimant scope and room service binding', async () => {
+	const db = queryOnlyDb(
+		{
+			managedTenants: {
+				findFirst: async () => ({ id: 'mt-1', claimedByUserId: TENANT_ACTOR.userId })
+			},
+			tenancies: {
+				findFirst: async () => ({
+					id: HISTORY_SCOPE.tenancyId,
+					managedTenantId: HISTORY_SCOPE.managedTenantId,
+					status: 'ACTIVE',
+					landlordId: 'landlord-a',
+					propertyId: 'property-a1',
+					roomId: 'room-a1'
+				})
+			}
+		} as never,
+		joinSelect((table, depth) => {
+			if (table === services && depth === 'double') {
+				return [{ service: { id: 'svc-1', landlordId: 'landlord-a' } }];
+			}
+			return [];
+		})
+	);
 
 	const managedTenant = await findManagedTenantForTenant(db, TENANT_ACTOR, 'mt-1');
 	assert.equal(managedTenant.id, 'mt-1');
@@ -489,113 +494,6 @@ test('tenant managed tenant and service require claimant scope', async () => {
 
 	const tenancy = await findTenancyForTenant(db, TENANT_ACTOR, HISTORY_SCOPE);
 	assert.equal(tenancy.id, HISTORY_SCOPE.tenancyId);
-});
-
-test('landlord conversation resolves legacy conversationId from managed tenant scope', async () => {
-	const db = queryOnlyDb(
-		{
-			tenantProfiles: {
-				findFirst: async () => ({ id: 'tenant-profile-1' })
-			}
-		} as never,
-		joinSelect((_table, depth) => {
-			if (depth === 'single') {
-				return [
-					{
-						tenancy: { id: 'tenancy-1', landlordId: 'landlord-a' },
-						managedTenant: {
-							id: 'mt-1',
-							legacyTenantProfileId: null,
-							claimedByUserId: 'tenant-user'
-						}
-					}
-				];
-			}
-			return [];
-		})
-	);
-
-	const conversation = await findConversationForLandlord(db, LANDLORD_A, HISTORY_SCOPE);
-	assert.equal(conversation.conversationId, 'landlord-a_tenant-profile-1');
-	assert.equal(conversation.tenantProfileId, 'tenant-profile-1');
-});
-
-test('tenant file hides LANDLORD_ONLY visibility as NotFound', async () => {
-	const landlordDb = queryOnlyDb(
-		{} as never,
-		joinSelect((_table, depth) => {
-			if (depth === 'single') {
-				return [
-					{
-						file: {
-							id: 'file-1',
-							landlordId: 'landlord-a',
-							managedTenantId: 'mt-1',
-							tenancyId: 'tenancy-1',
-							visibility: 'LANDLORD_ONLY'
-						}
-					}
-				];
-			}
-			return [];
-		})
-	);
-
-	const landlordFile = await findFileForLandlord(landlordDb, LANDLORD_A, 'file-1', {
-		managedTenantId: 'mt-1',
-		tenancyId: 'tenancy-1'
-	});
-	assert.equal(landlordFile.id, 'file-1');
-
-	const tenantVisibleDb = queryOnlyDb(
-		{
-			managedTenants: { findFirst: async () => ({ id: HISTORY_SCOPE.managedTenantId }) },
-			tenancies: { findFirst: async () => ({ id: HISTORY_SCOPE.tenancyId }) }
-		} as never,
-		joinSelect((_table, depth) => {
-			if (depth === 'plain') {
-				return [
-					{
-						file: {
-							id: 'file-2',
-							visibility: 'TENANT_CAN_VIEW',
-							managedTenantId: HISTORY_SCOPE.managedTenantId,
-							tenancyId: HISTORY_SCOPE.tenancyId
-						}
-					}
-				];
-			}
-			return [];
-		})
-	);
-	const visible = await findFileForTenant(tenantVisibleDb, TENANT_ACTOR, HISTORY_SCOPE, 'file-2');
-	assert.equal(visible.id, 'file-2');
-
-	const tenantHiddenDb = queryOnlyDb(
-		{
-			managedTenants: { findFirst: async () => ({ id: HISTORY_SCOPE.managedTenantId }) },
-			tenancies: { findFirst: async () => ({ id: HISTORY_SCOPE.tenancyId }) }
-		} as never,
-		joinSelect((_table, depth) => {
-			if (depth === 'plain') {
-				return [
-					{
-						file: {
-							id: 'file-3',
-							visibility: 'LANDLORD_ONLY',
-							managedTenantId: HISTORY_SCOPE.managedTenantId,
-							tenancyId: HISTORY_SCOPE.tenancyId
-						}
-					}
-				];
-			}
-			return [];
-		})
-	);
-	await assert.rejects(
-		() => findFileForTenant(tenantHiddenDb, TENANT_ACTOR, HISTORY_SCOPE, 'file-3'),
-		(err: unknown) => err instanceof ScopedResourceNotFoundError
-	);
 });
 
 test('landlord payment account scoped by landlordId column', async () => {
@@ -717,13 +615,13 @@ test('assigned staff can load scoped room', async () => {
 		{} as never,
 		joinSelect((table) => {
 			if (table === rooms) {
-				return [{ room: { id: 'room-a1' }, propertyId: 'property-a1' }];
+				return [{ room: { id: 'room-a1' } }];
 			}
 			return [];
 		})
 	);
 
-	const room = await findRoomForStaff(db, STAFF_ASSIGNED, 'room-a1', 'PROPERTY_READ');
+	const room = await findRoomForStaff(db, STAFF_ASSIGNED, 'room-a1');
 	assert.equal(room.id, 'room-a1');
 });
 

@@ -104,7 +104,7 @@ export type StaffCapabilityRequirement =
 	| { kind: 'DENY' }
 	| { kind: 'CAPABILITY'; permission: StaffPermission }
 	| { kind: 'PROPERTY_READ' }
-	| { kind: 'PROPERTY_ASSIGNMENT_ONLY' };
+	| { kind: 'SERVICE_READ' };
 
 /**
  * Finite staff capability token for scoped-query helpers — no callback escape hatch.
@@ -113,10 +113,7 @@ export type StaffCapabilityRequirement =
 export type StaffCapabilityCheck = StaffPermission;
 
 /** Non-permission staff gates used by scoped SQL (§6.2 property read / service catalog). */
-export type StaffScopedCapability =
-	| StaffCapabilityCheck
-	| 'PROPERTY_READ'
-	| 'PROPERTY_ASSIGNMENT_ONLY';
+export type StaffScopedCapability = StaffCapabilityCheck | 'PROPERTY_READ' | 'SERVICE_READ';
 
 /** Map a resolved requirement to a finite scoped capability token, or null when denied. */
 export function staffScopedCapabilityFromRequirement(
@@ -129,8 +126,8 @@ export function staffScopedCapabilityFromRequirement(
 			return requirement.permission;
 		case 'PROPERTY_READ':
 			return 'PROPERTY_READ';
-		case 'PROPERTY_ASSIGNMENT_ONLY':
-			return 'PROPERTY_ASSIGNMENT_ONLY';
+		case 'SERVICE_READ':
+			return 'SERVICE_READ';
 		default: {
 			const _exhaustive: never = requirement;
 			return _exhaustive;
@@ -230,7 +227,7 @@ export function resolveStaffCapabilityRequirement(
 			switch (action) {
 				case 'list':
 				case 'detail':
-					return { kind: 'PROPERTY_ASSIGNMENT_ONLY' };
+					return { kind: 'SERVICE_READ' };
 				default:
 					return denyStaff();
 			}

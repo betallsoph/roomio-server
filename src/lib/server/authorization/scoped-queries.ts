@@ -1,32 +1,28 @@
 import { and, eq, inArray, isNull, type SQL } from 'drizzle-orm';
-import { pgTable, text } from 'drizzle-orm/pg-core';
 import type { db as AppDb } from '$lib/server/db';
 import {
 	contracts,
 	invoices,
 	maintenanceRequests,
 	managedTenants,
-	messages,
 	meterReadings,
 	paymentAccounts,
 	properties,
 	roomAssets,
+	roomServiceConfigs,
 	rooms,
 	services,
-	tenancies,
-	tenantProfiles
+	tenancies
 } from '$lib/server/db/schema';
 import type { LandlordActor, StaffActor, TenantActor } from './actor.js';
 import {
 	type StaffCapabilityCheck,
-	type StaffScopedCapability,
 	staffHasPropertyReadCapability,
-	staffScopedCapabilityForAction,
 	staffServiceReadCapability
 } from './capabilities.js';
 import { forbiddenError } from './errors.js';
 import { isOperationalUserActor } from './policies.js';
-import { staffHasPermission, staffHasProperty } from './staff-scope.js';
+import { staffHasPermission } from './staff-scope.js';
 
 export { isOperationalUserActor };
 export type { StaffCapabilityCheck, StaffScopedCapability } from './capabilities.js';
@@ -53,31 +49,14 @@ export type TenantHistoryScope = {
 	tenancyId: string;
 };
 
-export type ConversationScope = TenantHistoryScope;
-
-export type ResolvedConversation = {
-	conversationId: string;
-	landlordId: string;
-	managedTenantId: string;
-	tenancyId: string;
-	tenantProfileId: string | null;
-};
-
 export type ScopedQueryDb = Pick<typeof AppDb, 'query' | 'select'>;
-
-/**
- * Query-only mirror of planned TenantFile (DATA ticket). Replace with schema import when merged.
- */
-const tenantFiles = pgTable('TenantFile', {
-	id: text('id').primaryKey(),
-	landlordId: text('landlordId').notNull(),
-	managedTenantId: text('managedTenantId').notNull(),
-	tenancyId: text('tenancyId'),
-	visibility: text('visibility').notNull()
-});
 
 function throwScopedNotFound(): never {
 	throw new ScopedResourceNotFoundError();
+}
+
+function assignedPropertyIds(actor: StaffActor): string[] {
+	return actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__'];
 }
 
 function assertStaffPermission(actor: StaffActor, permission: StaffCapabilityCheck): void {
@@ -86,23 +65,15 @@ function assertStaffPermission(actor: StaffActor, permission: StaffCapabilityChe
 	}
 }
 
-function assertStaffScopedCapability(actor: StaffActor, capability: StaffScopedCapability): void {
-	switch (capability) {
-		case 'PROPERTY_READ':
-			if (!staffHasPropertyReadCapability(actor.permissions)) {
-				throw forbiddenError();
-			}
-			break;
-		case 'PROPERTY_ASSIGNMENT_ONLY':
-			break;
-		default:
-			assertStaffPermission(actor, capability);
+function assertStaffPropertyRead(actor: StaffActor): void {
+	if (!staffHasPropertyReadCapability(actor.permissions)) {
+		throw forbiddenError();
 	}
 }
 
-function assertStaffPropertyInScope(actor: StaffActor, propertyId: string): void {
-	if (!staffHasProperty(actor, propertyId)) {
-		throwScopedNotFound();
+function assertStaffServiceRead(actor: StaffActor): void {
+	if (!staffServiceReadCapability(actor.permissions)) {
+		throw forbiddenError();
 	}
 }
 
@@ -135,27 +106,6 @@ async function assertTenantHistoryClaim(
 	}
 }
 
-async function resolveTenantProfileId(
-	database: ScopedQueryDb,
-	managedTenant: { legacyTenantProfileId: string | null; claimedByUserId: string | null }
-): Promise<string | null> {
-	if (managedTenant.legacyTenantProfileId) {
-		return managedTenant.legacyTenantProfileId;
-	}
-	if (!managedTenant.claimedByUserId) {
-		return null;
-	}
-	const profile = await database.query.tenantProfiles.findFirst({
-		where: eq(tenantProfiles.userId, managedTenant.claimedByUserId),
-		columns: { id: true }
-	});
-	return profile?.id ?? null;
-}
-
-function legacyConversationId(landlordId: string, tenantProfileId: string): string {
-	return `${landlordId}_${tenantProfileId}`;
-}
-
 /** SQL predicate for landlord-owned properties (single-table list/detail). */
 export function landlordPropertyWhere(landlordId: string): SQL {
 	return eq(properties.landlordId, landlordId);
@@ -183,7 +133,7 @@ export function landlordServiceWhere(landlordId: string): SQL {
 }
 
 export function staffAssignedPropertiesWhere(actor: StaffActor): SQL {
-	return inArray(properties.id, actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__']);
+	return inArray(properties.id, assignedPropertyIds(actor));
 }
 
 // --- Property ---
@@ -205,18 +155,19 @@ export async function findPropertyForLandlord(
 export async function findPropertyForStaff(
 	database: ScopedQueryDb,
 	actor: StaffActor,
-	propertyId: string,
-	capability: StaffScopedCapability = staffScopedCapabilityForAction('property', 'detail') ??
-		'PROPERTY_READ'
+	propertyId: string
 ) {
 	const row = await database.query.properties.findFirst({
-		where: and(eq(properties.id, propertyId), eq(properties.landlordId, actor.landlordId))
+		where: and(
+			eq(properties.id, propertyId),
+			eq(properties.landlordId, actor.landlordId),
+			inArray(properties.id, assignedPropertyIds(actor))
+		)
 	});
 	if (!row) {
 		throwScopedNotFound();
 	}
-	assertStaffPropertyInScope(actor, propertyId);
-	assertStaffScopedCapability(actor, capability);
+	assertStaffPropertyRead(actor);
 	return row;
 }
 
@@ -239,24 +190,23 @@ export async function findRoomForLandlord(
 	return rows[0].room;
 }
 
-export async function findRoomForStaff(
-	database: ScopedQueryDb,
-	actor: StaffActor,
-	roomId: string,
-	capability: StaffScopedCapability = staffScopedCapabilityForAction('room', 'detail') ??
-		'PROPERTY_READ'
-) {
+export async function findRoomForStaff(database: ScopedQueryDb, actor: StaffActor, roomId: string) {
 	const rows = await database
-		.select({ room: rooms, propertyId: properties.id })
+		.select({ room: rooms })
 		.from(rooms)
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(rooms.id, roomId), eq(properties.landlordId, actor.landlordId)))
+		.where(
+			and(
+				eq(rooms.id, roomId),
+				eq(properties.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
+			)
+		)
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-	assertStaffPropertyInScope(actor, rows[0].propertyId);
-	assertStaffScopedCapability(actor, capability);
+	assertStaffPropertyRead(actor);
 	return rows[0].room;
 }
 
@@ -279,8 +229,7 @@ export async function findManagedTenantForLandlord(
 export async function findManagedTenantForStaff(
 	database: ScopedQueryDb,
 	actor: StaffActor,
-	managedTenantId: string,
-	capability: StaffCapabilityCheck = 'VIEW_TENANTS'
+	managedTenantId: string
 ) {
 	const rows = await database
 		.select({ managedTenant: managedTenants })
@@ -290,10 +239,7 @@ export async function findManagedTenantForStaff(
 			and(
 				eq(tenancies.managedTenantId, managedTenants.id),
 				eq(tenancies.status, 'ACTIVE'),
-				inArray(
-					tenancies.propertyId,
-					actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__']
-				)
+				inArray(tenancies.propertyId, assignedPropertyIds(actor))
 			)
 		)
 		.where(
@@ -303,7 +249,7 @@ export async function findManagedTenantForStaff(
 	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-	assertStaffScopedCapability(actor, capability);
+	assertStaffPermission(actor, 'VIEW_TENANTS');
 	return rows[0].managedTenant;
 }
 
@@ -344,21 +290,20 @@ export async function findTenancyForLandlord(
 export async function findTenancyForStaff(
 	database: ScopedQueryDb,
 	actor: StaffActor,
-	tenancyId: string,
-	capability: StaffCapabilityCheck = 'VIEW_TENANTS'
+	tenancyId: string
 ) {
 	const row = await database.query.tenancies.findFirst({
 		where: and(
 			eq(tenancies.id, tenancyId),
 			eq(tenancies.landlordId, actor.landlordId),
 			eq(tenancies.status, 'ACTIVE'),
-			inArray(tenancies.propertyId, actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__'])
+			inArray(tenancies.propertyId, assignedPropertyIds(actor))
 		)
 	});
 	if (!row) {
 		throwScopedNotFound();
 	}
-	assertStaffScopedCapability(actor, capability);
+	assertStaffPermission(actor, 'VIEW_TENANTS');
 	return row;
 }
 
@@ -408,26 +353,27 @@ export async function findServiceForLandlord(
 export async function findServiceForStaff(
 	database: ScopedQueryDb,
 	actor: StaffActor,
-	serviceId: string,
-	capability: StaffScopedCapability = staffScopedCapabilityForAction('service', 'detail') ??
-		'PROPERTY_ASSIGNMENT_ONLY'
+	serviceId: string
 ) {
-	if (actor.propertyIds.length === 0) {
+	const rows = await database
+		.select({ service: services })
+		.from(services)
+		.innerJoin(roomServiceConfigs, eq(roomServiceConfigs.serviceId, services.id))
+		.innerJoin(rooms, eq(roomServiceConfigs.roomId, rooms.id))
+		.innerJoin(properties, eq(rooms.propertyId, properties.id))
+		.where(
+			and(
+				eq(services.id, serviceId),
+				eq(services.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-
-	const row = await database.query.services.findFirst({
-		where: and(eq(services.id, serviceId), eq(services.landlordId, actor.landlordId))
-	});
-	if (!row) {
-		throwScopedNotFound();
-	}
-
-	assertStaffScopedCapability(actor, capability);
-	if (!staffServiceReadCapability(actor.permissions)) {
-		throw forbiddenError();
-	}
-	return row;
+	assertStaffServiceRead(actor);
+	return rows[0].service;
 }
 
 export async function findServiceForTenant(
@@ -438,13 +384,23 @@ export async function findServiceForTenant(
 ) {
 	const tenancy = await findTenancyForTenant(database, actor, scope);
 
-	const row = await database.query.services.findFirst({
-		where: and(eq(services.id, serviceId), eq(services.landlordId, tenancy.landlordId))
-	});
-	if (!row) {
+	const rows = await database
+		.select({ service: services })
+		.from(services)
+		.innerJoin(roomServiceConfigs, eq(roomServiceConfigs.serviceId, services.id))
+		.innerJoin(rooms, eq(roomServiceConfigs.roomId, rooms.id))
+		.where(
+			and(
+				eq(services.id, serviceId),
+				eq(rooms.id, tenancy.roomId),
+				eq(services.landlordId, tenancy.landlordId)
+			)
+		)
+		.limit(1);
+	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-	return row;
+	return rows[0].service;
 }
 
 // --- Invoice (landlord/tenant history only; staff finance blocked in MVP) ---
@@ -552,21 +508,25 @@ export async function findMeterReadingForLandlord(
 export async function findMeterReadingForStaff(
 	database: ScopedQueryDb,
 	actor: StaffActor,
-	meterReadingId: string,
-	capability: StaffCapabilityCheck = 'MANAGE_METERS'
+	meterReadingId: string
 ) {
 	const rows = await database
-		.select({ meterReading: meterReadings, propertyId: properties.id })
+		.select({ meterReading: meterReadings })
 		.from(meterReadings)
 		.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(meterReadings.id, meterReadingId), eq(properties.landlordId, actor.landlordId)))
+		.where(
+			and(
+				eq(meterReadings.id, meterReadingId),
+				eq(properties.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
+			)
+		)
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-	assertStaffPropertyInScope(actor, rows[0].propertyId);
-	assertStaffScopedCapability(actor, capability);
+	assertStaffPermission(actor, 'MANAGE_METERS');
 	return rows[0].meterReading;
 }
 
@@ -613,20 +573,24 @@ export async function findMaintenanceRequestForLandlord(
 export async function findMaintenanceRequestForStaff(
 	database: ScopedQueryDb,
 	actor: StaffActor,
-	requestId: string,
-	capability: StaffCapabilityCheck = 'MANAGE_REQUESTS'
+	requestId: string
 ) {
 	const rows = await database
-		.select({ request: maintenanceRequests, propertyId: tenancies.propertyId })
+		.select({ request: maintenanceRequests })
 		.from(maintenanceRequests)
 		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
-		.where(and(eq(maintenanceRequests.id, requestId), eq(tenancies.landlordId, actor.landlordId)))
+		.where(
+			and(
+				eq(maintenanceRequests.id, requestId),
+				eq(tenancies.landlordId, actor.landlordId),
+				inArray(tenancies.propertyId, assignedPropertyIds(actor))
+			)
+		)
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-	assertStaffPropertyInScope(actor, rows[0].propertyId);
-	assertStaffScopedCapability(actor, capability);
+	assertStaffPermission(actor, 'MANAGE_REQUESTS');
 	return rows[0].request;
 }
 
@@ -668,193 +632,6 @@ export async function findPaymentAccountForLandlord(
 		throwScopedNotFound();
 	}
 	return row;
-}
-
-export async function findPaymentAccountForTenant(
-	database: ScopedQueryDb,
-	actor: TenantActor,
-	scope: TenantHistoryScope,
-	paymentAccountId: string
-) {
-	const tenancy = await findTenancyForTenant(database, actor, scope);
-
-	const row = await database.query.paymentAccounts.findFirst({
-		where: and(
-			eq(paymentAccounts.id, paymentAccountId),
-			eq(paymentAccounts.landlordId, tenancy.landlordId)
-		)
-	});
-	if (!row) {
-		throwScopedNotFound();
-	}
-	return row;
-}
-
-// --- Conversation / message ---
-
-export async function findConversationForLandlord(
-	database: ScopedQueryDb,
-	actor: LandlordActor,
-	scope: ConversationScope
-): Promise<ResolvedConversation> {
-	const rows = await database
-		.select({ tenancy: tenancies, managedTenant: managedTenants })
-		.from(tenancies)
-		.innerJoin(managedTenants, eq(tenancies.managedTenantId, managedTenants.id))
-		.where(
-			and(
-				eq(tenancies.id, scope.tenancyId),
-				eq(managedTenants.id, scope.managedTenantId),
-				eq(tenancies.landlordId, actor.landlordId),
-				eq(managedTenants.landlordId, actor.landlordId)
-			)
-		)
-		.limit(1);
-	if (!rows[0]) {
-		throwScopedNotFound();
-	}
-
-	const tenantProfileId = await resolveTenantProfileId(database, rows[0].managedTenant);
-	if (!tenantProfileId) {
-		throwScopedNotFound();
-	}
-
-	return {
-		conversationId: legacyConversationId(actor.landlordId, tenantProfileId),
-		landlordId: actor.landlordId,
-		managedTenantId: scope.managedTenantId,
-		tenancyId: scope.tenancyId,
-		tenantProfileId
-	};
-}
-
-export async function findConversationForTenant(
-	database: ScopedQueryDb,
-	actor: TenantActor,
-	scope: ConversationScope
-): Promise<ResolvedConversation> {
-	await assertTenantHistoryClaim(database, actor, scope);
-
-	const rows = await database
-		.select({ tenancy: tenancies, managedTenant: managedTenants })
-		.from(tenancies)
-		.innerJoin(managedTenants, eq(tenancies.managedTenantId, managedTenants.id))
-		.where(
-			and(
-				eq(tenancies.id, scope.tenancyId),
-				eq(managedTenants.id, scope.managedTenantId),
-				eq(managedTenants.claimedByUserId, actor.userId)
-			)
-		)
-		.limit(1);
-	if (!rows[0]) {
-		throwScopedNotFound();
-	}
-
-	const tenantProfileId = await resolveTenantProfileId(database, rows[0].managedTenant);
-	if (!tenantProfileId) {
-		throwScopedNotFound();
-	}
-
-	return {
-		conversationId: legacyConversationId(rows[0].tenancy.landlordId, tenantProfileId),
-		landlordId: rows[0].tenancy.landlordId,
-		managedTenantId: scope.managedTenantId,
-		tenancyId: scope.tenancyId,
-		tenantProfileId
-	};
-}
-
-export async function findMessageForLandlord(
-	database: ScopedQueryDb,
-	actor: LandlordActor,
-	scope: ConversationScope,
-	messageId: string
-) {
-	const conversation = await findConversationForLandlord(database, actor, scope);
-
-	const row = await database.query.messages.findFirst({
-		where: and(eq(messages.id, messageId), eq(messages.conversationId, conversation.conversationId))
-	});
-	if (!row) {
-		throwScopedNotFound();
-	}
-	return row;
-}
-
-export async function findMessageForTenant(
-	database: ScopedQueryDb,
-	actor: TenantActor,
-	scope: ConversationScope,
-	messageId: string
-) {
-	const conversation = await findConversationForTenant(database, actor, scope);
-
-	const row = await database.query.messages.findFirst({
-		where: and(eq(messages.id, messageId), eq(messages.conversationId, conversation.conversationId))
-	});
-	if (!row) {
-		throwScopedNotFound();
-	}
-	return row;
-}
-
-// --- Tenant file ---
-
-export async function findFileForLandlord(
-	database: ScopedQueryDb,
-	actor: LandlordActor,
-	fileId: string,
-	scope: { managedTenantId: string; tenancyId?: string }
-) {
-	const filePredicates = [
-		eq(tenantFiles.id, fileId),
-		eq(tenantFiles.landlordId, actor.landlordId),
-		eq(tenantFiles.managedTenantId, scope.managedTenantId),
-		eq(managedTenants.landlordId, actor.landlordId)
-	];
-	if (scope.tenancyId) {
-		filePredicates.push(eq(tenantFiles.tenancyId, scope.tenancyId));
-	}
-
-	const rows = await database
-		.select({ file: tenantFiles })
-		.from(tenantFiles)
-		.innerJoin(managedTenants, eq(tenantFiles.managedTenantId, managedTenants.id))
-		.where(and(...filePredicates))
-		.limit(1);
-	if (!rows[0]) {
-		throwScopedNotFound();
-	}
-	return rows[0].file;
-}
-
-export async function findFileForTenant(
-	database: ScopedQueryDb,
-	actor: TenantActor,
-	scope: TenantHistoryScope,
-	fileId: string
-) {
-	await assertTenantHistoryClaim(database, actor, scope);
-
-	const tenantFilePredicates = [
-		eq(tenantFiles.id, fileId),
-		eq(tenantFiles.managedTenantId, scope.managedTenantId),
-		eq(tenantFiles.tenancyId, scope.tenancyId)
-	];
-
-	const rows = await database
-		.select({ file: tenantFiles })
-		.from(tenantFiles)
-		.where(and(...tenantFilePredicates))
-		.limit(1);
-	if (!rows[0]) {
-		throwScopedNotFound();
-	}
-	if (rows[0].file.visibility === 'LANDLORD_ONLY') {
-		throwScopedNotFound();
-	}
-	return rows[0].file;
 }
 
 // --- Tenant property/room snapshot via tenancy ---
@@ -931,11 +708,10 @@ export async function findRoomAssetForLandlord(
 export async function findRoomAssetForStaff(
 	database: ScopedQueryDb,
 	actor: StaffActor,
-	input: { roomId: string; assetId: string },
-	capability: StaffCapabilityCheck = 'VIEW_ROOMS'
+	input: { roomId: string; assetId: string }
 ) {
 	const rows = await database
-		.select({ asset: roomAssets, propertyId: properties.id })
+		.select({ asset: roomAssets })
 		.from(roomAssets)
 		.innerJoin(rooms, eq(roomAssets.roomId, rooms.id))
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
@@ -943,14 +719,14 @@ export async function findRoomAssetForStaff(
 			and(
 				eq(roomAssets.id, input.assetId),
 				eq(roomAssets.roomId, input.roomId),
-				eq(properties.landlordId, actor.landlordId)
+				eq(properties.landlordId, actor.landlordId),
+				inArray(properties.id, assignedPropertyIds(actor))
 			)
 		)
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-	assertStaffPropertyInScope(actor, rows[0].propertyId);
-	assertStaffScopedCapability(actor, capability);
+	assertStaffPermission(actor, 'VIEW_ROOMS');
 	return rows[0].asset;
 }

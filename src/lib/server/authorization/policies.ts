@@ -118,18 +118,15 @@ function evaluateStaffPolicy(
 		return allow();
 	}
 
-	if (requirement.kind === 'PROPERTY_ASSIGNMENT_ONLY') {
+	if (requirement.kind === 'SERVICE_READ') {
 		if (!staffAssignedToProperty(actor, context)) {
 			return deny('STAFF_PROPERTY');
 		}
-		if (resource === 'service' && (action === 'list' || action === 'detail')) {
-			const serviceCap = staffServiceReadCapability(actor.permissions);
-			if (!serviceCap) {
-				return deny('STAFF_CAPABILITY');
-			}
-			return allow();
+		const serviceCap = staffServiceReadCapability(actor.permissions);
+		if (!serviceCap) {
+			return deny('STAFF_CAPABILITY');
 		}
-		return deny('DEFAULT_DENY');
+		return allow();
 	}
 
 	if (requirement.kind === 'CAPABILITY') {
