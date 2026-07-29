@@ -65,10 +65,7 @@ if (skipReason) {
 	let fixture: TenancyFixture;
 	const telegramUserId = 9_009_001_234;
 
-	before(async () => {
-		pool = createTenancyTestPool();
-		db = createTenancyTestDb(pool);
-		fixture = await seedTenancyFixture(db);
+	function ensureTelegramTestEnv(): void {
 		resetEnvForTests({
 			...process.env,
 			BOT_TOKEN,
@@ -76,6 +73,13 @@ if (skipReason) {
 			MINIAPP_SHORT_NAME: 'app',
 			TENANCY_DUAL_WRITE_ENABLED: 'true'
 		});
+	}
+
+	before(async () => {
+		pool = createTenancyTestPool();
+		db = createTenancyTestDb(pool);
+		fixture = await seedTenancyFixture(db);
+		ensureTelegramTestEnv();
 	});
 
 	after(async () => {
@@ -92,6 +96,7 @@ if (skipReason) {
 	});
 
 	async function postTelegramAuth(body: Record<string, unknown>) {
+		ensureTelegramTestEnv();
 		const { POST } = await import('../../../routes/api/auth/telegram/+server.js');
 		const cookies = mockCookies();
 		const response = await POST({
