@@ -104,7 +104,7 @@ export function parseBillingMonth(input: string): BillingMonth {
 
 /** Absolute day index for civil date arithmetic (no Date/timezone). */
 function absoluteDayIndex(year: number, month: number, day: number): number {
-	let y = year - 1;
+	const y = year - 1;
 	let days = y * 365 + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400);
 
 	for (let m = 1; m < month; m++) {
