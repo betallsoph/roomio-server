@@ -416,7 +416,8 @@ export async function endTenancy(
 			.returning();
 
 		const endedTenancy = updated[0];
-		if (!endedTenancy) throw tenancyError('TENANCY_NOT_ACTIVE', 'conditional update matched 0 rows');
+		if (!endedTenancy)
+			throw tenancyError('TENANCY_NOT_ACTIVE', 'conditional update matched 0 rows');
 
 		let roomCacheCleared = false;
 		let legacyRoomTenantCleared = false;

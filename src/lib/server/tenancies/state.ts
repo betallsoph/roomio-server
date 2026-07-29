@@ -164,11 +164,14 @@ export function assertCanEndTenancy(status: string): void {
 // Input normalization — service chỉ nhận dữ liệu đã chuẩn hóa
 // ---------------------------------------------------------------------------
 
+/** Tiền nhận number hoặc chuỗi số nguyên (body JSON): normalizer là nơi duy nhất ép kiểu. */
+export type MoneyInput = number | string | null | undefined;
+
 export type StartTenancyContractInput = {
 	endDate: string;
 	/** Bỏ trống = lấy `Room.monthlyRent` đã load trong transaction. */
-	monthlyRent?: number | null;
-	deposit?: number | null;
+	monthlyRent?: MoneyInput;
+	deposit?: MoneyInput;
 	fileUrl?: string | null;
 	notes?: string | null;
 	paymentAccountId?: string | null;
@@ -180,7 +183,7 @@ export type StartTenancyInput = {
 	/** Bỏ trống = hôm nay theo lịch Việt Nam. */
 	startDate?: string | null;
 	plannedEndDate?: string | null;
-	depositRequired?: number | null;
+	depositRequired?: MoneyInput;
 	contract?: StartTenancyContractInput | null;
 };
 
