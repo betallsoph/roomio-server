@@ -34,6 +34,7 @@ import {
 	subscriptionTierLimits,
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
+import { ROOM_DETAIL_WITH, toRoomDto } from '$lib/server/dto/rooms';
 
 function roomUnitKey(
 	roomNumber: string,
@@ -149,24 +150,16 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		const result = await db.query.rooms.findMany({
 			where: conditions.length > 0 ? and(...conditions) : undefined,
 			with: {
-				block: true,
-				property: true,
-				paymentAccount: true,
-				tenant: {
-					with: { user: true }
-				},
-				services: {
-					with: { service: true }
-				},
-				assets: true,
+				...ROOM_DETAIL_WITH,
 				meterReadings: {
+					...ROOM_DETAIL_WITH.meterReadings,
 					orderBy: desc(meterReadings.month)
 				}
 			},
 			orderBy: asc(rooms.roomNumber)
 		});
 
-		return json(result);
+		return json(result.map(toRoomDto));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -356,16 +349,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const fullRoom = await db.query.rooms.findFirst({
 			where: eq(rooms.id, room.id),
-			with: {
-				tenant: { with: { user: true } },
-				paymentAccount: true,
-				services: { with: { service: true } },
-				assets: true,
-				meterReadings: true
-			}
+			with: ROOM_DETAIL_WITH
 		});
 
-		return json(fullRoom);
+		return json(fullRoom ? toRoomDto(fullRoom) : null);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -652,17 +639,15 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const updatedRoom = await db.query.rooms.findFirst({
 			where: eq(rooms.id, id),
 			with: {
-				tenant: { with: { user: true } },
-				paymentAccount: true,
-				services: { with: { service: true } },
-				assets: true,
+				...ROOM_DETAIL_WITH,
 				meterReadings: {
+					...ROOM_DETAIL_WITH.meterReadings,
 					orderBy: desc(meterReadings.month)
 				}
 			}
 		});
 
-		return json(updatedRoom);
+		return json(updatedRoom ? toRoomDto(updatedRoom) : null);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

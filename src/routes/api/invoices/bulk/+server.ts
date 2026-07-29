@@ -12,6 +12,7 @@ import {
 } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
+import { toBulkInvoicePrepRoomDto, toInvoiceDto } from '$lib/server/dto/invoice';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
@@ -267,7 +268,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return results;
 		});
 
-		return json({ success: true, count: createdInvoices.length, invoices: createdInvoices });
+		return json({
+			success: true,
+			count: createdInvoices.length,
+			invoices: createdInvoices.map(toInvoiceDto)
+		});
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -385,7 +390,12 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			readiness[room.id] = { state: reasons.length ? 'needs_review' : 'ready', reasons };
 		}
 
-		return json({ rooms: occupiedRooms, readings, prevValues, readiness });
+		return json({
+			rooms: occupiedRooms.map(toBulkInvoicePrepRoomDto),
+			readings,
+			prevValues,
+			readiness
+		});
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
