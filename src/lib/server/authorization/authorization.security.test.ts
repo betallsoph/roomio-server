@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SessionData } from '../session.js';
+import type { LandlordActor } from './actor.js';
+import { createDrizzleActorDb, getUserActor } from './load-user-actor.js';
 import {
 	fixtureSession,
 	seedSecurityFixturesFromHandle,
@@ -56,6 +58,8 @@ if (skipReason) {
 
 			const landlordA = fixtureSession(fixture, 'landlordA');
 			const tenantANow = fixtureSession(fixture, 'tenantANow');
+			const actorDb = createDrizzleActorDb(handle.db);
+			const landlordAActor = (await getUserActor(landlordA, actorDb)) as LandlordActor;
 
 			async function getInvoiceList(session: SessionData) {
 				const url = new URL('http://localhost/api/invoices');
@@ -63,10 +67,10 @@ if (skipReason) {
 				return readJson(res);
 			}
 
-			async function getMeterList(session: SessionData, params: Record<string, string> = {}) {
+			async function getMeterList(actor: LandlordActor, params: Record<string, string> = {}) {
 				const qs = new URLSearchParams(params).toString();
 				const url = new URL(`http://localhost/api/meter-readings${qs ? '?' + qs : ''}`);
-				const res = await callHandler(getMeterReadings, { url, locals: { session } });
+				const res = await callHandler(getMeterReadings, { url, locals: { actor } });
 				return readJson(res);
 			}
 
@@ -100,18 +104,20 @@ if (skipReason) {
 			);
 
 			await t.test(
-				'landlordA cannot read landlordB meter readings via landlordId param',
+				'landlordA ignores foreign landlordId param and stays scoped to own meters',
 				async () => {
-					const result = await getMeterList(landlordA, {
+					const result = await getMeterList(landlordAActor, {
 						landlordId: ids.landlordB.landlordProfileId
 					});
-					assert.equal(result.status, 403);
-					assert.equal(Array.isArray(result.body), false);
+					assert.equal(result.status, 200);
+					const roomIds = roomIdsFromMeters(result.body);
+					assert.ok(roomIds.every((id) => id !== ids.roomB1R1.roomId));
+					assert.ok(roomIds.includes(ids.roomA1R1.roomId));
 				}
 			);
 
 			await t.test('landlordA meter list never includes landlordB room ids', async () => {
-				const result = await getMeterList(landlordA);
+				const result = await getMeterList(landlordAActor);
 				assert.equal(result.status, 200);
 				const roomIds = roomIdsFromMeters(result.body);
 				assert.ok(roomIds.every((id) => id !== ids.roomB1R1.roomId));

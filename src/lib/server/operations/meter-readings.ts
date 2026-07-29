@@ -91,10 +91,7 @@ export async function listMeterReadingsForActor(
 					eq(meterReadings.tenancyId, tenancy.tenancyId),
 					eq(meterReadings.managedTenantId, tenancy.managedTenantId)
 				),
-				and(
-					isNull(meterReadings.tenancyId),
-					eq(meterReadings.roomId, tenancy.roomId)
-				)
+				and(isNull(meterReadings.tenancyId), eq(meterReadings.roomId, tenancy.roomId))
 			)!
 		);
 	}
@@ -354,8 +351,7 @@ export async function resolveMeterReadingForActor(
 		const usage = approvedValue - reading.prevValue;
 
 		updateData.currValue = approvedValue;
-		updateData.isAnomalous =
-			average > 0 && Math.abs(usage - average) / average > ANOMALY_THRESHOLD;
+		updateData.isAnomalous = average > 0 && Math.abs(usage - average) / average > ANOMALY_THRESHOLD;
 	}
 
 	return (

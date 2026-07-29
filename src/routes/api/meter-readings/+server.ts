@@ -20,6 +20,7 @@ import {
 	resolveMeterReadingForActor,
 	submitMeterReadingForActor
 } from '$lib/server/operations/meter-readings';
+import { toMeterReadingDto, toMeterReadingListItemDto } from '$lib/server/dto/meter-reading';
 
 function mapOperationalError(error: unknown) {
 	if (error instanceof ScopedResourceNotFoundError) {
@@ -52,15 +53,18 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 		const landlord = requireLandlordActor(actor);
 		if (landlord.ok) {
-			return json(await listMeterReadingsForActor(db, landlord.value, { status, month }));
+			const rows = await listMeterReadingsForActor(db, landlord.value, { status, month });
+			return json(rows.map(toMeterReadingListItemDto));
 		}
 		const staff = requireStaffActor(actor);
 		if (staff.ok) {
-			return json(await listMeterReadingsForActor(db, staff.value, { status, month }));
+			const rows = await listMeterReadingsForActor(db, staff.value, { status, month });
+			return json(rows.map(toMeterReadingListItemDto));
 		}
 		const tenant = requireTenantActor(actor);
 		if (tenant.ok) {
-			return json(await listMeterReadingsForActor(db, tenant.value, { status, month }));
+			const rows = await listMeterReadingsForActor(db, tenant.value, { status, month });
+			return json(rows.map(toMeterReadingListItemDto));
 		}
 
 		return authorizationErrorToResponse(unauthenticatedError());
@@ -79,11 +83,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const tenant = requireTenantActor(actor);
 		if (tenant.ok) {
-			return json(await submitMeterReadingForActor(db, tenant.value, body));
+			return json(toMeterReadingDto(await submitMeterReadingForActor(db, tenant.value, body)));
 		}
 		const landlord = requireLandlordActor(actor);
 		if (landlord.ok) {
-			return json(await submitMeterReadingForActor(db, landlord.value, body));
+			return json(toMeterReadingDto(await submitMeterReadingForActor(db, landlord.value, body)));
 		}
 
 		return authorizationErrorToResponse(unauthenticatedError());
@@ -107,12 +111,18 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const landlord = requireLandlordActor(actor);
 		if (landlord.ok) {
 			return json(
-				await resolveMeterReadingForActor(db, landlord.value, { id, action, currValue })
+				toMeterReadingDto(
+					await resolveMeterReadingForActor(db, landlord.value, { id, action, currValue })
+				)
 			);
 		}
 		const staff = requireStaffActor(actor);
 		if (staff.ok) {
-			return json(await resolveMeterReadingForActor(db, staff.value, { id, action, currValue }));
+			return json(
+				toMeterReadingDto(
+					await resolveMeterReadingForActor(db, staff.value, { id, action, currValue })
+				)
+			);
 		}
 
 		return authorizationErrorToResponse(unauthenticatedError());

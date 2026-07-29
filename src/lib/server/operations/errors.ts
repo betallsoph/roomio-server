@@ -17,7 +17,9 @@ export function operationsNotFound(message = 'Không tìm thấy'): OperationsEr
 	return new OperationsError(message, 404);
 }
 
-export function operationsForbidden(message = 'Không có quyền truy cập dữ liệu này'): OperationsError {
+export function operationsForbidden(
+	message = 'Không có quyền truy cập dữ liệu này'
+): OperationsError {
 	return new OperationsError(message, 403);
 }
 

@@ -21,6 +21,7 @@ import {
 	listMaintenanceRequestsForActor,
 	updateMaintenanceRequestForActor
 } from '$lib/server/operations/maintenance-requests';
+import { toMaintenanceRequestDto } from '$lib/server/dto/maintenance-request';
 
 function mapOperationalError(error: unknown) {
 	if (error instanceof ScopedResourceNotFoundError) {
@@ -49,15 +50,18 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 		const landlord = requireLandlordActor(guard.actor);
 		if (landlord.ok) {
-			return json(await listMaintenanceRequestsForActor(db, landlord.value));
+			const rows = await listMaintenanceRequestsForActor(db, landlord.value);
+			return json(rows.map(toMaintenanceRequestDto));
 		}
 		const staff = requireStaffActor(guard.actor);
 		if (staff.ok) {
-			return json(await listMaintenanceRequestsForActor(db, staff.value));
+			const rows = await listMaintenanceRequestsForActor(db, staff.value);
+			return json(rows.map(toMaintenanceRequestDto));
 		}
 		const tenant = requireTenantActor(guard.actor);
 		if (tenant.ok) {
-			return json(await listMaintenanceRequestsForActor(db, tenant.value));
+			const rows = await listMaintenanceRequestsForActor(db, tenant.value);
+			return json(rows.map(toMaintenanceRequestDto));
 		}
 
 		return authorizationErrorToResponse(unauthenticatedError());
@@ -78,7 +82,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const body = await request.json();
 		const created = await createMaintenanceRequestForActor(db, tenant.value, body);
-		return json(created);
+		return json(toMaintenanceRequestDto(created));
 	} catch (error) {
 		return mapOperationalError(error);
 	}
@@ -92,11 +96,15 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const body = await request.json();
 		const landlord = requireLandlordActor(guard.actor);
 		if (landlord.ok) {
-			return json(await updateMaintenanceRequestForActor(db, landlord.value, body));
+			return json(
+				toMaintenanceRequestDto(await updateMaintenanceRequestForActor(db, landlord.value, body))
+			);
 		}
 		const staff = requireStaffActor(guard.actor);
 		if (staff.ok) {
-			return json(await updateMaintenanceRequestForActor(db, staff.value, body));
+			return json(
+				toMaintenanceRequestDto(await updateMaintenanceRequestForActor(db, staff.value, body))
+			);
 		}
 
 		return authorizationErrorToResponse(unauthenticatedError());
