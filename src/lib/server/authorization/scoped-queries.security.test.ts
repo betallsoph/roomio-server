@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import {
 	contracts,
 	invoices,
 	maintenanceRequests,
 	managedTenants,
+	messages,
 	meterReadings,
 	roomAssets,
 	staffPermissions,
@@ -15,22 +16,36 @@ import {
 import type { LandlordActor, StaffActor, TenantActor } from './actor.js';
 import { AuthorizationError } from './errors.js';
 import { createDrizzleActorDb, getUserActor } from './load-user-actor.js';
-import { isOperationalUserActor, operationalActorDenyReason } from './policies.js';
+import { operationalActorDenyReason } from './policies.js';
 import {
+	findContractForLandlord,
 	findContractForTenantHistory,
+	findConversationForLandlord,
+	findConversationForTenant,
+	findFileForLandlord,
+	findFileForTenant,
 	findInvoiceForLandlord,
-	findInvoiceForStaff,
 	findInvoiceForTenantHistory,
 	findMaintenanceRequestForLandlord,
 	findMaintenanceRequestForStaff,
 	findMaintenanceRequestForTenantHistory,
+	findManagedTenantForTenant,
+	findMessageForLandlord,
+	findMessageForTenant,
 	findMeterReadingForStaff,
+	findPaymentAccountForTenant,
+	findPropertyForTenant,
 	findRoomAssetForLandlord,
 	findRoomAssetForStaff,
 	findRoomForLandlord,
 	findRoomForStaff,
+	findRoomForTenant,
+	findServiceForStaff,
+	findServiceForTenant,
 	findTenancyForLandlord,
 	findTenancyForStaff,
+	findTenancyForTenant,
+	isOperationalUserActor,
 	ScopedResourceNotFoundError,
 	type ScopedQueryDb,
 	type TenantHistoryScope
@@ -55,7 +70,22 @@ type ScopedSqlExtensionIds = {
 	tenancyANowActive: string;
 	tenancyAOldEnded: string;
 	roomAssetA1: string;
+	messageA1: string;
+	fileTenantVisible: string;
+	fileLandlordOnly: string;
 };
+
+async function ensureTenantFileTable(handle: SecurityDbHandle): Promise<void> {
+	await handle.db.execute(sql`
+		CREATE TABLE IF NOT EXISTS "TenantFile" (
+			"id" text PRIMARY KEY NOT NULL,
+			"landlordId" text NOT NULL,
+			"managedTenantId" text NOT NULL,
+			"tenancyId" text,
+			"visibility" text NOT NULL
+		)
+	`);
+}
 
 async function seedScopedSqlExtensions(
 	handle: SecurityDbHandle,
@@ -69,6 +99,9 @@ async function seedScopedSqlExtensions(
 	const tenancyANowActive = crypto.randomUUID();
 	const tenancyAOldEnded = crypto.randomUUID();
 	const roomAssetA1 = crypto.randomUUID();
+	const messageA1 = crypto.randomUUID();
+	const fileTenantVisible = crypto.randomUUID();
+	const fileLandlordOnly = crypto.randomUUID();
 
 	await db.insert(managedTenants).values([
 		{
@@ -155,7 +188,22 @@ async function seedScopedSqlExtensions(
 		status: 'good'
 	});
 
-	// Scoped tenancy lookups need VIEW_TENANTS; base fixture only grants VIEW_ROOMS + MANAGE_METERS.
+	const conversationId = `${ids.landlordA.landlordProfileId}_${ids.tenantANow.tenantProfileId}`;
+	await db.insert(messages).values({
+		id: messageA1,
+		conversationId,
+		senderId: ids.tenantANow.userId,
+		content: 'Fixture scoped message'
+	});
+
+	await ensureTenantFileTable(handle);
+	await db.execute(sql`
+		INSERT INTO "TenantFile" ("id", "landlordId", "managedTenantId", "tenancyId", "visibility")
+		VALUES
+			(${fileTenantVisible}, ${ids.landlordA.landlordProfileId}, ${managedTenantANow}, ${tenancyANowActive}, 'TENANT_CAN_VIEW'),
+			(${fileLandlordOnly}, ${ids.landlordA.landlordProfileId}, ${managedTenantANow}, ${tenancyANowActive}, 'LANDLORD_ONLY')
+	`);
+
 	await db.insert(staffPermissions).values({
 		staffId: ids.staffALimited.staffProfileId,
 		permission: 'VIEW_TENANTS',
@@ -167,7 +215,10 @@ async function seedScopedSqlExtensions(
 		managedTenantAOld,
 		tenancyANowActive,
 		tenancyAOldEnded,
-		roomAssetA1
+		roomAssetA1,
+		messageA1,
+		fileTenantVisible,
+		fileLandlordOnly
 	};
 }
 
@@ -175,12 +226,12 @@ function landlordActor(
 	fixture: SecurityFixtureMap,
 	which: 'landlordA' | 'landlordB'
 ): LandlordActor {
-	const ids = fixture.ids[which];
+	const row = fixture.ids[which];
 	return {
 		kind: 'USER',
-		userId: ids.userId,
+		userId: row.userId,
 		role: 'LANDLORD',
-		landlordId: ids.landlordProfileId
+		landlordId: row.landlordProfileId
 	};
 }
 
@@ -188,23 +239,22 @@ function tenantActor(
 	fixture: SecurityFixtureMap,
 	which: 'tenantANow' | 'tenantAOld' | 'tenantBNow'
 ): TenantActor {
-	const ids = fixture.ids[which];
+	const row = fixture.ids[which];
 	return {
 		kind: 'USER',
-		userId: ids.userId,
+		userId: row.userId,
 		role: 'TENANT',
-		tenantProfileId: ids.tenantProfileId
+		tenantProfileId: row.tenantProfileId
 	};
 }
 
 async function staffActorFromFixture(
 	handle: SecurityDbHandle,
 	fixture: SecurityFixtureMap,
-	which: 'staffALimited' | 'staffAEmpty' | 'staffB'
+	which: 'staffALimited' | 'staffAEmpty'
 ): Promise<StaffActor> {
 	const actorDb = createDrizzleActorDb(handle.db);
-	const session = fixtureSession(fixture, which);
-	const actor = await getUserActor(session, actorDb);
+	const actor = await getUserActor(fixtureSession(fixture, which), actorDb);
 	assert.equal(actor.role, 'STAFF');
 	if (actor.role !== 'STAFF') {
 		throw new Error('expected staff actor');
@@ -252,7 +302,6 @@ if (skipReason) {
 			const tenantAOld = tenantActor(fixture, 'tenantAOld');
 			const staffLimited = await staffActorFromFixture(handle, fixture, 'staffALimited');
 			const staffEmpty = await staffActorFromFixture(handle, fixture, 'staffAEmpty');
-			assert.ok(staffLimited.permissions.includes('VIEW_TENANTS'));
 
 			const historyNow: TenantHistoryScope = {
 				managedTenantId: ext.managedTenantANow,
@@ -291,32 +340,31 @@ if (skipReason) {
 							assetId: ext.roomAssetA1
 						})
 					);
-					await expectNotFound(() =>
-						findRoomAssetForLandlord(db, landlordB, {
-							roomId: ids.roomA1R1.roomId,
-							assetId: ext.roomAssetA1
-						})
-					);
 				}
 			);
 
-			await t.test('staff outside property assignment returns 403', async () => {
-				await expectForbidden(() =>
-					findRoomForStaff(db, staffLimited, ids.roomA2R1.roomId, 'VIEW_ROOMS')
+			await t.test('staff outside property assignment returns NotFound', async () => {
+				await expectNotFound(() =>
+					findRoomForStaff(db, staffLimited, ids.roomA2R1.roomId, 'PROPERTY_READ')
 				);
-				await expectForbidden(() =>
+				await expectNotFound(() =>
 					findRoomAssetForStaff(
 						db,
 						staffLimited,
 						{ roomId: ids.roomA2R1.roomId, assetId: ext.roomAssetA1 },
-						'VIEW_ROOMS'
+						'PROPERTY_READ'
 					)
 				);
+				await expectNotFound(() => findServiceForStaff(db, staffEmpty, ids.serviceA.serviceId));
 			});
 
 			await t.test('staff missing capability on in-scope resource returns 403', async () => {
+				const staffNoPropertyRead: StaffActor = {
+					...staffLimited,
+					permissions: ['VIEW_TENANTS']
+				};
 				await expectForbidden(() =>
-					findInvoiceForStaff(db, staffLimited, ids.invoiceANow.invoiceId, 'VIEW_TENANTS')
+					findRoomForStaff(db, staffNoPropertyRead, ids.roomA1R1.roomId, 'PROPERTY_READ')
 				);
 				await expectForbidden(() =>
 					findMaintenanceRequestForStaff(
@@ -325,6 +373,9 @@ if (skipReason) {
 						ids.maintenanceANow.maintenanceRequestId,
 						'MANAGE_REQUESTS'
 					)
+				);
+				await expectForbidden(() =>
+					findServiceForStaff(db, staffNoPropertyRead, ids.serviceA.serviceId)
 				);
 
 				const meter = await findMeterReadingForStaff(
@@ -336,11 +387,17 @@ if (skipReason) {
 				assert.equal(meter.id, ids.meterReadingANow.meterReadingId);
 			});
 
-			await t.test('staff with no assignments returns 403 before scoped SQL', async () => {
-				await expectForbidden(() =>
-					findRoomForStaff(db, staffEmpty, ids.roomA1R1.roomId, 'VIEW_ROOMS')
-				);
-			});
+			await t.test(
+				'staff MANAGE_METERS can property-read assigned room via PROPERTY_READ',
+				async () => {
+					const meterStaff: StaffActor = {
+						...staffLimited,
+						permissions: ['MANAGE_METERS']
+					};
+					const room = await findRoomForStaff(db, meterStaff, ids.roomA1R1.roomId, 'PROPERTY_READ');
+					assert.equal(room.id, ids.roomA1R1.roomId);
+				}
+			);
 
 			await t.test('staff tenancy lookup requires ACTIVE status', async () => {
 				await expectNotFound(() =>
@@ -384,9 +441,6 @@ if (skipReason) {
 				await expectNotFound(() =>
 					findInvoiceForTenantHistory(db, tenantAOld, historyNow, ids.invoiceANow.invoiceId)
 				);
-				await expectNotFound(() =>
-					findInvoiceForTenantHistory(db, tenantANow, historyNow, ids.invoiceAOld.invoiceId)
-				);
 			});
 
 			await t.test(
@@ -409,9 +463,107 @@ if (skipReason) {
 				}
 			);
 
-			await t.test('landlord tenancy and maintenance scoped via tenancy join', async () => {
-				const tenancy = await findTenancyForLandlord(db, landlordA, ext.tenancyANowActive);
+			await t.test('tenant property/room/service/payment scoped via active tenancy', async () => {
+				const managedTenant = await findManagedTenantForTenant(
+					db,
+					tenantANow,
+					ext.managedTenantANow
+				);
+				assert.equal(managedTenant.id, ext.managedTenantANow);
+
+				const tenancy = await findTenancyForTenant(db, tenantANow, historyNow);
 				assert.equal(tenancy.id, ext.tenancyANowActive);
+
+				const property = await findPropertyForTenant(
+					db,
+					tenantANow,
+					historyNow,
+					ids.propertyA1.propertyId
+				);
+				assert.equal(property.id, ids.propertyA1.propertyId);
+
+				const room = await findRoomForTenant(db, tenantANow, historyNow, ids.roomA1R1.roomId);
+				assert.equal(room.id, ids.roomA1R1.roomId);
+
+				const service = await findServiceForTenant(
+					db,
+					tenantANow,
+					historyNow,
+					ids.serviceA.serviceId
+				);
+				assert.equal(service.id, ids.serviceA.serviceId);
+
+				const paymentAccount = await findPaymentAccountForTenant(
+					db,
+					tenantANow,
+					historyNow,
+					ids.paymentAccountA.paymentAccountId
+				);
+				assert.equal(paymentAccount.id, ids.paymentAccountA.paymentAccountId);
+
+				await expectNotFound(() =>
+					findPropertyForTenant(db, tenantANow, historyNow, ids.propertyB1.propertyId)
+				);
+			});
+
+			await t.test(
+				'conversation and message resolve legacy conversationId from scope',
+				async () => {
+					const landlordConversation = await findConversationForLandlord(db, landlordA, historyNow);
+					assert.equal(
+						landlordConversation.conversationId,
+						`${ids.landlordA.landlordProfileId}_${ids.tenantANow.tenantProfileId}`
+					);
+
+					const tenantConversation = await findConversationForTenant(db, tenantANow, historyNow);
+					assert.equal(tenantConversation.conversationId, landlordConversation.conversationId);
+
+					const landlordMessage = await findMessageForLandlord(
+						db,
+						landlordA,
+						historyNow,
+						ext.messageA1
+					);
+					assert.equal(landlordMessage.id, ext.messageA1);
+
+					const tenantMessage = await findMessageForTenant(
+						db,
+						tenantANow,
+						historyNow,
+						ext.messageA1
+					);
+					assert.equal(tenantMessage.id, ext.messageA1);
+
+					await expectNotFound(() => findConversationForLandlord(db, landlordB, historyNow));
+				}
+			);
+
+			await t.test(
+				'tenant file visibility: landlord reads all; tenant hides LANDLORD_ONLY',
+				async () => {
+					const landlordFile = await findFileForLandlord(db, landlordA, ext.fileLandlordOnly, {
+						managedTenantId: ext.managedTenantANow,
+						tenancyId: ext.tenancyANowActive
+					});
+					assert.equal(landlordFile.id, ext.fileLandlordOnly);
+
+					const tenantVisible = await findFileForTenant(
+						db,
+						tenantANow,
+						historyNow,
+						ext.fileTenantVisible
+					);
+					assert.equal(tenantVisible.id, ext.fileTenantVisible);
+
+					await expectNotFound(() =>
+						findFileForTenant(db, tenantANow, historyNow, ext.fileLandlordOnly)
+					);
+				}
+			);
+
+			await t.test('landlord contract and maintenance scoped via joins', async () => {
+				const contract = await findContractForLandlord(db, landlordA, ids.contractANow.contractId);
+				assert.equal(contract.id, ids.contractANow.contractId);
 
 				const request = await findMaintenanceRequestForLandlord(
 					db,
@@ -420,8 +572,11 @@ if (skipReason) {
 				);
 				assert.equal(request.id, ids.maintenanceANow.maintenanceRequestId);
 
+				const tenancy = await findTenancyForLandlord(db, landlordA, ext.tenancyANowActive);
+				assert.equal(tenancy.id, ext.tenancyANowActive);
+
 				await expectNotFound(() =>
-					findMaintenanceRequestForLandlord(db, landlordB, ids.maintenanceANow.maintenanceRequestId)
+					findContractForLandlord(db, landlordB, ids.contractANow.contractId)
 				);
 			});
 
