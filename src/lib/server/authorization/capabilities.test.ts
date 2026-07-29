@@ -6,6 +6,8 @@ import {
 	resolveStaffCapabilityRequirement,
 	staffHasPropertyReadCapability,
 	staffRequiresActiveTenancy,
+	staffScopedCapabilityForAction,
+	staffScopedCapabilityFromRequirement,
 	staffServiceReadCapability
 } from './capabilities.js';
 
@@ -82,4 +84,24 @@ test('staffRequiresActiveTenancy only for managed tenant and tenancy reads', () 
 	assert.equal(staffRequiresActiveTenancy('managedTenant', 'detail'), true);
 	assert.equal(staffRequiresActiveTenancy('tenancy', 'list'), true);
 	assert.equal(staffRequiresActiveTenancy('meter', 'detail'), false);
+});
+
+test('staffScopedCapabilityFromRequirement maps finite unions without callbacks', () => {
+	assert.equal(staffScopedCapabilityFromRequirement({ kind: 'DENY' }), null);
+	assert.equal(
+		staffScopedCapabilityFromRequirement({ kind: 'CAPABILITY', permission: 'MANAGE_METERS' }),
+		'MANAGE_METERS'
+	);
+	assert.equal(staffScopedCapabilityFromRequirement({ kind: 'PROPERTY_READ' }), 'PROPERTY_READ');
+	assert.equal(
+		staffScopedCapabilityFromRequirement({ kind: 'PROPERTY_ASSIGNMENT_ONLY' }),
+		'PROPERTY_ASSIGNMENT_ONLY'
+	);
+});
+
+test('staffScopedCapabilityForAction resolves scoped SQL tokens from resource/action', () => {
+	assert.equal(staffScopedCapabilityForAction('meter', 'detail'), 'MANAGE_METERS');
+	assert.equal(staffScopedCapabilityForAction('property', 'list'), 'PROPERTY_READ');
+	assert.equal(staffScopedCapabilityForAction('service', 'detail'), 'PROPERTY_ASSIGNMENT_ONLY');
+	assert.equal(staffScopedCapabilityForAction('invoice', 'detail'), null);
 });

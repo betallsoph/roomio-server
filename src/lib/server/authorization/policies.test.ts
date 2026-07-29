@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ActorContext, LandlordActor, StaffActor, TenantActor } from './actor.js';
 import type { PolicyContext } from './capabilities.js';
-import { authorizeActor } from './policies.js';
+import { authorizeActor, isOperationalUserActor, operationalActorDenyReason } from './policies.js';
 
 const landlordA: LandlordActor = {
 	kind: 'USER',
@@ -46,6 +46,13 @@ const machine: ActorContext = {
 	requestId: 'job-1'
 };
 
+const machinePayment: ActorContext = {
+	kind: 'MACHINE',
+	channel: 'PAYMENT_WEBHOOK',
+	requestId: 'pay-1',
+	verifiedAccountId: 'acct-1'
+};
+
 const superAdmin: ActorContext = {
 	kind: 'USER',
 	userId: 'admin-1',
@@ -76,6 +83,27 @@ test('authorizeActor denies machine actors by default', () => {
 	assert.equal(result.ok, false);
 	if (result.ok) return;
 	assert.equal(result.reason, 'WRONG_ACTOR_KIND');
+
+	const paymentMachine = authorizeActor(machinePayment, 'invoice', 'detail', baseContext());
+	assert.equal(paymentMachine.ok, false);
+	if (paymentMachine.ok) return;
+	assert.equal(paymentMachine.reason, 'WRONG_ACTOR_KIND');
+});
+
+test('operationalActorDenyReason blocks machine and super admin specifically', () => {
+	assert.equal(operationalActorDenyReason(machine), 'WRONG_ACTOR_KIND');
+	assert.equal(operationalActorDenyReason(machinePayment), 'WRONG_ACTOR_KIND');
+	assert.equal(operationalActorDenyReason(superAdmin), 'SUPER_ADMIN_OPERATIONAL');
+	assert.equal(operationalActorDenyReason(landlordA), null);
+	assert.equal(operationalActorDenyReason(tenant), null);
+});
+
+test('isOperationalUserActor rejects machine and super admin, not other user roles', () => {
+	assert.equal(isOperationalUserActor(machine), false);
+	assert.equal(isOperationalUserActor(superAdmin), false);
+	assert.equal(isOperationalUserActor(landlordA), true);
+	assert.equal(isOperationalUserActor(staffMeter), true);
+	assert.equal(isOperationalUserActor(tenant), true);
 });
 
 test('authorizeActor denies super admin operational resources', () => {
@@ -83,6 +111,11 @@ test('authorizeActor denies super admin operational resources', () => {
 	assert.equal(result.ok, false);
 	if (result.ok) return;
 	assert.equal(result.reason, 'SUPER_ADMIN_OPERATIONAL');
+
+	const meter = authorizeActor(superAdmin, 'meter', 'approve', baseContext());
+	assert.equal(meter.ok, false);
+	if (meter.ok) return;
+	assert.equal(meter.reason, 'SUPER_ADMIN_OPERATIONAL');
 });
 
 test('landlord own-scope allows property list; cross-landlord denies', () => {
@@ -203,6 +236,15 @@ test('tenant file read denies LANDLORD_ONLY visibility', () => {
 		baseContext({ fileVisibility: 'TENANT_CAN_VIEW' })
 	);
 	assert.equal(visible.ok, true);
+});
+
+test('tenant file mutations default deny until self-upload policy exists', () => {
+	for (const action of ['create', 'update', 'delete'] as const) {
+		const result = authorizeActor(tenant, 'file', action, baseContext());
+		assert.equal(result.ok, false);
+		if (result.ok) return;
+		assert.equal(result.reason, 'DEFAULT_DENY');
+	}
 });
 
 test('tenant meter submit requires active tenancy', () => {

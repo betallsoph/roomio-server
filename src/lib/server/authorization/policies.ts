@@ -20,6 +20,31 @@ import { staffHasCapability, staffHasProperty } from './staff-scope.js';
 
 export type { AuthorizationAction, AuthorizationResource, AuthorizeResult, PolicyContext };
 
+/** Landlord, staff, or tenant — excludes machine and super-admin operational denial. */
+export type OperationalUserActor = LandlordActor | StaffActor | TenantActor;
+
+/**
+ * Endpoint/scoped-query boundary guard: rejects machine actors and super-admin specifically.
+ * Do not use generic isUserActor — that still admits SUPER_ADMIN.
+ */
+export function isOperationalUserActor(actor: ActorContext): actor is OperationalUserActor {
+	if (actor.kind !== 'USER') {
+		return false;
+	}
+	return actor.role !== 'SUPER_ADMIN';
+}
+
+/** Pre-authorize actor kind/role before policy evaluation or scoped SQL. */
+export function operationalActorDenyReason(actor: ActorContext): AuthorizeDenyReason | null {
+	if (actor.kind !== 'USER') {
+		return 'WRONG_ACTOR_KIND';
+	}
+	if (actor.role === 'SUPER_ADMIN') {
+		return 'SUPER_ADMIN_OPERATIONAL';
+	}
+	return null;
+}
+
 function deny(reason: AuthorizeDenyReason): AuthorizeResult {
 	return { ok: false, reason };
 }
@@ -419,7 +444,7 @@ function evaluateTenantPolicy(
 				case 'create':
 				case 'update':
 				case 'delete':
-					return tenantClaimsManagedTenant(actor, context) ? allow() : deny('TENANT_CLAIM');
+					return deny('DEFAULT_DENY');
 				default:
 					return deny('DEFAULT_DENY');
 			}
@@ -440,13 +465,15 @@ export function authorizeActor(
 	action: AuthorizationAction,
 	context: PolicyContext
 ): AuthorizeResult {
-	if (actor.kind !== 'USER') {
-		return deny('WRONG_ACTOR_KIND');
+	const actorDeny = operationalActorDenyReason(actor);
+	if (actorDeny) {
+		return deny(actorDeny);
+	}
+	if (!isOperationalUserActor(actor)) {
+		return deny('DEFAULT_DENY');
 	}
 
 	switch (actor.role) {
-		case 'SUPER_ADMIN':
-			return deny('SUPER_ADMIN_OPERATIONAL');
 		case 'LANDLORD':
 			return evaluateLandlordPolicy(actor, resource, action, context);
 		case 'STAFF':
