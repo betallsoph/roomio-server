@@ -11,7 +11,7 @@ import {
 	getSecurityIntegrationSkipReason,
 	withSecurityDb
 } from '../testing/test-db.js';
-import { findForbiddenKeys } from './security-assertions.js';
+import { expectNoForbiddenKeys } from './security-assertions.js';
 
 const skipReason = getSecurityIntegrationSkipReason();
 
@@ -119,7 +119,7 @@ if (skipReason) {
 			});
 
 			await t.test(
-				'room list still embeds passwordHash on tenant.user (KNOWN_GAP → AUTH-017)',
+				'landlordA room list excludes forbidden keys on nested tenant.user (AUTH-017)',
 				async () => {
 					const result = await getRoomList(landlordA);
 					assert.equal(result.status, 200);
@@ -131,13 +131,7 @@ if (skipReason) {
 					const occupied = roomsBody.find((row) => row.id === ids.roomA1R1.roomId);
 					assert.ok(occupied, 'landlordA room list must include seeded roomA1R1');
 					assert.ok(occupied.tenant?.user, 'roomA1R1 must embed nested tenant.user');
-					const hits = findForbiddenKeys(result.body);
-					assert.ok(
-						hits.some((hit) => hit.key === 'passwordHash'),
-						'CURRENT behavior: passwordHash present in nested tenant.user'
-					);
-					// AUTH-001 aspirational (enable when AUTH-017 lands):
-					// expectNoForbiddenKeys(result.body);
+					expectNoForbiddenKeys(result.body);
 				}
 			);
 		});
