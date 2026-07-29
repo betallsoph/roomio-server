@@ -1,10 +1,10 @@
 # Legacy finance ledger touchpoints (FIN-000)
 
-Inventory date: 2026-07-29  
-Base: `origin/refactor/production-hardening` @ `26a4e82`  
-Branch: `ticket/FIN-000-001`  
+Inventory date: 2026-07-29 (checkout rows reconciled 2026-07-30 post-AUTH-006)  
+Base: `origin/refactor/production-hardening` @ `759e796`  
+Branch: `docs/FIN-000-reconciliation`  
 Scope: roomio-api + roomio-web + roomio-tma  
-Excluded: AUTH-006 worktree/files; production secrets; signed URLs.
+Excluded: full AUTH-006 resurvey; production secrets; signed URLs.
 
 Sources: Lane 1 API inventory, Lane 2 Web/TMA inventory, Lane 4 independent verify.  
 Drizzle `meta/*_snapshot.json` mirrors are noted once under schema history — not duplicated per snapshot.
@@ -16,10 +16,10 @@ Replacement tickets are concrete FIN/UX/TG/DATA/CORE IDs from `docs/production-h
 | Surface                                | Touchpoints (rows below) | Notes                                                     |
 | -------------------------------------- | ------------------------ | --------------------------------------------------------- |
 | API schema + migrations                | 11                       | Includes `depositRequired` schema-only                    |
-| API routes / services / cron / scripts | 39                       | Invoice/payment/room debt write cluster                   |
+| API routes / services / cron / scripts | 40                       | Invoice/payment/room debt write cluster; checkout split canonical vs legacy |
 | Web                                    | 22                       | Includes client `invoiceDebtAmount` / bulk `previewTotal` |
 | TMA                                    | 22                       | No local debt formula; uses Room.debtAmount / confirmPaid |
-| **Total**                              | **94**                   |                                                           |
+| **Total**                              | **95**                   |                                                           |
 
 Lane 4 cross-check: API primary source files ≈ 19 (+ drizzle history); Web+TMA files ≈ 23. Row count below is operation-level (one endpoint/action per row), not unique files.
 
@@ -70,7 +70,8 @@ Lane 4 cross-check: API primary source files ≈ 19 (+ drizzle history); Web+TMA
 | ---------- | ------------------------------------------- | ----------------------------- | ---------- | ------------------------------------------------------------------------------- | ---------------- | ------------------- | ------------------------------------ | ------------------------- | ------- |
 | roomio-api | `src/routes/api/rooms/+server.ts`           | `GET /api/rooms`              | read       | status filter; debtAmount                                                       | no               | Rooms UI            | Debt from room cache                 | FIN-027, FIN-008          | backend |
 | roomio-api | `src/routes/api/rooms/+server.ts`           | `POST /api/rooms`             | write      | status=empty, debtAmount=0                                                      | yes              | Add room            | Init legacy fields                   | FIN-027                   | backend |
-| roomio-api | `src/routes/api/rooms/+server.ts`           | `PUT` checkout                | write      | status=empty, debtAmount=0                                                      | no               | Checkout            | Clears debt without settlement       | FIN-020, FIN-019          | backend |
+| roomio-api | `src/routes/api/rooms/+server.ts`           | `PUT` checkout (Tenancy canonical) | write      | Tenancy ACTIVE→ENDED; conditional `tenantId`/`currentManagedTenantId` clear; returns `TenancyDto` + `room:{id}`; **does not** set `Room.status` or `Room.debtAmount` | yes              | Checkout when `tenancyDualWriteEnabled` or room has ACTIVE Tenancy (split-brain guard) | Ends occupancy without debt/settlement; legacy `debtAmount`/`status` cache may stay stale | FIN-020, FIN-021, FIN-027 | backend |
+| roomio-api | `src/routes/api/rooms/+server.ts`           | `PUT` checkout (legacy, no Tenancy)  | write      | `status=empty`, `tenantId=null`, `debtAmount=0` (only when flag OFF and no ACTIVE Tenancy) | no               | Checkout on pre-Tenancy / never-backfilled rooms | Clears debt without settlement — legacy-only path | FIN-020, FIN-019, AUTH-007 | backend |
 | roomio-api | `src/routes/api/rooms/+server.ts`           | `PUT` standard                | write      | optional status, debtAmount                                                     | no               | Room edit           | Manual debt override                 | FIN-027, FIN-030          | backend |
 | roomio-api | `src/routes/api/tenants/+server.ts`         | `GET /api/tenants`            | read       | tenantProfiles.deposit                                                          | no               | Tenants UI          | Legacy deposit                       | FIN-019, FIN-008          | backend |
 | roomio-api | `src/routes/api/tenants/+server.ts`         | `POST /api/tenants` check-in  | write      | deposit; room status=paid debt=0; contracts.deposit                             | yes              | Onboarding          | Deposit not ledger; room marked paid | FIN-019, FIN-025, FIN-027 | backend |
@@ -153,11 +154,12 @@ Lane 4 cross-check: API primary source files ≈ 19 (+ drizzle history); Web+TMA
 6. **CORE-006 audit** allowlist exists; money mutation routes do not emit finance audit events yet.
 7. **Web vs TMA parity** — Web has `invoiceDebtAmount` + bulk `previewTotal`; TMA does not.
 8. **Fixtures/tests** (`security-fixtures.ts`, meter integration) seed room status/deposit — not production write paths; omitted from table.
-9. **AUTH-006** excluded from this inventory by ticket scope.
+9. **Checkout debt semantics (AUTH-006)** — canonical Tenancy checkout no longer clears `Room.debtAmount`/`status`; legacy checkout still zeroes both for rooms without ACTIVE Tenancy. Properties on dual-write / backfilled Tenancy use canonical path; unmigrated rooms keep legacy debt wipe.
 10. **FIN-001** (`MoneyVnd` / `LocalDate`) is the foundation for replacing float math and `toISOString` date splits listed above.
 
 ## Verification notes
 
 - Second-pass patterns: `paidAmount|debtAmount|paymentTransactions|paymentProofImage|depositRequired|confirmPaid|uploadProof|invoiceDebtAmount|previewTotal|room.status === 'debt'`.
+- AUTH-006 reconciliation (2026-07-30): `PUT /api/rooms` checkout splits into Tenancy canonical (`endActiveTenancyForRoom`, transactional, `TenancyDto` response, debt untouched) vs legacy-only (`debtAmount=0`, no transaction) when `tenancyDualWriteEnabled=false` and `hasActiveTenancyForRoom` is false.
 - Lane 4 confirmed automation/cron/cleanup/payos/webhook blind spots are covered in API sections above.
 - No production credentials, signed URLs, or live account IDs included.
