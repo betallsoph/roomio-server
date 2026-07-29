@@ -49,6 +49,8 @@ if (skipReason) {
 
 	after(async () => {
 		await cleanupTenancyFixture(pool, fixture);
+		// Dọn helper injection để DB test không giữ lại object thừa.
+		await pool.query('DROP FUNCTION IF EXISTS auth006_injected_failure() CASCADE');
 		await pool.end();
 	});
 
