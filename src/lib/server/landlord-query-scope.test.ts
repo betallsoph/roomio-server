@@ -95,17 +95,88 @@ test('staff response columns exclude passwordHash', () => {
 	}
 });
 
-test('POST/PUT/DELETE unchanged — still scope via session landlord', () => {
-	const src = readFileSync(new URL('../../routes/api/staff/+server.ts', import.meta.url), 'utf8');
+test('AUTH-005 staff routes use ActorContext only — no session landlord / query landlordId', async () => {
+	const staffSrc = readFileSync(
+		new URL('../../routes/api/staff/+server.ts', import.meta.url),
+		'utf8'
+	);
+	const landlordRequestSrc = readFileSync(
+		new URL('./staff/landlord-request.ts', import.meta.url),
+		'utf8'
+	);
 
-	assert.match(src, /export const POST[\s\S]*locals\.session\?\.landlordProfileId/);
+	for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+		assert.match(
+			staffSrc,
+			new RegExp(
+				`export const ${method}[\\s\\S]*resolveLandlordActorFromRequest\\(\\{\\s*actor:\\s*locals\\.actor`
+			),
+			`${method} must call resolveLandlordActorFromRequest({ actor: locals.actor })`
+		);
+	}
+
+	assert.doesNotMatch(staffSrc, /resolveLandlordScopeForList/);
+	assert.doesNotMatch(staffSrc, /locals\.session\?\.landlordProfileId/);
+	assert.doesNotMatch(staffSrc, /locals\.session\.landlordProfileId/);
+	assert.doesNotMatch(staffSrc, /searchParams\.get\(['"]landlordId['"]\)/);
+	assert.doesNotMatch(staffSrc, /body\.landlordId|landlordId\s*=\s*body/);
+
+	const landlordRequestCode = landlordRequestSrc
+		.replace(/\/\*[\s\S]*?\*\//g, '')
+		.replace(/\/\/.*$/gm, '');
+	assert.match(landlordRequestSrc, /requireLandlordActor/);
+	assert.doesNotMatch(landlordRequestCode, /input\.session|SessionData|landlordProfileId/);
 	assert.match(
-		src,
-		/export const PUT[\s\S]*profile\.landlordId !== locals\.session\.landlordProfileId/
+		landlordRequestSrc,
+		/Never trust locals\.session/,
+		'helper documents ActorContext-only contract'
 	);
-	assert.match(
-		src,
-		/export const DELETE[\s\S]*profile\.landlordId !== locals\.session\.landlordProfileId/
-	);
-	assert.doesNotMatch(src, /export const POST[\s\S]*url\.searchParams\.get\('landlordId'\)/);
+
+	const { resolveLandlordActorFromRequest } = await import('./staff/landlord-request.js');
+
+	const nullActor = resolveLandlordActorFromRequest({ actor: null });
+	assert.equal(nullActor.ok, false);
+	if (!nullActor.ok) assert.equal(nullActor.response.status, 401);
+
+	const superAdmin = resolveLandlordActorFromRequest({
+		actor: { kind: 'USER', userId: 'sa', role: 'SUPER_ADMIN' }
+	});
+	assert.equal(superAdmin.ok, false);
+	if (!superAdmin.ok) assert.equal(superAdmin.response.status, 403);
+
+	const staff = resolveLandlordActorFromRequest({
+		actor: {
+			kind: 'USER',
+			userId: 's',
+			role: 'STAFF',
+			staffId: 'sid',
+			landlordId: LANDLORD_A,
+			propertyIds: [],
+			permissions: []
+		}
+	});
+	assert.equal(staff.ok, false);
+	if (!staff.ok) assert.equal(staff.response.status, 403);
+
+	const tenant = resolveLandlordActorFromRequest({
+		actor: {
+			kind: 'USER',
+			userId: 't',
+			role: 'TENANT',
+			tenantProfileId: 'tid'
+		}
+	});
+	assert.equal(tenant.ok, false);
+	if (!tenant.ok) assert.equal(tenant.response.status, 403);
+
+	const landlord = resolveLandlordActorFromRequest({
+		actor: {
+			kind: 'USER',
+			userId: 'u',
+			role: 'LANDLORD',
+			landlordId: LANDLORD_A
+		}
+	});
+	assert.equal(landlord.ok, true);
+	if (landlord.ok) assert.equal(landlord.actor.landlordId, LANDLORD_A);
 });
