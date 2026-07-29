@@ -19,6 +19,7 @@ import {
 	requireLandlordMutationActor,
 	requireOperationalActor,
 	deletePropertyScoped,
+	requireScopedProperty,
 	updatePropertyScoped
 } from '$lib/server/property-scope';
 
@@ -166,6 +167,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		) {
 			return json({ error: 'Tài khoản chủ trọ chưa được bật loại hình này' }, { status: 403 });
 		}
+
+		// Scope gate before any scalar or block mutation — blocks-only PUT must not bypass ownership.
+		await requireScopedProperty(db, actorResult.actor, id);
 
 		const updateResult = await db.transaction(async (tx) => {
 			if (requestedRentalType) {

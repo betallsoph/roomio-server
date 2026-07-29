@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
+import { eq } from 'drizzle-orm';
 import type { LandlordActor, StaffActor, TenantActor } from '../authorization/actor.js';
 import { createDrizzleActorDb, getUserActor } from '../authorization/load-user-actor.js';
 import {
@@ -144,8 +145,11 @@ if (skipReason) {
 			const ext = await seedPropertyRouteExtensions(handle, fixture);
 			const ids = fixture.ids;
 
-			const { GET: getProperties, DELETE: deleteProperties } =
-				await import('../../../routes/api/properties/+server.js');
+			const {
+				GET: getProperties,
+				PUT: putProperties,
+				DELETE: deleteProperties
+			} = await import('../../../routes/api/properties/+server.js');
 			const {
 				GET: getRooms,
 				PUT: putRooms,
@@ -311,6 +315,77 @@ if (skipReason) {
 				});
 				assert.equal(res.status, 404);
 			});
+
+			await t.test(
+				'landlord B blocks-only PUT on landlord A property → 404, no block insert (B1)',
+				async () => {
+					const before = await handle.db
+						.select({ id: blocks.id })
+						.from(blocks)
+						.where(eq(blocks.propertyId, ids.propertyA1.propertyId));
+
+					const res = await callHandler(putProperties, {
+						request: new Request('http://localhost/api/properties', {
+							method: 'PUT',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								id: ids.propertyA1.propertyId,
+								blocks: ['Injected Block B1']
+							})
+						}),
+						locals: { actor: landlordB }
+					});
+					await expectForeignResourceHidden(res, {
+						sensitiveIds: [ids.propertyA1.propertyId],
+						status: 404
+					});
+
+					const after = await handle.db
+						.select({ id: blocks.id })
+						.from(blocks)
+						.where(eq(blocks.propertyId, ids.propertyA1.propertyId));
+					assert.equal(after.length, before.length);
+				}
+			);
+
+			await t.test(
+				'landlord B empty PUT on landlord A room → 404, no room DTO leak (B2)',
+				async () => {
+					const res = await callHandler(putRooms, {
+						request: new Request('http://localhost/api/rooms', {
+							method: 'PUT',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({ id: ids.roomA1R1.roomId })
+						}),
+						locals: { actor: landlordB }
+					});
+					await expectForeignResourceHidden(res, {
+						sensitiveIds: [ids.roomA1R1.roomId, 'A1-R1'],
+						status: 404
+					});
+				}
+			);
+
+			await t.test(
+				'landlord B updateServiceConfig without configs on landlord A room → 404 (B2)',
+				async () => {
+					const res = await callHandler(putRooms, {
+						request: new Request('http://localhost/api/rooms', {
+							method: 'PUT',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								id: ids.roomA1R1.roomId,
+								action: 'updateServiceConfig'
+							})
+						}),
+						locals: { actor: landlordB }
+					});
+					await expectForeignResourceHidden(res, {
+						sensitiveIds: [ids.roomA1R1.roomId],
+						status: 404
+					});
+				}
+			);
 
 			await t.test('services list scoped per actor with forbidden-key scan', async () => {
 				for (const [label, actor] of [

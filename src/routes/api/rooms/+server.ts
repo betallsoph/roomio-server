@@ -336,6 +336,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Missing room ID' }, { status: 400 });
 		}
 
+		// Every PUT path assembles a room DTO — scope before mutations and before response fetch.
+		await requireScopedRoom(db, actorResult.actor, String(id));
+
 		if (action === 'updateMeters') {
 			return json({ error: 'Meter updates belong on /api/meter-readings' }, { status: 400 });
 		}
