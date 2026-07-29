@@ -57,6 +57,18 @@ async function ensureTelegramTenantProfile(
 	return { userId, tenantProfileId: profileId };
 }
 
+function tenantDisplayName(user: {
+	first_name?: string;
+	last_name?: string;
+	username?: string;
+}): string {
+	return (
+		[user.first_name, user.last_name].filter(Boolean).join(' ') ||
+		user.username ||
+		'Khách thuê Telegram'
+	);
+}
+
 // Đăng nhập khách thuê từ Telegram Mini App: verify initData → claim ManagedTenant qua invite.
 export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 	try {
@@ -76,28 +88,15 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 		}
 
 		const tgId = String(verified.user.id);
-		const startParam =
-			(typeof body?.startParam === 'string' && body.startParam) || verified.startParam;
+		// AUTH-009: invite token MUST come from signed initData only — never from request body.
+		const startParam = verified.startParam;
 
 		let tenant = await findTenantProfileByTelegramId(tgId);
 
-		if (!tenant) {
-			if (!startParam) {
-				return json(
-					{
-						error: 'NEEDS_INVITE',
-						message: 'Tài khoản Telegram chưa được liên kết. Hãy mở bằng link mời từ chủ trọ.'
-					},
-					{ status: 403 }
-				);
-			}
-
-			const displayName =
-				[verified.user.first_name, verified.user.last_name].filter(Boolean).join(' ') ||
-				verified.user.username ||
-				'Khách thuê Telegram';
-
-			const identity = await ensureTelegramTenantProfile(tgId, displayName);
+		if (startParam) {
+			const identity = tenant?.user?.isActive
+				? { userId: tenant.user.id, tenantProfileId: tenant.id }
+				: await ensureTelegramTenantProfile(tgId, tenantDisplayName(verified.user));
 
 			try {
 				await acceptTenantInvite(
@@ -118,6 +117,14 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 			}
 
 			tenant = await findTenantProfileByTelegramId(tgId);
+		} else if (!tenant) {
+			return json(
+				{
+					error: 'NEEDS_INVITE',
+					message: 'Tài khoản Telegram chưa được liên kết. Hãy mở bằng link mời từ chủ trọ.'
+				},
+				{ status: 403 }
+			);
 		}
 
 		if (!tenant?.user || !tenant.user.isActive) {
