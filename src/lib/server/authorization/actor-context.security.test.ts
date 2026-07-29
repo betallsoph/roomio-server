@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { SessionData } from '../session.js';
-import { landlordProfiles, staffProfiles, tenantProfiles, users } from '../db/schema.js';
+import { users } from '../db/schema.js';
 import { UnauthorizedError } from './errors.js';
 import { createDrizzleActorDb, type ActorDb } from './load-user-actor.js';
 import {
@@ -42,6 +43,30 @@ function envSuperAdminSession(): SessionData {
 		staffProfileId: null,
 		staffLandlordId: null
 	};
+}
+
+function emptySessionBase(): Pick<SessionData, 'enabledRentalTypes'> {
+	return {
+		enabledRentalTypes: null
+	};
+}
+
+async function insertUserWithoutProfile(
+	handle: SecurityDbHandle,
+	role: 'LANDLORD' | 'TENANT' | 'STAFF'
+): Promise<{ userId: string }> {
+	const userId = crypto.randomUUID();
+	const tag = userId.slice(0, 8);
+	await handle.db.insert(users).values({
+		id: userId,
+		email: `sec-orphan-${role.toLowerCase()}-${tag}@fixture.test`,
+		phone: `091${tag.slice(0, 7)}`,
+		passwordHash: 'security-fixture-test-hash',
+		name: `Orphan ${role}`,
+		role,
+		isActive: true
+	});
+	return { userId };
 }
 
 type HappyActorCase = {
@@ -171,46 +196,71 @@ if (skipReason) {
 
 		await t.test('missing user row → Unauthorized', async () => {
 			await withSecurityDb(async (handle) => {
-				const fixture = await seedSecurityFixturesFromHandle(handle);
+				await seedSecurityFixturesFromHandle(handle);
 				const actorDb = createActorDbFromHandle(handle);
-				const session = fixtureSession(fixture, 'landlordA');
-				await handle.db.delete(users).where(eq(users.id, fixture.ids.landlordA.userId));
+				const session: SessionData = {
+					...emptySessionBase(),
+					userId: crypto.randomUUID(),
+					role: 'LANDLORD',
+					landlordProfileId: crypto.randomUUID(),
+					tenantProfileId: null,
+					staffProfileId: null,
+					staffLandlordId: null
+				};
 				await expectUnauthorized(() => getUserActor(session, actorDb));
 			});
 		});
 
 		await t.test('landlord missing profile row → Unauthorized', async () => {
 			await withSecurityDb(async (handle) => {
-				const fixture = await seedSecurityFixturesFromHandle(handle);
+				await seedSecurityFixturesFromHandle(handle);
 				const actorDb = createActorDbFromHandle(handle);
-				const session = fixtureSession(fixture, 'landlordA');
-				await handle.db
-					.delete(landlordProfiles)
-					.where(eq(landlordProfiles.userId, fixture.ids.landlordA.userId));
+				const { userId } = await insertUserWithoutProfile(handle, 'LANDLORD');
+				const session: SessionData = {
+					...emptySessionBase(),
+					userId,
+					role: 'LANDLORD',
+					landlordProfileId: crypto.randomUUID(),
+					tenantProfileId: null,
+					staffProfileId: null,
+					staffLandlordId: null
+				};
 				await expectUnauthorized(() => getUserActor(session, actorDb));
 			});
 		});
 
 		await t.test('tenant missing profile row → Unauthorized', async () => {
 			await withSecurityDb(async (handle) => {
-				const fixture = await seedSecurityFixturesFromHandle(handle);
+				await seedSecurityFixturesFromHandle(handle);
 				const actorDb = createActorDbFromHandle(handle);
-				const session = fixtureSession(fixture, 'tenantANow');
-				await handle.db
-					.delete(tenantProfiles)
-					.where(eq(tenantProfiles.userId, fixture.ids.tenantANow.userId));
+				const { userId } = await insertUserWithoutProfile(handle, 'TENANT');
+				const session: SessionData = {
+					...emptySessionBase(),
+					userId,
+					role: 'TENANT',
+					landlordProfileId: null,
+					tenantProfileId: crypto.randomUUID(),
+					staffProfileId: null,
+					staffLandlordId: null
+				};
 				await expectUnauthorized(() => getUserActor(session, actorDb));
 			});
 		});
 
 		await t.test('staff missing profile row → Unauthorized', async () => {
 			await withSecurityDb(async (handle) => {
-				const fixture = await seedSecurityFixturesFromHandle(handle);
+				await seedSecurityFixturesFromHandle(handle);
 				const actorDb = createActorDbFromHandle(handle);
-				const session = fixtureSession(fixture, 'staffALimited');
-				await handle.db
-					.delete(staffProfiles)
-					.where(eq(staffProfiles.userId, fixture.ids.staffALimited.userId));
+				const { userId } = await insertUserWithoutProfile(handle, 'STAFF');
+				const session: SessionData = {
+					...emptySessionBase(),
+					userId,
+					role: 'STAFF',
+					landlordProfileId: null,
+					tenantProfileId: null,
+					staffProfileId: crypto.randomUUID(),
+					staffLandlordId: crypto.randomUUID()
+				};
 				await expectUnauthorized(() => getUserActor(session, actorDb));
 			});
 		});

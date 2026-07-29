@@ -305,12 +305,6 @@ export async function seedSecurityFixtures(
 		}
 	]);
 
-	await db.insert(staffPropertyAssignments).values({
-		staffId: ids.staffALimited.staffProfileId,
-		propertyId: ids.propertyA1.propertyId,
-		assignedByUserId: ids.landlordA.userId
-	});
-
 	await db.insert(staffPermissions).values([
 		{
 			staffId: ids.staffALimited.staffProfileId,
@@ -368,6 +362,13 @@ export async function seedSecurityFixtures(
 			address: 'Fixture address B1'
 		}
 	]);
+
+	// AUTH-005 grants require StaffProfile + Property rows to exist first (FK order).
+	await db.insert(staffPropertyAssignments).values({
+		staffId: ids.staffALimited.staffProfileId,
+		propertyId: ids.propertyA1.propertyId,
+		assignedByUserId: ids.landlordA.userId
+	});
 
 	await db.insert(rooms).values([
 		{
