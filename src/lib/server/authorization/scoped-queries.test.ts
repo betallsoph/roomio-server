@@ -6,8 +6,7 @@ import {
 	maintenanceRequests,
 	meterReadings,
 	roomAssets,
-	rooms,
-	tenancies
+	rooms
 } from '$lib/server/db/schema';
 import type { LandlordActor, StaffActor, SuperAdminActor, TenantActor } from './actor.js';
 import { AuthorizationError } from './errors.js';
@@ -404,7 +403,12 @@ test('tenant history contract uses managedTenantId + tenancyId snapshot', async 
 		}
 	} as never);
 
-	const contract = await findContractForTenantHistory(db, TENANT_ACTOR, HISTORY_SCOPE, 'contract-1');
+	const contract = await findContractForTenantHistory(
+		db,
+		TENANT_ACTOR,
+		HISTORY_SCOPE,
+		'contract-1'
+	);
 	assert.equal(contract.id, 'contract-1');
 });
 
@@ -630,13 +634,19 @@ test('landlord join helpers isolate landlord B from landlord A resources', async
 	assert.equal((await findRoomForLandlord(ownedJoinDb, LANDLORD_A, 'room-a1')).id, 'room-a1');
 	assert.equal((await findInvoiceForLandlord(ownedJoinDb, LANDLORD_A, 'inv-a')).id, 'inv-a');
 	assert.equal((await findContractForLandlord(ownedJoinDb, LANDLORD_A, 'ctr-a')).id, 'ctr-a');
-	assert.equal((await findMeterReadingForLandlord(ownedJoinDb, LANDLORD_A, 'meter-a')).id, 'meter-a');
+	assert.equal(
+		(await findMeterReadingForLandlord(ownedJoinDb, LANDLORD_A, 'meter-a')).id,
+		'meter-a'
+	);
 	assert.equal(
 		(await findMaintenanceRequestForLandlord(ownedJoinDb, LANDLORD_A, 'req-a')).id,
 		'req-a'
 	);
 
-	const emptyJoinDb = queryOnlyDb({} as never, joinSelect(() => []));
+	const emptyJoinDb = queryOnlyDb(
+		{} as never,
+		joinSelect(() => [])
+	);
 	for (const fn of [
 		() => findRoomForLandlord(emptyJoinDb, LANDLORD_B, 'room-a1'),
 		() => findInvoiceForLandlord(emptyJoinDb, LANDLORD_B, 'inv-a'),
@@ -680,7 +690,10 @@ test('room asset child mutation binds asset to room and landlord', async () => {
 	});
 	assert.equal(asset.id, 'asset-1');
 
-	const emptyAssetDb = queryOnlyDb({} as never, joinSelect(() => []));
+	const emptyAssetDb = queryOnlyDb(
+		{} as never,
+		joinSelect(() => [])
+	);
 	await assert.rejects(
 		() =>
 			findRoomAssetForLandlord(emptyAssetDb, LANDLORD_A, {
@@ -731,5 +744,7 @@ test('scoped helpers reject SuperAdmin at operational boundary', () => {
 	// SuperAdmin lacks landlord/staff/tenant scope fields — TypeScript blocks direct helper calls.
 	assert.equal(SUPER_ADMIN.role, 'SUPER_ADMIN');
 	assert.notEqual((_landlordGuard as { landlordId?: string }).landlordId, undefined);
+	assert.notEqual((_staffGuard as { propertyIds?: string[] }).propertyIds, undefined);
+	assert.notEqual((_tenantGuard as { userId?: string }).userId, undefined);
 	assert.equal((SUPER_ADMIN as { landlordId?: string }).landlordId, undefined);
 });

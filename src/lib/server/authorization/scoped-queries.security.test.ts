@@ -352,7 +352,7 @@ if (skipReason) {
 						db,
 						staffLimited,
 						{ roomId: ids.roomA2R1.roomId, assetId: ext.roomAssetA1 },
-						'PROPERTY_READ'
+						'VIEW_ROOMS'
 					)
 				);
 				await expectNotFound(() => findServiceForStaff(db, staffEmpty, ids.serviceA.serviceId));

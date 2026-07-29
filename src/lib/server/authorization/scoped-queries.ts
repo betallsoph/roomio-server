@@ -16,11 +16,7 @@ import {
 	tenancies,
 	tenantProfiles
 } from '$lib/server/db/schema';
-import type {
-	LandlordActor,
-	StaffActor,
-	TenantActor
-} from './actor.js';
+import type { LandlordActor, StaffActor, TenantActor } from './actor.js';
 import {
 	type StaffCapabilityCheck,
 	type StaffScopedCapability,
@@ -214,10 +210,7 @@ export async function findPropertyForStaff(
 		'PROPERTY_READ'
 ) {
 	const row = await database.query.properties.findFirst({
-		where: and(
-			eq(properties.id, propertyId),
-			eq(properties.landlordId, actor.landlordId)
-		)
+		where: and(eq(properties.id, propertyId), eq(properties.landlordId, actor.landlordId))
 	});
 	if (!row) {
 		throwScopedNotFound();
@@ -297,7 +290,10 @@ export async function findManagedTenantForStaff(
 			and(
 				eq(tenancies.managedTenantId, managedTenants.id),
 				eq(tenancies.status, 'ACTIVE'),
-				inArray(tenancies.propertyId, actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__'])
+				inArray(
+					tenancies.propertyId,
+					actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__']
+				)
 			)
 		)
 		.where(
@@ -624,9 +620,7 @@ export async function findMaintenanceRequestForStaff(
 		.select({ request: maintenanceRequests, propertyId: tenancies.propertyId })
 		.from(maintenanceRequests)
 		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
-		.where(
-			and(eq(maintenanceRequests.id, requestId), eq(tenancies.landlordId, actor.landlordId))
-		)
+		.where(and(eq(maintenanceRequests.id, requestId), eq(tenancies.landlordId, actor.landlordId)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -780,10 +774,7 @@ export async function findMessageForLandlord(
 	const conversation = await findConversationForLandlord(database, actor, scope);
 
 	const row = await database.query.messages.findFirst({
-		where: and(
-			eq(messages.id, messageId),
-			eq(messages.conversationId, conversation.conversationId)
-		)
+		where: and(eq(messages.id, messageId), eq(messages.conversationId, conversation.conversationId))
 	});
 	if (!row) {
 		throwScopedNotFound();
@@ -800,10 +791,7 @@ export async function findMessageForTenant(
 	const conversation = await findConversationForTenant(database, actor, scope);
 
 	const row = await database.query.messages.findFirst({
-		where: and(
-			eq(messages.id, messageId),
-			eq(messages.conversationId, conversation.conversationId)
-		)
+		where: and(eq(messages.id, messageId), eq(messages.conversationId, conversation.conversationId))
 	});
 	if (!row) {
 		throwScopedNotFound();
