@@ -3,37 +3,38 @@ import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { services, rooms, properties, roomServiceConfigs } from '$lib/server/db/schema';
-import { asc, eq } from 'drizzle-orm';
-import { resolveLandlordScopeForList } from '$lib/server/landlord-query-scope';
+import { eq } from 'drizzle-orm';
+import { toServiceDto, toServiceListDto } from '$lib/server/dto/services';
+import {
+	deleteServiceScoped,
+	listServicesForActor,
+	propertyScopeErrorToResponse,
+	requireLandlordMutationActor,
+	requireOperationalActor,
+	updateServiceScoped
+} from '$lib/server/property-scope';
 
 const SERVICE_TYPES = ['METERED', 'MANUAL_AMOUNT', 'FLAT_ROOM', 'FLAT_PERSON', 'FLAT_VEHICLE'];
 
-export const GET: RequestHandler = async ({ url, locals }) => {
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const scope = resolveLandlordScopeForList(locals.session, url.searchParams.get('landlordId'));
-		if ('error' in scope) {
-			return json({ error: scope.error }, { status: scope.status });
-		}
+		const actorResult = requireOperationalActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
-		const result = await db
-			.select()
-			.from(services)
-			.where(eq(services.landlordId, scope.landlordId))
-			.orderBy(asc(services.name));
-
-		return json(result);
+		const result = await listServicesForActor(db, actorResult.actor);
+		return json(toServiceListDto(result));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		// landlordId lấy từ phiên đăng nhập, không tin giá trị do client gửi
-		const landlordId = locals.session?.landlordProfileId;
-		if (locals.session?.role !== 'LANDLORD' || !landlordId) {
-			return json({ error: 'Chỉ chủ trọ được quản lý dịch vụ' }, { status: 403 });
-		}
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
 
 		const body = await request.json();
 		const { name, type, defaultRate, isActive } = body;
@@ -52,14 +53,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					.values({
 						landlordId,
 						name,
-						type, // "METERED" | "MANUAL_AMOUNT" | "FLAT_ROOM" | "FLAT_PERSON" | "FLAT_VEHICLE"
+						type,
 						defaultRate: Number(defaultRate),
 						isActive: isActive !== undefined ? isActive : true
 					})
 					.returning()
 			)[0];
 
-			// Automatically register this new service for all existing rooms belonging to this landlord
 			const landlordRooms = await tx
 				.select({ id: rooms.id })
 				.from(rooms)
@@ -79,30 +79,24 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return created;
 		});
 
-		return json(service);
+		return json(toServiceDto(service));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+
 		const body = await request.json();
 		const { id, name, defaultRate, isActive } = body;
 
 		if (!id) {
 			return json({ error: 'Missing service ID' }, { status: 400 });
-		}
-
-		const existing = await db.query.services.findFirst({ where: eq(services.id, id) });
-		if (!existing) {
-			return json({ error: 'Không tìm thấy dịch vụ' }, { status: 404 });
-		}
-		if (
-			locals.session?.role !== 'LANDLORD' ||
-			existing.landlordId !== locals.session.landlordProfileId
-		) {
-			return json({ error: 'Không có quyền sửa dịch vụ này' }, { status: 403 });
 		}
 
 		const updateData: Record<string, unknown> = {};
@@ -114,41 +108,30 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'No fields to update' }, { status: 400 });
 		}
 
-		const updated = await db
-			.update(services)
-			.set(updateData)
-			.where(eq(services.id, id))
-			.returning();
-
-		return json(updated[0]);
+		const updated = await updateServiceScoped(db, actorResult.actor, id, updateData);
+		return json(toServiceDto(updated));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const id = url.searchParams.get('id');
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
+		const id = url.searchParams.get('id');
 		if (!id) {
 			return json({ error: 'Missing service ID' }, { status: 400 });
 		}
 
-		const existing = await db.query.services.findFirst({ where: eq(services.id, id) });
-		if (!existing) {
-			return json({ error: 'Không tìm thấy dịch vụ' }, { status: 404 });
-		}
-		if (
-			locals.session?.role !== 'LANDLORD' ||
-			existing.landlordId !== locals.session.landlordProfileId
-		) {
-			return json({ error: 'Không có quyền xóa dịch vụ này' }, { status: 403 });
-		}
-
-		await db.delete(services).where(eq(services.id, id));
-
+		await deleteServiceScoped(db, actorResult.actor, id);
 		return json({ success: true });
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };

@@ -22,6 +22,8 @@ const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
 	{ prefix: '/api/requests', methods: ['GET', 'PUT'] }, // xem & cập nhật sự cố được giao
 	{ prefix: '/api/meter-readings', methods: ['GET', 'PUT'] }, // chốt/duyệt số điện nước
 	{ prefix: '/api/rooms', methods: ['GET'] }, // xem phòng (chỉ đọc)
+	{ prefix: '/api/properties', methods: ['GET'] }, // xem cơ sở (chỉ đọc)
+	{ prefix: '/api/services', methods: ['GET'] }, // xem dịch vụ (chỉ đọc)
 	{ prefix: '/api/tenants', methods: ['GET'] }, // xem khách thuê (chỉ đọc)
 	{ prefix: '/api/upload', methods: ['POST'] }, // đính ảnh khi xử lý sự cố/chốt số
 	{ prefix: '/api/uploads/presign', methods: ['POST'] } // xin pre-signed URL để upload thẳng R2
