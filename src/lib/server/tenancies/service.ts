@@ -30,10 +30,14 @@ import {
 	activeTenancyConflictFromDbError,
 	assertCanEndTenancy,
 	assertEndDateNotBeforeStart,
+	normalizeCreateContractInput,
 	normalizeEndTenancyInput,
 	normalizeStartTenancyInput,
 	tenancyError,
+	toContractDto,
 	toTenancyDto,
+	type ContractDto,
+	type CreateContractInput,
 	type EndTenancyInput,
 	type StartTenancyInput,
 	type TenancyDto
@@ -256,6 +260,11 @@ export async function startTenancy(
 		const managedTenant = await loadManagedTenantForUpdate(tx, actor, input.managedTenantId);
 
 		await assertNoActiveTenancyForRoom(tx, room.roomId);
+		// Không có Tenancy ACTIVE mà cache vẫn còn người ở = dữ liệu legacy chưa đối soát
+		// (AUTH-007) hoặc lệch do sự cố. FAIL CLOSED: không ghi đè occupant cũ.
+		if (room.currentManagedTenantId !== null || room.legacyTenantId !== null) {
+			throw tenancyError('ROOM_CACHE_CONFLICT', 'room occupant cache without active tenancy');
+		}
 		await assertNoActiveTenancyForManagedTenant(tx, managedTenant.id);
 
 		if (input.contract?.paymentAccountId) {
@@ -298,7 +307,9 @@ export async function startTenancy(
 			.update(rooms)
 			.set({
 				currentManagedTenantId: managedTenant.id,
-				...(legacyRoomTenantWritten ? { tenantId: managedTenant.legacyTenantProfileId } : {})
+				// Ghi tường minh: không có legacy profile thì cache legacy phải là null,
+				// tránh giữ lại người ở cũ trong cột này.
+				tenantId: managedTenant.legacyTenantProfileId ?? null
 			})
 			.where(eq(rooms.id, room.roomId));
 
@@ -550,26 +561,100 @@ export async function endActiveTenancyForRoom(
 }
 
 /**
- * Read-only helper cho endpoint tạo resource mới (contract…): lấy snapshot tenancy ACTIVE
- * của phòng trong scope actor. KHÔNG dùng `Room.currentManagedTenantId` làm nguồn.
+ * Tạo hợp đồng gắn ĐÚNG lần thuê đang hiệu lực của phòng, trong MỘT transaction.
+ *
+ * Chống race với checkout: `SELECT … FOR UPDATE` giữ row tenancy tới khi commit. Nếu
+ * checkout thắng trước, điều kiện `status = 'ACTIVE'` được đánh giá lại sau khi lấy được
+ * lock nên tenancy đã ENDED không còn khớp và lệnh này trả 409 thay vì gắn nhầm.
+ *
+ * Mọi ID người thuê (`tenancyId`, `managedTenantId`, `tenantId` legacy) đều derive từ DB.
+ * `tenantId` client gửi chỉ để đối chiếu.
  */
-export async function findActiveTenancyForRoom(
-	conn: TenancyDb,
+export async function createContractForActiveTenancy(
+	conn: TenancyConn,
 	actor: LandlordActor,
-	roomId: string
-): Promise<{ id: string; managedTenantId: string | null } | null> {
-	const rows = await conn
-		.select({ id: tenancies.id, managedTenantId: tenancies.managedTenantId })
-		.from(tenancies)
-		.where(
-			and(
-				eq(tenancies.roomId, roomId),
-				eq(tenancies.landlordId, actor.landlordId),
-				eq(tenancies.status, 'ACTIVE')
+	rawInput: CreateContractInput
+): Promise<ContractDto> {
+	const input = normalizeCreateContractInput(rawInput);
+
+	return runInTransaction(conn, async (tx) => {
+		const room = await loadRoomScopeForUpdate(tx, actor, input.roomId);
+
+		const tenancyRows = await tx
+			.select({
+				id: tenancies.id,
+				managedTenantId: tenancies.managedTenantId,
+				startDate: tenancies.startDate
+			})
+			.from(tenancies)
+			.where(
+				and(
+					eq(tenancies.roomId, room.roomId),
+					eq(tenancies.landlordId, actor.landlordId),
+					eq(tenancies.status, 'ACTIVE')
+				)
 			)
-		)
+			.for('update')
+			.limit(1);
+
+		const tenancy = tenancyRows[0];
+		// Không có lần thuê hiệu lực thì KHÔNG tạo contract mồ côi với snapshot null.
+		if (!tenancy) throw tenancyError('NO_ACTIVE_TENANCY', 'no active tenancy for room');
+		if (!tenancy.managedTenantId) {
+			throw tenancyError('TENANCY_MISSING_MANAGED_TENANT', 'legacy tenancy pending backfill');
+		}
+
+		const managedTenant = await loadManagedTenantForUpdate(tx, actor, tenancy.managedTenantId);
+		if (!managedTenant.legacyTenantProfileId) {
+			throw tenancyError('NO_LEGACY_TENANT_PROFILE', 'managed tenant has no legacy profile');
+		}
+		// Body khai người thuê khác người thuê thật của lần thuê này → từ chối, không im lặng.
+		if (
+			input.expectedLegacyTenantProfileId &&
+			input.expectedLegacyTenantProfileId !== managedTenant.legacyTenantProfileId
+		) {
+			throw tenancyError('CONTRACT_TENANT_MISMATCH', 'body tenantId is not the room occupant');
+		}
+
+		if (input.paymentAccountId) {
+			await assertPaymentAccountInScope(tx, actor, input.paymentAccountId);
+		}
+
+		const inserted = await tx
+			.insert(contracts)
+			.values({
+				tenantId: managedTenant.legacyTenantProfileId,
+				roomId: room.roomId,
+				startDate: input.startDate,
+				endDate: input.endDate,
+				monthlyRent: input.monthlyRent ?? room.monthlyRent,
+				deposit: input.deposit,
+				fileUrl: input.fileUrl,
+				notes: input.notes,
+				paymentAccountId: input.paymentAccountId,
+				status: 'active',
+				managedTenantId: managedTenant.id,
+				tenancyId: tenancy.id
+			})
+			.returning();
+
+		const contract = inserted[0];
+		if (!contract) throw new Error('createContractForActiveTenancy did not return a row');
+		return toContractDto(contract);
+	});
+}
+
+/**
+ * Guard chống split-brain khi flag bị tắt lại: luồng legacy không được thêm người ở mới
+ * vào phòng đã có Tenancy ACTIVE. Chỉ trả boolean, không cấp quyền.
+ */
+export async function hasActiveTenancyForRoom(conn: TenancyDb, roomId: string): Promise<boolean> {
+	const rows = await conn
+		.select({ id: tenancies.id })
+		.from(tenancies)
+		.where(and(eq(tenancies.roomId, roomId), eq(tenancies.status, 'ACTIVE')))
 		.limit(1);
-	return rows[0] ?? null;
+	return rows.length > 0;
 }
 
 /**

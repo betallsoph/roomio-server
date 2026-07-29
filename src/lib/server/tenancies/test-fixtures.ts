@@ -11,7 +11,7 @@
 
 import { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import * as schema from '../db/schema.js';
 import {
 	landlordProfiles,
@@ -236,15 +236,41 @@ export async function cleanupTenancyFixture(pool: Pool, fixture: TenancyFixture)
 }
 
 /**
- * Tổng số row identity, để khẳng định service KHÔNG bịa `User`/`TenantProfile`.
- * Gọi ngay trước và ngay sau lời gọi service để cửa sổ so sánh hẹp nhất có thể.
+ * Đếm identity row THUỘC fixture này (theo `runId` và theo liên kết tới phòng của fixture)
+ * để khẳng định service KHÔNG bịa `User`/`TenantProfile`.
+ *
+ * Cố ý KHÔNG `count(*)` toàn DB: CI chạy nhiều suite song song trên cùng một database nên
+ * số tổng sẽ flaky. Row do service bịa ra luôn lộ ở một trong hai chỗ dưới đây: gắn vào
+ * `User` của fixture, hoặc được `Room` của fixture trỏ tới.
  */
 export async function countIdentityRows(
-	db: TenancyTestDb
-): Promise<{ users: number; tenantProfiles: number }> {
-	const userRows = await db.select({ count: sql<number>`count(*)::int` }).from(users);
-	const profileRows = await db.select({ count: sql<number>`count(*)::int` }).from(tenantProfiles);
-	return { users: userRows[0]?.count ?? 0, tenantProfiles: profileRows[0]?.count ?? 0 };
+	db: TenancyTestDb,
+	fixture: TenancyFixture
+): Promise<{ users: number; tenantProfiles: number; roomLinkedProfiles: number }> {
+	const prefix = `${fixture.runId}-%`;
+
+	const userRows = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(users)
+		.where(sql`${users.id} LIKE ${prefix} OR ${users.email} LIKE ${`${fixture.runId}%`}`);
+
+	const profileRows = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(tenantProfiles)
+		.where(sql`${tenantProfiles.id} LIKE ${prefix} OR ${tenantProfiles.userId} LIKE ${prefix}`);
+
+	// TenantProfile bịa ra chỉ hữu ích khi được gắn vào phòng — đếm cả hướng đó.
+	const roomLinkedRows = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(tenantProfiles)
+		.innerJoin(rooms, eq(rooms.tenantId, tenantProfiles.id))
+		.where(sql`${rooms.id} LIKE ${prefix}`);
+
+	return {
+		users: userRows[0]?.count ?? 0,
+		tenantProfiles: profileRows[0]?.count ?? 0,
+		roomLinkedProfiles: roomLinkedRows[0]?.count ?? 0
+	};
 }
 
 export function createTenancyTestDb(pool: Pool): TenancyTestDb {

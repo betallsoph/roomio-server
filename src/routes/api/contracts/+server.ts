@@ -18,7 +18,8 @@ import {
 	unauthenticatedError
 } from '$lib/server/authorization/errors';
 import { isTenancyDualWriteEnabled } from '$lib/server/env';
-import { findActiveTenancyForRoom } from '$lib/server/tenancies/service';
+import { createContractForActiveTenancy } from '$lib/server/tenancies/service';
+import { isTenancyServiceError, toTenancyErrorBody } from '$lib/server/tenancies/state';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
@@ -72,6 +73,44 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	}
 };
 
+/**
+ * Chọn tài khoản nhận tiền cho hợp đồng: ưu tiên body, rồi tới tài khoản của phòng, rồi
+ * mặc định của chủ trọ. Truy vấn phòng luôn scope theo landlord nên phòng của chủ khác
+ * không lộ dữ liệu — service tenancy vẫn là nơi trả 404.
+ */
+async function resolveRoomPaymentAccount(
+	landlordId: string,
+	roomId: unknown,
+	requestedPaymentAccountId: unknown
+): Promise<{ paymentAccountId: string } | { response: Response }> {
+	try {
+		const scopedRoom =
+			typeof roomId === 'string' && roomId
+				? (
+						await db
+							.select({ paymentAccountId: rooms.paymentAccountId })
+							.from(rooms)
+							.innerJoin(properties, eq(rooms.propertyId, properties.id))
+							.where(and(eq(rooms.id, roomId), eq(properties.landlordId, landlordId)))
+							.limit(1)
+					)[0]
+				: undefined;
+
+		const account = await getPaymentAccountForLandlord(
+			landlordId,
+			(typeof requestedPaymentAccountId === 'string' && requestedPaymentAccountId
+				? requestedPaymentAccountId
+				: scopedRoom?.paymentAccountId) || null
+		);
+		if (!account.isActive) {
+			return { response: json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 }) };
+		}
+		return { paymentAccountId: account.id };
+	} catch (error) {
+		return { response: json({ error: errorMessage(error) }, { status: 400 }) };
+	}
+}
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		// AUTH-006 — actor lấy từ locals.actor; landlordId KHÔNG bao giờ đọc từ body/query.
@@ -94,8 +133,42 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			fileUrl,
 			notes,
 			paymentAccountId
-		} = body;
+		} = body ?? {};
 
+		// AUTH-006 — khi flag bật, contract PHẢI gắn lần thuê đang hiệu lực của phòng.
+		// Lookup tenancy + insert nằm trong cùng transaction có lock để không race checkout;
+		// tenancyId/managedTenantId/tenantId legacy đều derive từ DB, không tin body.
+		if (isTenancyDualWriteEnabled()) {
+			try {
+				const roomPaymentAccount = await resolveRoomPaymentAccount(
+					actor.landlordId,
+					roomId,
+					paymentAccountId
+				);
+				if ('response' in roomPaymentAccount) return roomPaymentAccount.response;
+
+				const contract = await createContractForActiveTenancy(db, actor, {
+					roomId,
+					startDate,
+					endDate,
+					monthlyRent,
+					deposit,
+					fileUrl,
+					notes,
+					paymentAccountId: roomPaymentAccount.paymentAccountId,
+					// Chỉ để đối chiếu — lệch với người thuê thật thì service từ chối.
+					expectedLegacyTenantProfileId: tenantId ?? null
+				});
+				return json(contract, { status: 201 });
+			} catch (error) {
+				if (isTenancyServiceError(error)) {
+					return json(toTenancyErrorBody(error, locals.requestId), { status: error.status });
+				}
+				throw error;
+			}
+		}
+
+		// Luồng legacy (flag off) — giữ nguyên đến khi bật dual-write.
 		if (!tenantId || !roomId || !startDate || !endDate || monthlyRent === undefined) {
 			return json({ error: 'Thiếu thông tin hợp đồng bắt buộc' }, { status: 400 });
 		}
@@ -117,12 +190,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
 		}
 
-		// AUTH-006 — contract mới phải mang snapshot lần thuê đang hiệu lực của phòng.
-		// Nguồn là Tenancy trong scope actor, KHÔNG phải Room.currentManagedTenantId.
-		const activeTenancy = isTenancyDualWriteEnabled()
-			? await findActiveTenancyForRoom(db, actor, roomId)
-			: null;
-
 		const created = await db
 			.insert(contracts)
 			.values({
@@ -135,9 +202,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				fileUrl: fileUrl || null,
 				paymentAccountId: selectedPaymentAccount.id,
 				notes: notes || null,
-				status: 'active',
-				managedTenantId: activeTenancy?.managedTenantId ?? null,
-				tenancyId: activeTenancy?.id ?? null
+				status: 'active'
 			})
 			.returning();
 

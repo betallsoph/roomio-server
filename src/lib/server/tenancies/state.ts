@@ -27,6 +27,14 @@ export type TenancyErrorCode =
 	| 'MANAGED_TENANT_ARCHIVED'
 	| 'TENANCY_NOT_ACTIVE'
 	| 'NO_ACTIVE_TENANCY'
+	/** Room còn cache người ở nhưng không có Tenancy hợp lệ — fail closed, không ghi đè. */
+	| 'ROOM_CACHE_CONFLICT'
+	/** Tenancy legacy chưa backfill `managedTenantId` (AUTH-007) — không đoán người thuê. */
+	| 'TENANCY_MISSING_MANAGED_TENANT'
+	/** ManagedTenant chưa có `legacyTenantProfileId`; KHÔNG bịa TenantProfile để lấp. */
+	| 'NO_LEGACY_TENANT_PROFILE'
+	/** Body khai `tenantId` khác người thuê thật của lần thuê đang hiệu lực. */
+	| 'CONTRACT_TENANT_MISMATCH'
 	// 422 — payload sai.
 	| 'INVALID_INPUT';
 
@@ -42,6 +50,10 @@ const TENANCY_ERROR_STATUS: Record<TenancyErrorCode, TenancyErrorStatus> = {
 	MANAGED_TENANT_ARCHIVED: 409,
 	TENANCY_NOT_ACTIVE: 409,
 	NO_ACTIVE_TENANCY: 409,
+	ROOM_CACHE_CONFLICT: 409,
+	TENANCY_MISSING_MANAGED_TENANT: 409,
+	NO_LEGACY_TENANT_PROFILE: 409,
+	CONTRACT_TENANT_MISMATCH: 409,
 	INVALID_INPUT: 422
 };
 
@@ -56,6 +68,10 @@ const TENANCY_ERROR_MESSAGE: Record<TenancyErrorCode, string> = {
 	MANAGED_TENANT_ARCHIVED: 'Hồ sơ người thuê đã lưu trữ',
 	TENANCY_NOT_ACTIVE: 'Lần thuê không còn hiệu lực',
 	NO_ACTIVE_TENANCY: 'Phòng không có lần thuê đang hiệu lực',
+	ROOM_CACHE_CONFLICT: 'Phòng đang có dữ liệu người ở chưa được đối soát',
+	TENANCY_MISSING_MANAGED_TENANT: 'Lần thuê chưa gắn hồ sơ người thuê',
+	NO_LEGACY_TENANT_PROFILE: 'Hồ sơ người thuê chưa liên kết dữ liệu hợp đồng cũ',
+	CONTRACT_TENANT_MISMATCH: 'Người thuê trong yêu cầu không khớp lần thuê của phòng',
 	INVALID_INPUT: 'Dữ liệu không hợp lệ'
 };
 
@@ -418,5 +434,128 @@ export function toTenancyDto(row: TenancyRowForDto): TenancyDto {
 		depositRequired: String(row.depositRequired ?? 0),
 		createdAt: toIso(row.createdAt),
 		updatedAt: toIso(row.updatedAt)
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Hợp đồng gắn với một lần thuê
+// ---------------------------------------------------------------------------
+
+export type CreateContractInput = {
+	roomId: string;
+	startDate: string;
+	endDate: string;
+	/** Bỏ trống = lấy `Room.monthlyRent` đã load trong transaction. */
+	monthlyRent?: MoneyInput;
+	deposit?: MoneyInput;
+	fileUrl?: string | null;
+	notes?: string | null;
+	paymentAccountId?: string | null;
+	/**
+	 * `tenantId` client gửi — CHỈ dùng để đối chiếu, không phải authority. Service derive
+	 * người thuê thật từ Tenancy ACTIVE + ManagedTenant trong DB; lệch nhau thì từ chối.
+	 */
+	expectedLegacyTenantProfileId?: string | null;
+};
+
+export type NormalizedCreateContractInput = {
+	roomId: string;
+	startDate: string;
+	endDate: string;
+	monthlyRent: number | null;
+	deposit: number;
+	fileUrl: string | null;
+	notes: string | null;
+	paymentAccountId: string | null;
+	expectedLegacyTenantProfileId: string | null;
+};
+
+export function normalizeCreateContractInput(
+	raw: CreateContractInput
+): NormalizedCreateContractInput {
+	const roomId = requireId(raw?.roomId, 'roomId');
+	const startDate = requireCalendarDate(raw?.startDate, 'startDate');
+	const endDate = requireCalendarDate(raw?.endDate, 'endDate');
+	if (endDate < startDate) {
+		throw tenancyError('INVALID_INPUT', 'endDate must be on or after startDate');
+	}
+
+	return {
+		roomId,
+		startDate,
+		endDate,
+		monthlyRent:
+			raw.monthlyRent === undefined || raw.monthlyRent === null
+				? null
+				: nonNegativeAmount(raw.monthlyRent, 'monthlyRent'),
+		deposit: nonNegativeAmount(raw.deposit, 'deposit', 0),
+		fileUrl: optionalText(raw.fileUrl, 'fileUrl', 500),
+		notes: optionalText(raw.notes, 'notes'),
+		paymentAccountId:
+			raw.paymentAccountId === undefined ||
+			raw.paymentAccountId === null ||
+			raw.paymentAccountId === ''
+				? null
+				: requireId(raw.paymentAccountId, 'paymentAccountId'),
+		expectedLegacyTenantProfileId:
+			raw.expectedLegacyTenantProfileId === undefined ||
+			raw.expectedLegacyTenantProfileId === null ||
+			raw.expectedLegacyTenantProfileId === ''
+				? null
+				: requireId(raw.expectedLegacyTenantProfileId, 'tenantId')
+	};
+}
+
+export type ContractRowForDto = {
+	id: string;
+	tenantId: string;
+	roomId: string;
+	tenancyId: string | null;
+	managedTenantId: string | null;
+	startDate: string;
+	endDate: string;
+	monthlyRent: number;
+	deposit: number;
+	fileUrl: string | null;
+	notes: string | null;
+	status: string;
+	paymentAccountId: string | null;
+	createdAt: Date | string;
+};
+
+export type ContractDto = {
+	id: string;
+	roomId: string;
+	tenancyId: string | null;
+	managedTenantId: string | null;
+	/** ID `TenantProfile` legacy; giữ để client cũ còn chạy trong lúc migrate. */
+	tenantId: string;
+	startDate: string;
+	endDate: string;
+	monthlyRent: number;
+	deposit: number;
+	fileUrl: string | null;
+	notes: string | null;
+	status: string;
+	paymentAccountId: string | null;
+	createdAt: string;
+};
+
+export function toContractDto(row: ContractRowForDto): ContractDto {
+	return {
+		id: row.id,
+		roomId: row.roomId,
+		tenancyId: row.tenancyId,
+		managedTenantId: row.managedTenantId,
+		tenantId: row.tenantId,
+		startDate: row.startDate,
+		endDate: row.endDate,
+		monthlyRent: row.monthlyRent,
+		deposit: row.deposit,
+		fileUrl: row.fileUrl,
+		notes: row.notes,
+		status: row.status,
+		paymentAccountId: row.paymentAccountId,
+		createdAt: toIso(row.createdAt)
 	};
 }

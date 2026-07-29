@@ -140,8 +140,24 @@ if (skipReason) {
 		return rows.length;
 	}
 
+	async function countContractsForRoomA1(): Promise<number> {
+		const rows = await db
+			.select({ id: contracts.id })
+			.from(contracts)
+			.where(eq(contracts.roomId, fixture.roomA1));
+		return rows.length;
+	}
+
+	/**
+	 * Chỉ đếm User thuộc fixture (id hoặc email mang runId) — CI chạy nhiều suite song song
+	 * trên cùng database nên `count(*)` toàn bảng sẽ flaky. Luồng legacy tự sinh email từ
+	 * body test nên user "bịa ra" vẫn nằm trong prefix này.
+	 */
 	async function countUsers(): Promise<number> {
-		const rows = await pool.query<{ count: string }>('SELECT count(*)::int AS count FROM "User"');
+		const rows = await pool.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM "User" WHERE id LIKE $1 OR email LIKE $2`,
+			[`${fixture.runId}-%`, `${fixture.runId}%`]
+		);
 		return Number(rows.rows[0]?.count ?? 0);
 	}
 
@@ -231,8 +247,10 @@ if (skipReason) {
 			requestEvent(
 				{
 					roomId: fixture.roomA1,
-					email: 'should-not-create@tenancy.test',
-					phone: '0900000000',
+					// Email/phone mang runId để `countUsers()` (scope theo runId) bắt được
+					// nếu endpoint lỡ tạo identity.
+					email: `${fixture.runId}.should-not-create@tenancy.test`,
+					phone: `${fixture.runId}.should-not-create`,
 					password: 'should-not-be-used',
 					name: 'Should not exist'
 				},
@@ -368,7 +386,6 @@ if (skipReason) {
 
 		const roomRows = await db
 			.select({
-				status: rooms.status,
 				tenantId: rooms.tenantId,
 				currentManagedTenantId: rooms.currentManagedTenantId
 			})
@@ -376,7 +393,6 @@ if (skipReason) {
 			.where(eq(rooms.id, fixture.roomA1));
 		assert.equal(roomRows[0]?.currentManagedTenantId, null);
 		assert.equal(roomRows[0]?.tenantId, null);
-		assert.equal(roomRows[0]?.status, 'empty');
 
 		const second = await PUT(
 			requestEvent({ id: fixture.roomA1, action: 'checkout' }, landlordLocals())
@@ -384,6 +400,60 @@ if (skipReason) {
 		const { status, body } = await readJson(second);
 		assert.equal(status, 409);
 		assert.equal(body.code, 'NO_ACTIVE_TENANCY');
+	});
+
+	test('checkout never clears or changes Room.debtAmount', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+		// Công nợ tồn tại lúc trả phòng — quyết toán là việc của FIN, không phải AUTH-006.
+		await db
+			.update(rooms)
+			.set({ debtAmount: 1_500_000, status: 'debt' })
+			.where(eq(rooms.id, fixture.roomA1));
+
+		const { PUT } = await import('../../../routes/api/rooms/+server.js');
+		const response = await PUT(
+			requestEvent(
+				{ id: fixture.roomA1, action: 'checkout', endDate: '2026-08-01' },
+				landlordLocals()
+			)
+		);
+		assert.equal(response.status, 200);
+
+		const roomRows = await db
+			.select({ debtAmount: rooms.debtAmount, status: rooms.status })
+			.from(rooms)
+			.where(eq(rooms.id, fixture.roomA1));
+		assert.equal(roomRows[0]?.debtAmount, 1_500_000, 'checkout must not wipe the debt');
+		// Trạng thái vận hành phòng thuộc FIN-027; đường tenancy mới không ghi đè.
+		assert.equal(roomRows[0]?.status, 'debt');
+	});
+
+	test('checkout on another landlord room returns 404, not 403', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		const { PUT } = await import('../../../routes/api/rooms/+server.js');
+		const foreign = await readJson(
+			await PUT(requestEvent({ id: fixture.roomB1, action: 'checkout' }, landlordLocals()))
+		);
+		assert.equal(foreign.status, 404);
+		assert.equal(foreign.body.code, 'ROOM_NOT_FOUND');
+
+		// Phòng không tồn tại phải trả về đúng như phòng của chủ khác.
+		const unknown = await readJson(
+			await PUT(
+				requestEvent({ id: `${fixture.runId}-no-such-room`, action: 'checkout' }, landlordLocals())
+			)
+		);
+		assert.equal(unknown.status, 404);
+		assert.deepEqual(unknown.body.code, foreign.body.code);
 	});
 
 	test('flag on checkout without a verified actor returns 401', async () => {
@@ -448,8 +518,10 @@ if (skipReason) {
 		);
 
 		const { status, body } = await readJson(response);
-		assert.equal(status, 200);
+		assert.equal(status, 201);
 		expectNoForbiddenKeys(body);
+		assert.equal(body.tenancyId, started.tenancy.id);
+		assert.equal(body.managedTenantId, fixture.managedTenantLegacy);
 
 		const rows = await db
 			.select({ tenancyId: contracts.tenancyId, managedTenantId: contracts.managedTenantId })
@@ -458,6 +530,87 @@ if (skipReason) {
 		assert.equal(rows.length, 1);
 		assert.equal(rows[0]?.tenancyId, started.tenancy.id);
 		assert.equal(rows[0]?.managedTenantId, fixture.managedTenantLegacy);
+	});
+
+	test('flag on rejects a contract for a tenant who is not the room occupant', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+
+		const { POST } = await import('../../../routes/api/contracts/+server.js');
+		const { status, body } = await readJson(
+			await POST(
+				requestEvent(
+					{
+						// Client khai người thuê khác — body không phải authority.
+						tenantId: `${fixture.runId}-other-profile`,
+						roomId: fixture.roomA1,
+						startDate: '2026-07-01',
+						endDate: '2027-07-01',
+						monthlyRent: 3_000_000
+					},
+					landlordLocals()
+				)
+			)
+		);
+
+		assert.equal(status, 409);
+		assert.equal(body.code, 'CONTRACT_TENANT_MISMATCH');
+		assert.equal(await countContractsForRoomA1(), 0);
+	});
+
+	test('flag on refuses a contract when the room has no active tenancy', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		const { POST } = await import('../../../routes/api/contracts/+server.js');
+		const { status, body } = await readJson(
+			await POST(
+				requestEvent(
+					{
+						tenantId: fixture.legacyTenantProfileId,
+						roomId: fixture.roomA1,
+						startDate: '2026-07-01',
+						endDate: '2027-07-01',
+						monthlyRent: 3_000_000
+					},
+					landlordLocals()
+				)
+			)
+		);
+
+		assert.equal(status, 409);
+		assert.equal(body.code, 'NO_ACTIVE_TENANCY');
+		assert.equal(await countContractsForRoomA1(), 0, 'no contract with null tenancy snapshot');
+	});
+
+	test('flag on returns 404 for a contract in another landlord room', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		const { POST } = await import('../../../routes/api/contracts/+server.js');
+		const { status, body } = await readJson(
+			await POST(
+				requestEvent(
+					{
+						tenantId: fixture.legacyTenantProfileId,
+						roomId: fixture.roomB1,
+						startDate: '2026-07-01',
+						endDate: '2027-07-01',
+						monthlyRent: 3_000_000
+					},
+					landlordLocals()
+				)
+			)
+		);
+
+		assert.equal(status, 404);
+		assert.equal(body.code, 'ROOM_NOT_FOUND');
 	});
 
 	test('contract creation without a verified actor returns 401', async () => {
@@ -478,5 +631,93 @@ if (skipReason) {
 			)
 		);
 		assert.equal(response.status, 401);
+	});
+
+	// --- Rollback flag: không được split-brain ----------------------------
+
+	test('turning the flag off does not let the legacy check-in overwrite an active tenancy', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantUnclaimed,
+			startDate: '2026-07-01'
+		});
+
+		// Rollback flag sau khi đã có Tenancy ACTIVE.
+		setDualWriteFlag(false);
+
+		const usersBefore = await countUsers();
+		const { POST } = await import('../../../routes/api/tenants/+server.js');
+		const { status, body } = await readJson(
+			await POST(
+				requestEvent(
+					{
+						email: `${fixture.runId}.${LEGACY_CHECKIN_EMAIL_MARKER}.split@tenancy.test`,
+						phone: `${fixture.runId}.split`,
+						password: 'legacy-flow-password',
+						name: 'Split brain attempt',
+						roomId: fixture.roomA1,
+						idNumber: '000000000001',
+						moveInDate: '2026-07-05',
+						deposit: 3_000_000
+					},
+					landlordLocals()
+				)
+			)
+		);
+
+		assert.equal(status, 409);
+		assert.equal(body.code, 'ROOM_OCCUPIED');
+		assert.equal(
+			await countUsers(),
+			usersBefore,
+			'no identity may be created for an occupied room'
+		);
+		assert.equal(await activeTenanciesForLandlordA(), 1);
+
+		const roomRows = await db
+			.select({ currentManagedTenantId: rooms.currentManagedTenantId })
+			.from(rooms)
+			.where(eq(rooms.id, fixture.roomA1));
+		assert.equal(roomRows[0]?.currentManagedTenantId, fixture.managedTenantUnclaimed);
+	});
+
+	test('turning the flag off still ends an existing tenancy on checkout', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(true);
+
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+
+		setDualWriteFlag(false);
+
+		const { PUT } = await import('../../../routes/api/rooms/+server.js');
+		const response = await PUT(
+			requestEvent(
+				{ id: fixture.roomA1, action: 'checkout', endDate: '2026-08-01' },
+				landlordLocals()
+			)
+		);
+		assert.equal(response.status, 200);
+
+		// Không được chỉ xóa cache legacy rồi để Tenancy treo ACTIVE.
+		const tenancyRows = await db
+			.select({ status: tenancies.status, endDate: tenancies.endDate })
+			.from(tenancies)
+			.where(eq(tenancies.id, started.tenancy.id));
+		assert.equal(tenancyRows[0]?.status, 'ENDED');
+		assert.equal(tenancyRows[0]?.endDate, '2026-08-01');
+
+		const roomRows = await db
+			.select({ tenantId: rooms.tenantId, currentManagedTenantId: rooms.currentManagedTenantId })
+			.from(rooms)
+			.where(eq(rooms.id, fixture.roomA1));
+		assert.equal(roomRows[0]?.currentManagedTenantId, null);
+		assert.equal(roomRows[0]?.tenantId, null);
 	});
 }

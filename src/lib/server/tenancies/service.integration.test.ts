@@ -21,9 +21,10 @@ import {
 	type TenancyTestDb
 } from './test-fixtures.js';
 import {
+	createContractForActiveTenancy,
 	endActiveTenancyForRoom,
 	endTenancy,
-	findActiveTenancyForRoom,
+	hasActiveTenancyForRoom,
 	startTenancy
 } from './service.js';
 import { isTenancyServiceError } from './state.js';
@@ -88,6 +89,14 @@ if (skipReason) {
 			.select({ id: tenancies.id })
 			.from(tenancies)
 			.where(eq(tenancies.landlordId, fixture.landlordA.landlordId));
+		return rows.length;
+	}
+
+	async function countContracts(): Promise<number> {
+		const rows = await db
+			.select({ id: contracts.id })
+			.from(contracts)
+			.where(eq(contracts.roomId, fixture.roomA1));
 		return rows.length;
 	}
 
@@ -163,13 +172,13 @@ if (skipReason) {
 			.where(eq(managedTenants.id, fixture.managedTenantUnclaimed));
 		assert.equal(claimant[0]?.claimedByUserId, null);
 
-		const before = await countIdentityRows(db);
+		const before = await countIdentityRows(db, fixture);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA1,
 			managedTenantId: fixture.managedTenantUnclaimed,
 			startDate: '2026-07-01'
 		});
-		const afterStart = await countIdentityRows(db);
+		const afterStart = await countIdentityRows(db, fixture);
 		assert.deepEqual(afterStart, before, 'startTenancy must not create User/TenantProfile rows');
 
 		const ended = await endTenancy(db, fixture.landlordA.actor, {
@@ -179,7 +188,7 @@ if (skipReason) {
 		assert.equal(ended.tenancy.status, 'ENDED');
 		assert.equal(ended.tenancy.endDate, '2026-08-01');
 
-		const afterEnd = await countIdentityRows(db);
+		const afterEnd = await countIdentityRows(db, fixture);
 		assert.deepEqual(afterEnd, before, 'endTenancy must not create User/TenantProfile rows');
 	});
 
@@ -550,23 +559,189 @@ if (skipReason) {
 		// monthlyRent lấy từ Room đã load trong transaction, không từ body.
 		assert.equal(rows[0]?.monthlyRent, 3_000_000);
 		assert.equal(rows[0]?.startDate, '2026-07-01');
+	});
 
-		const active = await findActiveTenancyForRoom(db, fixture.landlordA.actor, fixture.roomA1);
-		assert.equal(active?.id, started.tenancy.id);
-		assert.equal(active?.managedTenantId, fixture.managedTenantLegacy);
+	test('createContractForActiveTenancy derives every tenant id from the database', async () => {
+		await resetBusinessRows();
+
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+
+		const contract = await createContractForActiveTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			startDate: '2026-07-01',
+			endDate: '2027-07-01',
+			paymentAccountId: fixture.paymentAccountA
+		});
+
+		assert.equal(contract.tenancyId, started.tenancy.id);
+		assert.equal(contract.managedTenantId, fixture.managedTenantLegacy);
+		assert.equal(contract.tenantId, fixture.legacyTenantProfileId);
+		// monthlyRent bỏ trống → lấy từ Room đã load trong transaction.
+		assert.equal(contract.monthlyRent, 3_000_000);
+	});
+
+	test('a contract can never be attached to another tenant than the room occupant', async () => {
+		await resetBusinessRows();
+
+		await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+
+		// Body khai TenantProfile khác người thuê thật của phòng.
+		await assert.rejects(
+			() =>
+				createContractForActiveTenancy(db, fixture.landlordA.actor, {
+					roomId: fixture.roomA1,
+					startDate: '2026-07-01',
+					endDate: '2027-07-01',
+					expectedLegacyTenantProfileId: `${fixture.runId}-someone-else`
+				}),
+			(error: unknown) => {
+				assert.ok(isTenancyServiceError(error));
+				assert.equal(error.code, 'CONTRACT_TENANT_MISMATCH');
+				assert.equal(error.status, 409);
+				return true;
+			}
+		);
+
+		assert.equal(await countContracts(), 0, 'a mismatched tenant must not create a contract');
+	});
+
+	test('a contract is refused when the room has no active tenancy', async () => {
+		await resetBusinessRows();
+
+		await assert.rejects(
+			() =>
+				createContractForActiveTenancy(db, fixture.landlordA.actor, {
+					roomId: fixture.roomA1,
+					startDate: '2026-07-01',
+					endDate: '2027-07-01'
+				}),
+			(error: unknown) => {
+				assert.ok(isTenancyServiceError(error));
+				assert.equal(error.code, 'NO_ACTIVE_TENANCY');
+				assert.equal(error.status, 409);
+				return true;
+			}
+		);
+
+		assert.equal(await countContracts(), 0, 'no orphan contract with null tenancy snapshot');
+	});
+
+	test('a contract is refused when the managed tenant has no legacy profile', async () => {
+		await resetBusinessRows();
+
+		await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantUnclaimed,
+			startDate: '2026-07-01'
+		});
+
+		const before = await countIdentityRows(db, fixture);
+		await assert.rejects(
+			() =>
+				createContractForActiveTenancy(db, fixture.landlordA.actor, {
+					roomId: fixture.roomA1,
+					startDate: '2026-07-01',
+					endDate: '2027-07-01'
+				}),
+			(error: unknown) => {
+				assert.ok(isTenancyServiceError(error));
+				assert.equal(error.code, 'NO_LEGACY_TENANT_PROFILE');
+				assert.equal(error.status, 409);
+				return true;
+			}
+		);
+
+		assert.deepEqual(await countIdentityRows(db, fixture), before, 'no TenantProfile invented');
+		assert.equal(await countContracts(), 0);
+	});
+
+	test('a contract in another landlord room returns 404 and writes nothing', async () => {
+		await resetBusinessRows();
+
+		await assert.rejects(
+			() =>
+				createContractForActiveTenancy(db, fixture.landlordA.actor, {
+					roomId: fixture.roomB1,
+					startDate: '2026-07-01',
+					endDate: '2027-07-01'
+				}),
+			(error: unknown) => {
+				assert.ok(isTenancyServiceError(error));
+				assert.equal(error.code, 'ROOM_NOT_FOUND');
+				assert.equal(error.status, 404);
+				return true;
+			}
+		);
+
+		assert.equal(await countContracts(), 0);
+	});
+
+	test('contract creation cannot race a concurrent checkout', async () => {
+		await resetBusinessRows();
+
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantLegacy,
+			startDate: '2026-07-01'
+		});
+
+		// Giữ lock trên row tenancy để lệnh tạo contract phải xếp hàng, rồi kết thúc lần
+		// thuê trước khi nhả lock: contract KHÔNG được gắn vào tenancy đã ENDED.
+		const blocker = await pool.connect();
+		let contractAttempt: Promise<unknown>;
+		try {
+			await blocker.query('BEGIN');
+			await blocker.query('SELECT id FROM "Tenancy" WHERE id = $1 FOR UPDATE', [
+				started.tenancy.id
+			]);
+
+			contractAttempt = createContractForActiveTenancy(db, fixture.landlordA.actor, {
+				roomId: fixture.roomA1,
+				startDate: '2026-07-01',
+				endDate: '2027-07-01'
+			});
+			// Cho lệnh trên kịp chạm lock trước khi checkout commit.
+			await new Promise((resolve) => setTimeout(resolve, 150));
+
+			await blocker.query(
+				`UPDATE "Tenancy" SET status = 'ENDED', "endDate" = '2026-08-01' WHERE id = $1`,
+				[started.tenancy.id]
+			);
+			await blocker.query('COMMIT');
+		} finally {
+			blocker.release();
+		}
+
+		await assert.rejects(
+			() => contractAttempt,
+			(error: unknown) => {
+				assert.ok(isTenancyServiceError(error));
+				assert.equal(error.code, 'NO_ACTIVE_TENANCY');
+				return true;
+			}
+		);
+		assert.equal(await countContracts(), 0, 'no contract may point at an ended tenancy');
 	});
 
 	test('contract is skipped, not faked, when the managed tenant has no legacy profile', async () => {
 		await resetBusinessRows();
 
-		const before = await countIdentityRows(db);
+		const before = await countIdentityRows(db, fixture);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA1,
 			managedTenantId: fixture.managedTenantUnclaimed,
 			startDate: '2026-07-01',
 			contract: { endDate: '2027-07-01' }
 		});
-		const afterStart = await countIdentityRows(db);
+		const afterStart = await countIdentityRows(db, fixture);
 
 		assert.equal(started.contract.created, false);
 		assert.equal(started.contract.skippedReason, 'NO_LEGACY_TENANT_PROFILE');
@@ -678,6 +853,77 @@ if (skipReason) {
 
 		const room = await loadRoom(fixture.roomA1);
 		assert.equal(room?.currentManagedTenantId, fixture.managedTenantUnclaimed);
+	});
+
+	// --- Fail closed trên cache occupant cũ --------------------------------
+
+	test('a legacy occupant cache without an active tenancy blocks a new start', async () => {
+		await resetBusinessRows();
+		// Phòng legacy: có người ở trong cache cũ nhưng chưa backfill Tenancy (AUTH-007).
+		await db
+			.update(rooms)
+			.set({ tenantId: fixture.legacyTenantProfileId })
+			.where(eq(rooms.id, fixture.roomA1));
+
+		await assert.rejects(
+			() =>
+				startTenancy(db, fixture.landlordA.actor, {
+					roomId: fixture.roomA1,
+					managedTenantId: fixture.managedTenantUnclaimed,
+					startDate: '2026-07-01'
+				}),
+			(error: unknown) => {
+				assert.ok(isTenancyServiceError(error));
+				assert.equal(error.code, 'ROOM_CACHE_CONFLICT');
+				assert.equal(error.status, 409);
+				return true;
+			}
+		);
+
+		const room = await loadRoom(fixture.roomA1);
+		// Người ở cũ KHÔNG bị ghi đè.
+		assert.equal(room?.tenantId, fixture.legacyTenantProfileId);
+		assert.equal(room?.currentManagedTenantId, null);
+		assert.equal(await countTenancies(), 0);
+	});
+
+	test('a stale currentManagedTenantId cache blocks a new start', async () => {
+		await resetBusinessRows();
+		await db
+			.update(rooms)
+			.set({ currentManagedTenantId: fixture.managedTenantUnclaimed2 })
+			.where(eq(rooms.id, fixture.roomA1));
+
+		await assert.rejects(
+			() =>
+				startTenancy(db, fixture.landlordA.actor, {
+					roomId: fixture.roomA1,
+					managedTenantId: fixture.managedTenantUnclaimed
+				}),
+			(error: unknown) => isTenancyServiceError(error) && error.code === 'ROOM_CACHE_CONFLICT'
+		);
+
+		const room = await loadRoom(fixture.roomA1);
+		assert.equal(room?.currentManagedTenantId, fixture.managedTenantUnclaimed2);
+		assert.equal(await countTenancies(), 0);
+	});
+
+	test('hasActiveTenancyForRoom reports the split-brain guard state', async () => {
+		await resetBusinessRows();
+		assert.equal(await hasActiveTenancyForRoom(db, fixture.roomA1), false);
+
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: fixture.managedTenantUnclaimed,
+			startDate: '2026-07-01'
+		});
+		assert.equal(await hasActiveTenancyForRoom(db, fixture.roomA1), true);
+
+		await endTenancy(db, fixture.landlordA.actor, {
+			tenancyId: started.tenancy.id,
+			endDate: '2026-08-01'
+		});
+		assert.equal(await hasActiveTenancyForRoom(db, fixture.roomA1), false);
 	});
 
 	// --- Archive ----------------------------------------------------------

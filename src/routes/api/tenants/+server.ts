@@ -26,7 +26,7 @@ import {
 	unauthenticatedError
 } from '$lib/server/authorization/errors';
 import { isTenancyDualWriteEnabled } from '$lib/server/env';
-import { startTenancy } from '$lib/server/tenancies/service';
+import { hasActiveTenancyForRoom, startTenancy } from '$lib/server/tenancies/service';
 import {
 	addYearsToCalendarDate,
 	isTenancyServiceError,
@@ -283,6 +283,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 		if (!(await landlordOwnsRoom(auth.value, roomId))) {
 			return forbidden();
+		}
+		// AUTH-006 — chống split-brain khi rollback flag: phòng đã có Tenancy ACTIVE thì
+		// luồng legacy KHÔNG được tạo thêm occupant/identity đè lên lần thuê canonical.
+		if (await hasActiveTenancyForRoom(db, roomId)) {
+			return json(
+				{
+					error: 'Phòng đang có lần thuê hiệu lực',
+					code: 'ROOM_OCCUPIED',
+					requestId: locals.requestId
+				},
+				{ status: 409 }
+			);
 		}
 		const selectedPaymentAccount = await getPaymentAccountForLandlord(
 			auth.value,

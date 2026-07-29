@@ -10,11 +10,15 @@ import {
 	canEndTenancy,
 	isCalendarDate,
 	isTenancyServiceError,
+	normalizeCreateContractInput,
 	normalizeEndTenancyInput,
 	normalizeStartTenancyInput,
+	tenancyError,
 	todayInVietnam,
+	toContractDto,
 	toTenancyDto,
 	toTenancyErrorBody,
+	type ContractDto,
 	type TenancyDto
 } from './state.js';
 import { parseEnv } from '../env.js';
@@ -33,6 +37,23 @@ const TENANCY_DTO_KEYS = [
 	'createdAt',
 	'updatedAt'
 ] as const satisfies readonly (keyof TenancyDto)[];
+
+const CONTRACT_DTO_KEYS = [
+	'id',
+	'roomId',
+	'tenancyId',
+	'managedTenantId',
+	'tenantId',
+	'startDate',
+	'endDate',
+	'monthlyRent',
+	'deposit',
+	'fileUrl',
+	'notes',
+	'status',
+	'paymentAccountId',
+	'createdAt'
+] as const satisfies readonly (keyof ContractDto)[];
 
 function expectTenancyError(fn: () => unknown, code: string, status: number) {
 	try {
@@ -260,6 +281,93 @@ test('toTenancyErrorBody returns a stable code without leaking internal detail',
 	assert.equal(body.requestId, 'req-1');
 	assert.equal(body.error.includes('status='), false);
 	assert.equal(JSON.stringify(body).includes('ENDED'), false);
+});
+
+// --- Contract gắn lần thuê ------------------------------------------------
+
+test('normalizeCreateContractInput validates dates and money', () => {
+	const input = normalizeCreateContractInput({
+		roomId: ' room-1 ',
+		startDate: '2026-07-01',
+		endDate: '2027-07-01',
+		deposit: '3000000',
+		expectedLegacyTenantProfileId: ' profile-1 '
+	});
+	assert.equal(input.roomId, 'room-1');
+	assert.equal(input.deposit, 3_000_000);
+	assert.equal(input.monthlyRent, null); // lấy từ Room trong transaction
+	assert.equal(input.expectedLegacyTenantProfileId, 'profile-1');
+
+	// tenantId trống = client không khai gì để đối chiếu, không phải lỗi.
+	assert.equal(
+		normalizeCreateContractInput({
+			roomId: 'room-1',
+			startDate: '2026-07-01',
+			endDate: '2027-07-01'
+		}).expectedLegacyTenantProfileId,
+		null
+	);
+
+	expectTenancyError(
+		() =>
+			normalizeCreateContractInput({
+				roomId: 'room-1',
+				startDate: '2026-07-02',
+				endDate: '2026-07-01'
+			}),
+		'INVALID_INPUT',
+		422
+	);
+	expectTenancyError(
+		() =>
+			normalizeCreateContractInput({ roomId: '', startDate: '2026-07-01', endDate: '2027-07-01' }),
+		'INVALID_INPUT',
+		422
+	);
+});
+
+test('toContractDto exposes the tenancy snapshot and no raw row spread', () => {
+	const dto = toContractDto({
+		id: 'contract-1',
+		tenantId: 'profile-1',
+		roomId: 'room-1',
+		tenancyId: 'tenancy-1',
+		managedTenantId: 'mt-1',
+		startDate: '2026-07-01',
+		endDate: '2027-07-01',
+		monthlyRent: 3_000_000,
+		deposit: 3_000_000,
+		fileUrl: null,
+		notes: null,
+		status: 'active',
+		paymentAccountId: 'acc-1',
+		createdAt: new Date('2026-07-01T00:00:00.000Z')
+	});
+
+	assert.deepEqual(Object.keys(dto).sort(), [...CONTRACT_DTO_KEYS].sort());
+	assert.equal(dto.tenancyId, 'tenancy-1');
+	assert.equal(dto.managedTenantId, 'mt-1');
+	assert.equal(dto.createdAt, '2026-07-01T00:00:00.000Z');
+});
+
+test('state conflicts introduced by the review all map to 409', () => {
+	for (const code of [
+		'ROOM_CACHE_CONFLICT',
+		'TENANCY_MISSING_MANAGED_TENANT',
+		'NO_LEGACY_TENANT_PROFILE',
+		'CONTRACT_TENANT_MISMATCH'
+	] as const) {
+		const error = tenancyError(code, 'internal detail');
+		assert.equal(error.status, 409, `${code} must be a 409 state conflict`);
+
+		const body = toTenancyErrorBody(error, 'req-1');
+		assert.equal(body.code, code);
+		assert.equal(
+			JSON.stringify(body).includes('internal detail'),
+			false,
+			'error body must not leak internal detail'
+		);
+	}
 });
 
 // --- Feature flag AUTH-006 ------------------------------------------------
