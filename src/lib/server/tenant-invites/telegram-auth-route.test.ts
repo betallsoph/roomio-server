@@ -1,5 +1,5 @@
 /**
- * AUTH-009 — POST /api/auth/telegram route: signed start_param trust + multi-claim.
+ * AUTH-009 — POST /api/auth/telegram route integration: signed start_param trust + multi-claim.
  */
 
 import assert from 'node:assert/strict';
@@ -45,18 +45,6 @@ function createSignedInitData(options: { userId: number; startParam?: string }):
 	return params.toString();
 }
 
-type MockCookies = { values: Map<string, string>; set: (name: string, value: string) => void };
-
-function mockCookies(): MockCookies {
-	const values = new Map<string, string>();
-	return {
-		values,
-		set(name: string, value: string) {
-			values.set(name, value);
-		}
-	};
-}
-
 if (skipReason) {
 	test('AUTH-009 telegram auth route', { skip: skipReason }, () => {});
 } else {
@@ -65,24 +53,25 @@ if (skipReason) {
 	let fixture: TenancyFixture;
 	const telegramUserId = 9_009_001_234;
 
-	function ensureTelegramTestEnv(): void {
-		resetEnvForTests({
-			...process.env,
-			BOT_TOKEN,
-			BOT_USERNAME: 'roomio_bot',
-			MINIAPP_SHORT_NAME: 'app',
-			TENANCY_DUAL_WRITE_ENABLED: 'true'
-		});
+	function pinTelegramEnv(): void {
+		process.env.BOT_TOKEN = BOT_TOKEN;
+		process.env.BOT_USERNAME = 'roomio_bot';
+		process.env.MINIAPP_SHORT_NAME = 'app';
+		process.env.TENANCY_DUAL_WRITE_ENABLED = 'true';
+		resetEnvForTests({ ...process.env });
 	}
 
 	before(async () => {
 		pool = createTenancyTestPool();
 		db = createTenancyTestDb(pool);
 		fixture = await seedTenancyFixture(db);
-		ensureTelegramTestEnv();
+		pinTelegramEnv();
 	});
 
 	after(async () => {
+		await pool.query(`DELETE FROM "AuditEvent" WHERE "landlordId" = ANY($1)`, [
+			[fixture.landlordA.landlordId, fixture.landlordB.landlordId]
+		]);
 		await pool.query(`DELETE FROM "TenantInvite" WHERE "landlordId" = ANY($1)`, [
 			[fixture.landlordA.landlordId, fixture.landlordB.landlordId]
 		]);
@@ -92,27 +81,28 @@ if (skipReason) {
 		]);
 		await cleanupTenancyFixture(pool, fixture);
 		await pool.end();
+		delete process.env.BOT_TOKEN;
 		resetEnvForTests();
 	});
 
 	async function postTelegramAuth(body: Record<string, unknown>) {
-		ensureTelegramTestEnv();
+		pinTelegramEnv();
 		const { POST } = await import('../../../routes/api/auth/telegram/+server.js');
-		const cookies = mockCookies();
 		const response = await POST({
 			request: new Request('http://localhost/api/auth/telegram', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify(body)
 			}),
-			cookies: cookies as unknown as import('@sveltejs/kit').Cookies,
+			cookies: { set() {} },
 			locals: { requestId: 'auth009-telegram-route' }
-		} as Parameters<typeof POST>[0]);
+		} as unknown as Parameters<typeof POST>[0]);
 		const payload = await response.json();
 		return { status: response.status, body: payload as Record<string, unknown> };
 	}
 
 	test('ignores unsigned body startParam when signed initData has no start_param', async () => {
+		pinTelegramEnv();
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Unsigned body probe'
 		});
@@ -126,9 +116,8 @@ if (skipReason) {
 			tenancyId: started.tenancy.id
 		});
 
-		const initData = createSignedInitData({ userId: telegramUserId });
 		const result = await postTelegramAuth({
-			initData,
+			initData: createSignedInitData({ userId: telegramUserId }),
 			startParam: issued.token
 		});
 
@@ -143,6 +132,7 @@ if (skipReason) {
 	});
 
 	test('already linked Telegram user accepts a second invite via signed start_param', async () => {
+		pinTelegramEnv();
 		const firstManaged = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'First claim'
 		});
