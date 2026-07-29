@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
 	assertBackfillEnvironmentAllowed,
+	backfillManagedTenantClaimFields,
 	buildBackfillSource,
 	contactFingerprint,
 	datesOverlap,
@@ -11,6 +12,7 @@ import {
 	mergeReport,
 	parseBackfillCliArgs,
 	parseBackfillSource,
+	shouldReloadTenancyCandidatesAtPhaseStart,
 	type TenancyCandidate
 } from './tenancy-migration-lib.js';
 
@@ -164,6 +166,21 @@ describe('AUTH-007 tenancy migration lib', () => {
 			tenancyId: 'ten-1',
 			managedTenantId: 'mt-1'
 		});
+	});
+
+	it('backfillManagedTenantClaimFields never auto-claims from legacy userId', () => {
+		assert.deepEqual(backfillManagedTenantClaimFields(), {
+			claimedByUserId: null,
+			claimVersion: 0
+		});
+		assert.deepEqual(backfillManagedTenantClaimFields(), backfillManagedTenantClaimFields());
+	});
+
+	it('shouldReloadTenancyCandidatesAtPhaseStart reloads only for map_resources', () => {
+		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('map_resources'), true);
+		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('managed_tenants'), false);
+		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('tenancies_contract'), false);
+		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('tenancies_current_room'), false);
 	});
 
 	it('mergeReport sums counters', () => {

@@ -119,6 +119,18 @@ export function mergeReport(base: BackfillReport, delta: Partial<BackfillReport>
 	};
 }
 
+export function backfillManagedTenantClaimFields(): {
+	claimedByUserId: null;
+	claimVersion: 0;
+} {
+	// Legacy TenantProfile.userId is not verified linkage; claim stays null until AUTH-009 invite flow.
+	return { claimedByUserId: null, claimVersion: 0 };
+}
+
+export function shouldReloadTenancyCandidatesAtPhaseStart(phase: BackfillPhase): boolean {
+	return phase === 'map_resources';
+}
+
 export function buildBackfillSource(runId: string, source: string): string {
 	return `${BACKFILL_SOURCE_PREFIX}:${runId}:${source}`;
 }
@@ -493,11 +505,10 @@ export async function runManagedTenantBatch(
 
 		const managedTenantId = crypto.randomUUID();
 		const backfillSource = buildBackfillSource(checkpoint.runId, 'LEGACY_TENANT_PROFILE');
-		const shouldClaim = Boolean(row.userId);
+		const { claimedByUserId, claimVersion } = backfillManagedTenantClaimFields();
 
 		if (!opts.commit) {
 			delta.managedTenantsCreated += 1;
-			if (shouldClaim) delta.claimed += 1;
 			checkpoint.created.managedTenantIds.push(managedTenantId);
 			continue;
 		}
@@ -509,8 +520,8 @@ export async function runManagedTenantBatch(
 				displayName: row.displayName,
 				emailSnapshot: row.email,
 				phoneSnapshot: row.phone,
-				claimedByUserId: shouldClaim ? row.userId : null,
-				claimVersion: shouldClaim ? 1 : 0,
+				claimedByUserId,
+				claimVersion,
 				status: 'ACTIVE',
 				legacyTenantProfileId: row.legacyTenantProfileId,
 				backfillSource,
@@ -519,7 +530,6 @@ export async function runManagedTenantBatch(
 				createdByUserId: null
 			});
 			delta.managedTenantsCreated += 1;
-			if (shouldClaim) delta.claimed += 1;
 			checkpoint.created.managedTenantIds.push(managedTenantId);
 		} catch {
 			delta.errors += 1;
@@ -1254,7 +1264,7 @@ export async function runBackfillTenancies(
 		(await loadCheckpoint(opts.checkpointDir, runId)) ?? newCheckpoint(opts, runId);
 
 	const overlappingRooms = await loadOverlappingContractRooms(db, opts.landlordId);
-	const tenancyCandidates = await loadTenancyCandidates(db, opts.landlordId);
+	let tenancyCandidates: TenancyCandidate[] = [];
 	let processed = 0;
 	const phases: BackfillPhase[] = [
 		'managed_tenants',
@@ -1267,6 +1277,9 @@ export async function runBackfillTenancies(
 	for (let phaseIdx = Math.max(0, startPhaseIdx); phaseIdx < phases.length; phaseIdx++) {
 		const phase = phases[phaseIdx]!;
 		checkpoint.cursor.phase = phase;
+		if (shouldReloadTenancyCandidatesAtPhaseStart(phase)) {
+			tenancyCandidates = await loadTenancyCandidates(db, opts.landlordId);
+		}
 		let batchDone = false;
 		while (!batchDone && processed < opts.limit) {
 			const remaining = opts.limit - processed;

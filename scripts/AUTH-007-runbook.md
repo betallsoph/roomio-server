@@ -45,6 +45,12 @@ Checkpoints are stored under `.checkpoints/tenancy-backfill/` by default (`--che
 
 `scanned`, `managedTenantsCreated`, `claimed`, `tenanciesMapped`, `unresolved`, `skipped`, `errors`.
 
+`claimed` stays **0** during backfill: ManagedTenant rows are landlord-only (`claimedByUserId=null`). Identity claim requires the verified invite flow (AUTH-009), not legacy `TenantProfile.userId`.
+
+## Resource mapping scope
+
+The `map_resources` phase currently maps **invoices** only. Meter readings and maintenance requests are left for a follow-up batch; reconciliation flags unscoped rows.
+
 ## Rollback
 
 Rollback uses the checkpoint file for the run. It only clears mappings and deletes ManagedTenant/Tenancy rows created by that run (`backfillSource` prefix `AUTH007:<runId>:`). Rows touched manually after backfill are not deleted.
