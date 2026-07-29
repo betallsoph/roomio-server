@@ -3,15 +3,25 @@ import type { RequestHandler } from './$types';
 import { errorMessage } from '$lib/server/api';
 import { parseMeterReadingFromImageUrl } from '$lib/server/meter-ocr';
 import { isOcrConfigured } from '$lib/server/env';
-
-function canParseMeterPhoto(session: App.Locals['session']) {
-	return session?.role === 'TENANT' || session?.role === 'LANDLORD';
-}
+import { requireLandlordActor, requireTenantActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import { operationalActorDenyReason } from '$lib/server/authorization/policies';
+import { toMeterOcrDto } from '$lib/server/dto/meter-ocr';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		if (!canParseMeterPhoto(locals.session)) {
-			return json({ error: 'Không có quyền OCR chỉ số' }, { status: 403 });
+		const actor = locals.actor;
+		if (!actor || operationalActorDenyReason(actor)) {
+			return authorizationErrorToResponse(unauthenticatedError());
+		}
+
+		const tenant = requireTenantActor(actor);
+		const landlord = requireLandlordActor(actor);
+		if (!tenant.ok && !landlord.ok) {
+			return authorizationErrorToResponse(unauthenticatedError());
 		}
 
 		if (!isOcrConfigured()) {
@@ -25,7 +35,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 
 		const result = await parseMeterReadingFromImageUrl(photoUrl);
-		return json(result);
+		return json(toMeterOcrDto(result));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
