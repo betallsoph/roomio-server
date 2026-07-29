@@ -16,7 +16,8 @@ registerProcessLifecycle();
 
 const GENERIC_SERVER_ERROR_MESSAGE = 'Đã xảy ra lỗi. Vui lòng thử lại sau.';
 
-// Nhân viên (STAFF) chỉ được dùng đúng các API phục vụ "vận hành cơ bản" — mặc định chặn, chỉ mở những path/method dưới đây
+// Nhân viên (STAFF) — lớp chặn ngoài tạm thời theo URL (AUTH-005 giữ nguyên).
+// Quyền thật (assignment + capability) sống trong DB/ActorContext; migrate endpoint → AUTH-008.
 const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
 	{ prefix: '/api/requests', methods: ['GET', 'PUT'] }, // xem & cập nhật sự cố được giao
 	{ prefix: '/api/meter-readings', methods: ['GET', 'PUT'] }, // chốt/duyệt số điện nước

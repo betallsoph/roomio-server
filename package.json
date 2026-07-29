@@ -15,7 +15,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"format:check": "prettier --check .",
 		"test": "node --import tsx --test $(find src/lib/server -name '*.test.ts' | sort)",
-		"test:security": "node --import tsx --test --test-concurrency=1 $(find src/lib/server/authorization src/lib/server/audit src/lib/server/testing \\( -name '*.test.ts' -o -name '*.security.test.ts' \\) 2>/dev/null | sort)",
+		"test:security": "node --import tsx --test --test-concurrency=1 $(find src/lib/server/authorization src/lib/server/audit src/lib/server/staff src/lib/server/testing \\( -name '*.test.ts' -o -name '*.security.test.ts' \\) 2>/dev/null | sort)",
 		"test:telegram": "tsx --test src/lib/server/telegram.test.ts",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",

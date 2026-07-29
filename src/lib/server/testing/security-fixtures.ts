@@ -6,6 +6,8 @@ import {
 	landlordProfiles,
 	tenantProfiles,
 	staffProfiles,
+	staffPropertyAssignments,
+	staffPermissions,
 	paymentAccounts,
 	properties,
 	rooms,
@@ -27,10 +29,9 @@ import type { SecurityDbHandle } from './test-db.js';
  */
 export const SECURITY_FIXTURE_KNOWN_GAPS = [
 	'AUTH-004: ManagedTenant/Tenancy tables and full §12.1 tenancy topology are not seeded; tenant history uses TenantProfile + Room.tenantId legacy pattern only.',
-	'AUTH-005: Staff property assignments and capability permissions are not in schema; staffALimited/staffAEmpty/staffB are StaffProfile rows without assignment or permission rows.',
 	'AUTH-004: U-shared multi-claim ManagedTenant scenario is not represented; tenantANow and tenantA2Now are separate users.',
 	'AUTH-004: Tenancy-scoped invoice/contract ownership is approximated via tenantId/roomId snapshots; legacy invoices without tenancy mapping remain landlord-only by characterization.',
-	'AUTH-005: staffALimited is documented intent (Property A1 only) but cannot be enforced until assignment tables exist.'
+	'AUTH-008: List/detail endpoint SQL scoping (rooms, meters, tenants, requests) is not fully enforced in this harness; staff fixture grants do not imply cross-endpoint access until AUTH-008 lands.'
 ] as const;
 
 export type SecurityFixtureActor =
@@ -301,6 +302,25 @@ export async function seedSecurityFixtures(
 			id: ids.staffB.staffProfileId,
 			userId: ids.staffB.userId,
 			landlordId: ids.landlordB.landlordProfileId
+		}
+	]);
+
+	await db.insert(staffPropertyAssignments).values({
+		staffId: ids.staffALimited.staffProfileId,
+		propertyId: ids.propertyA1.propertyId,
+		assignedByUserId: ids.landlordA.userId
+	});
+
+	await db.insert(staffPermissions).values([
+		{
+			staffId: ids.staffALimited.staffProfileId,
+			permission: 'VIEW_ROOMS',
+			grantedByUserId: ids.landlordA.userId
+		},
+		{
+			staffId: ids.staffALimited.staffProfileId,
+			permission: 'MANAGE_METERS',
+			grantedByUserId: ids.landlordA.userId
 		}
 	]);
 

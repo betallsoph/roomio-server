@@ -5,7 +5,19 @@ import { db } from '$lib/server/db';
 import { users, staffProfiles } from '$lib/server/db/schema';
 import { eq, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
-import { resolveLandlordScopeForList } from '$lib/server/landlord-query-scope';
+import { listStaffAssignmentsPermissions } from '$lib/server/staff/assignments';
+import { deactivateStaff, deactivateStaffTx } from '$lib/server/staff/lifecycle';
+import { appendAudit } from '$lib/server/audit/append';
+import { auditActorFromUserActor } from '$lib/server/audit/actors';
+import {
+	resolveLandlordActorFromRequest,
+	staffRouteErrorResponse
+} from '$lib/server/staff/landlord-request';
+import {
+	assertStaffOwnedByLandlord,
+	StaffResourceNotFoundError
+} from '$lib/server/staff/assignments';
+import { AuditValidationError } from '$lib/server/audit/metadata';
 
 // Cột User công khai cho UI (không trả passwordHash)
 const STAFF_USER_COLUMNS = {
@@ -16,22 +28,33 @@ const STAFF_USER_COLUMNS = {
 	isActive: true
 } as const;
 
-// Danh sách nhân viên của một chủ trọ
-export const GET: RequestHandler = async ({ url, locals }) => {
+// Danh sách nhân viên của landlord trong ActorContext (không tin query landlordId)
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const scope = resolveLandlordScopeForList(locals.session, url.searchParams.get('landlordId'));
-		if ('error' in scope) {
-			return json({ error: scope.error }, { status: scope.status });
+		const guard = resolveLandlordActorFromRequest({ actor: locals.actor });
+		if (!guard.ok) {
+			return guard.response;
 		}
+		const landlordId = guard.actor.landlordId;
 
 		const staff = await db.query.staffProfiles.findMany({
-			where: eq(staffProfiles.landlordId, scope.landlordId),
+			where: eq(staffProfiles.landlordId, landlordId),
 			with: { user: { columns: STAFF_USER_COLUMNS } }
 		});
 
 		staff.sort((a, b) => a.user.name.localeCompare(b.user.name, 'vi'));
 
-		return json(staff);
+		const enriched = await Promise.all(
+			staff.map(async (row) => {
+				const { propertyIds, permissions } = await listStaffAssignmentsPermissions(
+					row.id,
+					landlordId
+				);
+				return { ...row, propertyIds, permissions };
+			})
+		);
+
+		return json(enriched);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -40,11 +63,12 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 // Chủ trọ tạo tài khoản nhân viên mới (User role STAFF + StaffProfile)
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		// landlordId lấy từ phiên đăng nhập, không tin giá trị do client gửi
-		const landlordId = locals.session?.landlordProfileId;
-		if (locals.session?.role !== 'LANDLORD' || !landlordId) {
-			return json({ error: 'Chỉ chủ trọ được quản lý nhân viên' }, { status: 403 });
+		const guard = resolveLandlordActorFromRequest({ actor: locals.actor });
+		if (!guard.ok) {
+			return guard.response;
 		}
+		const actor = guard.actor;
+		const landlordId = actor.landlordId;
 
 		const body = await request.json();
 		const { email, phone, password, name } = body;
@@ -74,6 +98,15 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				await tx.insert(staffProfiles).values({ userId: user.id, landlordId }).returning()
 			)[0];
 
+			await appendAudit(tx, auditActorFromUserActor(actor), {
+				scope: 'LANDLORD',
+				action: 'STAFF.CREATED',
+				resourceType: 'StaffProfile',
+				resourceId: profile.id,
+				landlordId,
+				metadata: { userId: user.id }
+			});
+
 			return profile;
 		});
 
@@ -82,85 +115,105 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			with: { user: { columns: STAFF_USER_COLUMNS } }
 		});
 
-		return json(full);
+		if (!full) {
+			return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
+		}
+
+		const { propertyIds, permissions } = await listStaffAssignmentsPermissions(full.id, landlordId);
+
+		return json({ ...full, propertyIds, permissions });
 	} catch (error) {
+		if (error instanceof AuditValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
-// Sửa thông tin nhân viên (tên, SĐT, email, đặt lại mật khẩu, khóa/mở)
+// Sửa thông tin nhân viên; isActive=false đi qua deactivateStaff (revoke grants + audit)
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const guard = resolveLandlordActorFromRequest({ actor: locals.actor });
+		if (!guard.ok) {
+			return guard.response;
+		}
+		const actor = guard.actor;
+
 		const body = await request.json();
 		const { id, name, phone, email, password, isActive } = body;
 
-		if (!id) {
+		if (!id || typeof id !== 'string') {
 			return json({ error: 'Thiếu ID nhân viên' }, { status: 400 });
 		}
 
-		const profile = await db.query.staffProfiles.findFirst({
-			where: eq(staffProfiles.id, id)
+		await db.transaction(async (tx) => {
+			const profile = await assertStaffOwnedByLandlord(tx, id, actor.landlordId);
+
+			if (isActive === false) {
+				await deactivateStaffTx(tx, actor, id);
+			}
+
+			const updateData: Record<string, unknown> = {};
+			if (name !== undefined) updateData.name = name;
+			if (phone !== undefined) updateData.phone = phone;
+			if (email !== undefined) updateData.email = email;
+			if (password) updateData.passwordHash = await hashPassword(password);
+			if (isActive === true) updateData.isActive = true;
+
+			if (Object.keys(updateData).length > 0) {
+				await tx.update(users).set(updateData).where(eq(users.id, profile.userId));
+			}
 		});
-		if (!profile) {
-			return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
-		}
-
-		// Chỉ chủ trọ sở hữu nhân viên này được sửa
-		if (
-			locals.session?.role !== 'LANDLORD' ||
-			profile.landlordId !== locals.session.landlordProfileId
-		) {
-			return json({ error: 'Không có quyền sửa nhân viên này' }, { status: 403 });
-		}
-
-		const updateData: Record<string, unknown> = {};
-		if (name !== undefined) updateData.name = name;
-		if (phone !== undefined) updateData.phone = phone;
-		if (email !== undefined) updateData.email = email;
-		if (isActive !== undefined) updateData.isActive = isActive;
-		if (password) updateData.passwordHash = await hashPassword(password);
-
-		if (Object.keys(updateData).length > 0) {
-			await db.update(users).set(updateData).where(eq(users.id, profile.userId));
-		}
 
 		const full = await db.query.staffProfiles.findFirst({
 			where: eq(staffProfiles.id, id),
 			with: { user: { columns: STAFF_USER_COLUMNS } }
 		});
 
-		return json(full);
+		if (!full) {
+			return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
+		}
+
+		const { propertyIds, permissions } = await listStaffAssignmentsPermissions(
+			full.id,
+			actor.landlordId
+		);
+
+		return json({ ...full, propertyIds, permissions });
 	} catch (error) {
+		const mapped = staffRouteErrorResponse(error);
+		if (mapped) return mapped;
+		if (error instanceof AuditValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
-// Xóa nhân viên: xóa User (cascade xóa StaffProfile; assignedToId của sự cố tự set null)
+// Soft-deactivate: User.isActive=false + revoke grants; never hard-delete User/StaffProfile
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
+		const guard = resolveLandlordActorFromRequest({ actor: locals.actor });
+		if (!guard.ok) {
+			return guard.response;
+		}
+
 		const id = url.searchParams.get('id');
 		if (!id) {
 			return json({ error: 'Thiếu ID nhân viên' }, { status: 400 });
 		}
 
-		const profile = await db.query.staffProfiles.findFirst({
-			where: eq(staffProfiles.id, id)
-		});
-		if (!profile) {
-			return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
-		}
-
-		if (
-			locals.session?.role !== 'LANDLORD' ||
-			profile.landlordId !== locals.session.landlordProfileId
-		) {
-			return json({ error: 'Không có quyền xóa nhân viên này' }, { status: 403 });
-		}
-
-		await db.delete(users).where(eq(users.id, profile.userId));
-
-		return json({ success: true });
+		const result = await deactivateStaff(db, guard.actor, id);
+		return json({ success: true, ...result });
 	} catch (error) {
+		const mapped = staffRouteErrorResponse(error);
+		if (mapped) return mapped;
+		if (error instanceof StaffResourceNotFoundError) {
+			return json({ error: error.message }, { status: 404 });
+		}
+		if (error instanceof AuditValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
