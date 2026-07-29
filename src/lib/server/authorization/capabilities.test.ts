@@ -30,7 +30,13 @@ test('AUTHORIZATION_RESOURCES and ACTIONS are stable AUTH-008 vocabulary', () =>
 });
 
 test('resolveStaffCapabilityRequirement denies finance and messaging for staff MVP', () => {
-	for (const resource of ['invoice', 'contract', 'paymentAccount', 'conversation', 'file'] as const) {
+	for (const resource of [
+		'invoice',
+		'contract',
+		'paymentAccount',
+		'conversation',
+		'file'
+	] as const) {
 		for (const action of AUTHORIZATION_ACTIONS) {
 			const requirement = resolveStaffCapabilityRequirement(resource, action);
 			assert.equal(requirement.kind, 'DENY');
@@ -39,7 +45,9 @@ test('resolveStaffCapabilityRequirement denies finance and messaging for staff M
 });
 
 test('resolveStaffCapabilityRequirement maps operational resources to capabilities', () => {
-	assert.deepEqual(resolveStaffCapabilityRequirement('property', 'list'), { kind: 'PROPERTY_READ' });
+	assert.deepEqual(resolveStaffCapabilityRequirement('property', 'list'), {
+		kind: 'PROPERTY_READ'
+	});
 	assert.deepEqual(resolveStaffCapabilityRequirement('meter', 'approve'), {
 		kind: 'CAPABILITY',
 		permission: 'MANAGE_METERS'

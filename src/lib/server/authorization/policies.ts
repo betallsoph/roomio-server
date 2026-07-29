@@ -322,9 +322,7 @@ function evaluateTenantPolicy(
 			switch (action) {
 				case 'list':
 				case 'detail':
-					return tenantClaimsManagedTenant(actor, context)
-						? allow()
-						: deny('TENANT_CLAIM');
+					return tenantClaimsManagedTenant(actor, context) ? allow() : deny('TENANT_CLAIM');
 				default:
 					return deny('DEFAULT_DENY');
 			}
@@ -421,9 +419,7 @@ function evaluateTenantPolicy(
 				case 'create':
 				case 'update':
 				case 'delete':
-					return tenantClaimsManagedTenant(actor, context)
-						? allow()
-						: deny('TENANT_CLAIM');
+					return tenantClaimsManagedTenant(actor, context) ? allow() : deny('TENANT_CLAIM');
 				default:
 					return deny('DEFAULT_DENY');
 			}

@@ -209,12 +209,7 @@ test('tenant meter submit requires active tenancy', () => {
 	const active = authorizeActor(tenant, 'meter', 'submit', baseContext());
 	assert.equal(active.ok, true);
 
-	const ended = authorizeActor(
-		tenant,
-		'meter',
-		'submit',
-		baseContext({ tenancyStatus: 'ENDED' })
-	);
+	const ended = authorizeActor(tenant, 'meter', 'submit', baseContext({ tenancyStatus: 'ENDED' }));
 	assert.equal(ended.ok, false);
 	if (ended.ok) return;
 	assert.equal(ended.reason, 'TENANT_SCOPE');

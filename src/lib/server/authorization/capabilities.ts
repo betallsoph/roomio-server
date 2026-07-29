@@ -86,9 +86,7 @@ export type AuthorizeDenyReason =
 	| 'TENANT_SCOPE'
 	| 'TENANT_VISIBILITY';
 
-export type AuthorizeResult =
-	| { ok: true }
-	| { ok: false; reason: AuthorizeDenyReason };
+export type AuthorizeResult = { ok: true } | { ok: false; reason: AuthorizeDenyReason };
 
 /**
  * Staff capabilities that imply assigned-property operational access (§6.2 matrix).

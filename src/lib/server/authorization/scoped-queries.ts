@@ -482,9 +482,7 @@ export async function findMaintenanceRequestForLandlord(
 		.select({ request: maintenanceRequests })
 		.from(maintenanceRequests)
 		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
-		.where(
-			and(eq(maintenanceRequests.id, requestId), landlordTenancyWhere(actor.landlordId))
-		)
+		.where(and(eq(maintenanceRequests.id, requestId), landlordTenancyWhere(actor.landlordId)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -502,9 +500,7 @@ export async function findMaintenanceRequestForStaff(
 		.select({ request: maintenanceRequests, propertyId: tenancies.propertyId })
 		.from(maintenanceRequests)
 		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
-		.where(
-			and(eq(maintenanceRequests.id, requestId), eq(tenancies.landlordId, actor.landlordId))
-		)
+		.where(and(eq(maintenanceRequests.id, requestId), eq(tenancies.landlordId, actor.landlordId)))
 		.limit(1);
 	if (!rows[0]) {
 		throwScopedNotFound();
@@ -606,6 +602,8 @@ export async function findRoomAssetForStaff(
 }
 
 /** Reject machine/super-admin actors at endpoint boundary before calling scoped helpers. */
-export function isUserActor(actor: ActorContext): actor is Exclude<ActorContext, { kind: 'MACHINE' }> {
+export function isUserActor(
+	actor: ActorContext
+): actor is Exclude<ActorContext, { kind: 'MACHINE' }> {
 	return actor.kind === 'USER';
 }
