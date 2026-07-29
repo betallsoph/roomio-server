@@ -98,8 +98,7 @@ async function checkInWithTenancyService(
 	const initialWater = payload.initialWater;
 	const contractEndDate =
 		typeof payload.contractEndDate === 'string' ? payload.contractEndDate : undefined;
-	const plannedEndDate =
-		typeof payload.plannedEndDate === 'string' ? payload.plannedEndDate : null;
+	const plannedEndDate = typeof payload.plannedEndDate === 'string' ? payload.plannedEndDate : null;
 
 	if (!roomId.trim()) {
 		return json({ error: 'Thiếu roomId' }, { status: 400 });

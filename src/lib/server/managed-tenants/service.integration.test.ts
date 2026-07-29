@@ -155,7 +155,7 @@ if (skipReason) {
 		assert.equal(stored[0]?.status, 'PENDING');
 		assert.equal(stored[0]?.purpose, 'INITIAL_CLAIM');
 		assert.equal(stored[0]?.expectedClaimVersion, 0);
-		assert.equal(stored[0]?.token, issued.token);
+		assert.notEqual(stored[0]?.token, issued.token);
 	});
 
 	test('concurrent issue keeps at most one pending invite per tenancy', async () => {

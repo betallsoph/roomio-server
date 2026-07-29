@@ -166,6 +166,7 @@ export async function issueTenantInvite(
 		});
 
 		const legacyTenantId = await resolveLegacyTenantIdForInvite(tx, managedTenant);
+		const legacyTokenPlaceholder = `revoked-${tokenHash}`;
 
 		await tx
 			.update(tenantInvites)
@@ -182,7 +183,7 @@ export async function issueTenantInvite(
 			.values({
 				landlordId: actor.landlordId,
 				tenantId: legacyTenantId,
-				token,
+				token: legacyTokenPlaceholder,
 				tokenHash,
 				expiresAt,
 				managedTenantId: managedTenant.id,
