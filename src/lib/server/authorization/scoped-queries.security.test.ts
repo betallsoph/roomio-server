@@ -587,6 +587,19 @@ if (skipReason) {
 				await expectNotFound(() =>
 					findPaymentAccountForTenantHistory(db, tenantAOld, historyNow, ids.invoiceANow.invoiceId)
 				);
+
+				// Invoice A intentionally points at landlord B payment account → 404
+				await handle.db
+					.update(invoices)
+					.set({ paymentAccountId: ids.paymentAccountB.paymentAccountId })
+					.where(eq(invoices.id, ids.invoiceANow.invoiceId));
+				await expectNotFound(() =>
+					findPaymentAccountForTenantHistory(db, tenantANow, historyNow, ids.invoiceANow.invoiceId)
+				);
+				await handle.db
+					.update(invoices)
+					.set({ paymentAccountId: ids.paymentAccountA.paymentAccountId })
+					.where(eq(invoices.id, ids.invoiceANow.invoiceId));
 			});
 
 			await t.test(

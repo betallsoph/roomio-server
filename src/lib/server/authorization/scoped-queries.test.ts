@@ -534,39 +534,36 @@ test('landlord payment account returns safe projection without PayOS secrets', a
 	assert.equal('payosChecksumKeyEnc' in account, false);
 });
 
-test('tenant payment account binds via invoice history snapshot', async () => {
-	const successDb = queryOnlyDb({
-		managedTenants: { findFirst: async () => ({ id: HISTORY_SCOPE.managedTenantId }) },
-		tenancies: { findFirst: async () => ({ id: HISTORY_SCOPE.tenancyId }) },
-		invoices: {
-			findFirst: async () => ({
-				id: 'inv-1',
-				managedTenantId: HISTORY_SCOPE.managedTenantId,
-				tenancyId: HISTORY_SCOPE.tenancyId,
-				paymentAccountId: 'pay-a'
-			})
-		},
-		paymentAccounts: {
-			findFirst: async () => ({
-				id: 'pay-a',
-				landlordId: 'landlord-a',
-				name: 'VietQR',
-				provider: 'vietqr',
-				isDefault: true,
-				isActive: true,
-				bankName: 'VCB',
-				bankCode: '970436',
-				accountNumber: '123',
-				accountName: 'A',
-				bankBranch: null,
-				momoNumber: null,
-				payosClientId: null,
-				payosConnectedAt: null,
-				createdAt: new Date('2026-01-01T00:00:00.000Z'),
-				updatedAt: new Date('2026-01-01T00:00:00.000Z')
-			})
-		}
-	} as never);
+test('tenant payment account binds via invoice→tenancy→account landlord match', async () => {
+	const safeAccount = {
+		id: 'pay-a',
+		landlordId: 'landlord-a',
+		name: 'VietQR',
+		provider: 'vietqr',
+		isDefault: true,
+		isActive: true,
+		bankName: 'VCB',
+		bankCode: '970436',
+		accountNumber: '123',
+		accountName: 'A',
+		bankBranch: null,
+		momoNumber: null,
+		payosClientId: null,
+		payosConnectedAt: null,
+		createdAt: new Date('2026-01-01T00:00:00.000Z'),
+		updatedAt: new Date('2026-01-01T00:00:00.000Z')
+	};
+
+	const successDb = queryOnlyDb(
+		{
+			managedTenants: { findFirst: async () => ({ id: HISTORY_SCOPE.managedTenantId }) },
+			tenancies: { findFirst: async () => ({ id: HISTORY_SCOPE.tenancyId }) }
+		} as never,
+		joinSelect((table, depth) => {
+			if (table === invoices && depth === 'double') return [safeAccount];
+			return [];
+		})
+	);
 
 	const account = await findPaymentAccountForTenantHistory(
 		successDb,
@@ -577,21 +574,16 @@ test('tenant payment account binds via invoice history snapshot', async () => {
 	assert.equal(account.id, 'pay-a');
 	assert.equal('payosApiKeyEnc' in account, false);
 
-	const noAccountDb = queryOnlyDb({
-		managedTenants: { findFirst: async () => ({ id: HISTORY_SCOPE.managedTenantId }) },
-		tenancies: { findFirst: async () => ({ id: HISTORY_SCOPE.tenancyId }) },
-		invoices: {
-			findFirst: async () => ({
-				id: 'inv-1',
-				managedTenantId: HISTORY_SCOPE.managedTenantId,
-				tenancyId: HISTORY_SCOPE.tenancyId,
-				paymentAccountId: null
-			})
-		},
-		paymentAccounts: { findFirst: async () => null }
-	} as never);
+	// Cross-landlord paymentAccountId on in-scope invoice → join miss → 404
+	const crossLandlordDb = queryOnlyDb(
+		{
+			managedTenants: { findFirst: async () => ({ id: HISTORY_SCOPE.managedTenantId }) },
+			tenancies: { findFirst: async () => ({ id: HISTORY_SCOPE.tenancyId }) }
+		} as never,
+		joinSelect(() => [])
+	);
 	await assert.rejects(
-		() => findPaymentAccountForTenantHistory(noAccountDb, TENANT_ACTOR, HISTORY_SCOPE, 'inv-1'),
+		() => findPaymentAccountForTenantHistory(crossLandlordDb, TENANT_ACTOR, HISTORY_SCOPE, 'inv-1'),
 		(err: unknown) => err instanceof ScopedResourceNotFoundError
 	);
 });

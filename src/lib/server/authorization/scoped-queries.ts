@@ -672,8 +672,8 @@ export async function findPaymentAccountForLandlord(
 
 /**
  * Tenant reads payment instructions only via an invoice in claimed history scope.
- * Binds claimedByUserId + managedTenantId + tenancyId + invoice.paymentAccountId.
- * Foreign account / invoice without account → 404. Never returns PayOS secrets.
+ * Join invoice → tenancy → paymentAccount; require paymentAccounts.landlordId = tenancies.landlordId.
+ * Cross-landlord account on an otherwise in-scope invoice → 404. Never returns PayOS secrets.
  */
 export async function findPaymentAccountForTenantHistory(
 	database: ScopedQueryDb,
@@ -683,26 +683,54 @@ export async function findPaymentAccountForTenantHistory(
 ): Promise<SafePaymentAccount> {
 	await assertTenantHistoryClaim(database, actor, scope);
 
-	const invoice = await database.query.invoices.findFirst({
-		where: and(
-			eq(invoices.id, invoiceId),
-			eq(invoices.managedTenantId, scope.managedTenantId),
-			eq(invoices.tenancyId, scope.tenancyId)
-		),
-		columns: { id: true, paymentAccountId: true }
-	});
-	if (!invoice?.paymentAccountId) {
-		throwScopedNotFound();
-	}
+	const rows = await database
+		.select({
+			id: paymentAccounts.id,
+			landlordId: paymentAccounts.landlordId,
+			name: paymentAccounts.name,
+			provider: paymentAccounts.provider,
+			isDefault: paymentAccounts.isDefault,
+			isActive: paymentAccounts.isActive,
+			bankName: paymentAccounts.bankName,
+			bankCode: paymentAccounts.bankCode,
+			accountNumber: paymentAccounts.accountNumber,
+			accountName: paymentAccounts.accountName,
+			bankBranch: paymentAccounts.bankBranch,
+			momoNumber: paymentAccounts.momoNumber,
+			payosClientId: paymentAccounts.payosClientId,
+			payosConnectedAt: paymentAccounts.payosConnectedAt,
+			createdAt: paymentAccounts.createdAt,
+			updatedAt: paymentAccounts.updatedAt
+		})
+		.from(invoices)
+		.innerJoin(
+			tenancies,
+			and(
+				eq(invoices.tenancyId, tenancies.id),
+				eq(tenancies.id, scope.tenancyId),
+				eq(tenancies.managedTenantId, scope.managedTenantId)
+			)
+		)
+		.innerJoin(
+			paymentAccounts,
+			and(
+				eq(paymentAccounts.id, invoices.paymentAccountId),
+				eq(paymentAccounts.landlordId, tenancies.landlordId)
+			)
+		)
+		.where(
+			and(
+				eq(invoices.id, invoiceId),
+				eq(invoices.managedTenantId, scope.managedTenantId),
+				eq(invoices.tenancyId, scope.tenancyId)
+			)
+		)
+		.limit(1);
 
-	const row = await database.query.paymentAccounts.findFirst({
-		where: eq(paymentAccounts.id, invoice.paymentAccountId),
-		columns: SAFE_PAYMENT_ACCOUNT_COLUMNS
-	});
-	if (!row) {
+	if (!rows[0]) {
 		throwScopedNotFound();
 	}
-	return row;
+	return rows[0];
 }
 
 // --- Tenant property/room snapshot via tenancy ---
