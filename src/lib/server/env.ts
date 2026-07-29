@@ -145,6 +145,12 @@ export interface EnvConfig {
 	allowEnvSuperAdmin: boolean;
 	uploadDir: string;
 	logLevel: string;
+	/**
+	 * AUTH-006 — bật service ManagedTenant/Tenancy cho check-in/check-out mới.
+	 * Mặc định FALSE ở mọi môi trường (kể cả production) khi chưa cấu hình; production
+	 * chỉ bật sau khi migration + backfill AUTH-007 xong.
+	 */
+	tenancyDualWriteEnabled: boolean;
 	releaseSha: string;
 	payosApiBase: string;
 	payosEncryptionKey: string | null;
@@ -174,6 +180,27 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 
 function normalizeOrigin(value: string): string {
 	return value.replace(/\/+$/, '');
+}
+
+const TRUE_FLAG_VALUES = new Set(['1', 'true', 'yes', 'on']);
+const FALSE_FLAG_VALUES = new Set(['0', 'false', 'no', 'off']);
+
+/**
+ * Feature flag boolean: để trống là tắt. Giá trị lạ KHÔNG âm thầm rơi về mặc định —
+ * cấu hình sai một flag đổi hành vi ghi dữ liệu thì phải chặn boot.
+ */
+function parseBooleanFlag(
+	source: NodeJS.ProcessEnv,
+	name: string,
+	errors: string[],
+	fallback = false
+): boolean {
+	const raw = trim(source[name]).toLowerCase();
+	if (!raw) return fallback;
+	if (TRUE_FLAG_VALUES.has(raw)) return true;
+	if (FALSE_FLAG_VALUES.has(raw)) return false;
+	errors.push(name);
+	return fallback;
 }
 
 /**
@@ -546,6 +573,7 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 	if (!isValidHttpUrl(payosApiBase, isProduction)) errors.push('PAYOS_API_BASE');
 	const configuredLogLevel = trim(source.LOG_LEVEL);
 	if (configuredLogLevel && !LOG_LEVELS.has(configuredLogLevel)) errors.push('LOG_LEVEL');
+	const tenancyDualWriteEnabled = parseBooleanFlag(source, 'TENANCY_DUAL_WRITE_ENABLED', errors);
 	const db = parseDbPoolConfig(source, errors);
 
 	if (errors.length > 0) {
@@ -565,6 +593,7 @@ export function parseEnv(source: NodeJS.ProcessEnv = process.env): EnvConfig {
 		allowEnvSuperAdmin,
 		uploadDir: trim(source.UPLOAD_DIR) || 'uploads',
 		logLevel: configuredLogLevel || (isProduction ? 'info' : 'debug'),
+		tenancyDualWriteEnabled,
 		releaseSha:
 			trim(source.RELEASE_SHA) || trim(source.GITHUB_SHA) || trim(source.COMMIT_SHA) || 'unknown',
 		payosApiBase,
@@ -642,4 +671,9 @@ export function isQStashConfigured(): boolean {
 
 export function isOcrConfigured(): boolean {
 	return getEnv().ocr.status === 'CONFIGURED';
+}
+
+/** AUTH-006 — check-in/check-out mới đi qua service Tenancy thay vì luồng legacy. */
+export function isTenancyDualWriteEnabled(): boolean {
+	return getEnv().tenancyDualWriteEnabled;
 }
