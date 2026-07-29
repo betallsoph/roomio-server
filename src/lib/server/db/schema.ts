@@ -566,11 +566,18 @@ export const maintenanceRequests = pgTable(
 		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
 			onDelete: 'set null'
 		}),
-		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' }),
+		// AUTH-013 snapshot (nullable, additive): scope ownership without legacy room joins.
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'set null' }),
+		propertyId: text('propertyId').references(() => properties.id, { onDelete: 'set null' }),
+		roomId: text('roomId').references(() => rooms.id, { onDelete: 'set null' })
 	},
 	(t) => ({
 		tenantIdx: index('MaintenanceRequest_tenantId_idx').on(t.tenantId),
-		assignedToIdx: index('MaintenanceRequest_assignedToId_idx').on(t.assignedToId)
+		assignedToIdx: index('MaintenanceRequest_assignedToId_idx').on(t.assignedToId),
+		landlordIdx: index('MaintenanceRequest_landlordId_idx').on(t.landlordId),
+		propertyIdx: index('MaintenanceRequest_propertyId_idx').on(t.propertyId),
+		roomIdx: index('MaintenanceRequest_roomId_idx').on(t.roomId)
 	})
 );
 
@@ -1009,6 +1016,18 @@ export const maintenanceRequestsRelations = relations(maintenanceRequests, ({ on
 	assignedTo: one(staffProfiles, {
 		fields: [maintenanceRequests.assignedToId],
 		references: [staffProfiles.id]
+	}),
+	landlord: one(landlordProfiles, {
+		fields: [maintenanceRequests.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	property: one(properties, {
+		fields: [maintenanceRequests.propertyId],
+		references: [properties.id]
+	}),
+	room: one(rooms, {
+		fields: [maintenanceRequests.roomId],
+		references: [rooms.id]
 	})
 }));
 
