@@ -133,6 +133,26 @@ if (skipReason) {
 		}
 	}
 
+	/** Drizzle wraps the PostgreSQL trigger error; verify the real cause without coupling to its wrapper text. */
+	function isInjectedFailure(error: unknown): boolean {
+		const seen = new Set<unknown>();
+		let current = error;
+
+		while (current && typeof current === 'object' && !seen.has(current)) {
+			seen.add(current);
+			if (
+				'message' in current &&
+				typeof current.message === 'string' &&
+				current.message.includes('AUTH006_INJECTED_FAILURE')
+			) {
+				return true;
+			}
+			current = 'cause' in current ? current.cause : undefined;
+		}
+
+		return false;
+	}
+
 	// --- Happy path -------------------------------------------------------
 
 	test('startTenancy creates the authoritative row and compatibility cache', async () => {
@@ -788,7 +808,7 @@ if (skipReason) {
 							managedTenantId: fixture.managedTenantUnclaimed,
 							startDate: '2026-07-01'
 						}),
-					/AUTH006_INJECTED_FAILURE/
+					isInjectedFailure
 				);
 			}
 		);
@@ -810,7 +830,7 @@ if (skipReason) {
 						startDate: '2026-07-01',
 						contract: { endDate: '2027-07-01' }
 					}),
-				/AUTH006_INJECTED_FAILURE/
+				isInjectedFailure
 			);
 		});
 
@@ -839,7 +859,7 @@ if (skipReason) {
 							tenancyId: started.tenancy.id,
 							endDate: '2026-08-01'
 						}),
-					/AUTH006_INJECTED_FAILURE/
+					isInjectedFailure
 				);
 			}
 		);
