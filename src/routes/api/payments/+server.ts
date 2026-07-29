@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { paymentTransactions } from '$lib/server/db/schema';
 import { requireLandlord } from '$lib/server/authz';
+import { toPaymentTransactionDto } from '$lib/server/dto/payment-transaction';
 import { and, desc, eq } from 'drizzle-orm';
 
 export const GET: RequestHandler = async ({ url, locals }) => {
@@ -22,7 +23,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			limit: 200
 		});
 
-		return json(result);
+		return json(result.map(toPaymentTransactionDto));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
