@@ -14,7 +14,12 @@ import {
 	wrongRoleError
 } from '$lib/server/authorization/errors';
 import { guardOperationalUserActor } from '$lib/server/authorization/policies';
-import { ScopedResourceNotFoundError } from '$lib/server/authorization/scoped-queries';
+import {
+	listContractsForLandlord,
+	listContractsForTenant,
+	mapFinanceScopeError
+} from '$lib/server/operations/finance-scope';
+import { isOperationsError } from '$lib/server/operations/errors';
 import { isTenancyDualWriteEnabled } from '$lib/server/env';
 import {
 	createContractForActiveTenancy,
@@ -23,15 +28,14 @@ import {
 import { isTenancyServiceError, toTenancyErrorBody } from '$lib/server/tenancies/state';
 import {
 	deleteContractForLandlord,
-	listContractsForLandlord,
-	listContractsForTenant,
 	resolveContractPaymentAccount,
 	updateContractForLandlord
 } from './scope';
 
-function mapContractRouteError(error: unknown, requestId?: string): Response | null {
-	if (error instanceof ScopedResourceNotFoundError) {
-		return json({ error: error.message }, { status: 404 });
+function mapContractRouteError(error: unknown, requestId?: string): Response {
+	const mapped = mapFinanceScopeError(error);
+	if (mapped) {
+		return json({ error: mapped.message }, { status: mapped.status });
 	}
 	if (isAuthorizationError(error)) {
 		return authorizationErrorToResponse(error);
@@ -39,7 +43,10 @@ function mapContractRouteError(error: unknown, requestId?: string): Response | n
 	if (isTenancyServiceError(error)) {
 		return json(toTenancyErrorBody(error, requestId), { status: error.status });
 	}
-	return null;
+	if (isOperationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
 }
 
 function operationalWrongRoleResponse(actor: App.Locals['actor']) {
@@ -73,9 +80,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 		return operationalWrongRoleResponse(actor);
 	} catch (error) {
-		const mapped = mapContractRouteError(error, locals.requestId);
-		if (mapped) return mapped;
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapContractRouteError(error, locals.requestId);
 	}
 };
 
@@ -241,9 +246,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		return json(toContractDto(created[0]));
 	} catch (error) {
-		const mapped = mapContractRouteError(error, locals.requestId);
-		if (mapped) return mapped;
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapContractRouteError(error, locals.requestId);
 	}
 };
 
@@ -288,9 +291,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 					paymentAccountId || null
 				);
 			} catch (error) {
-				const mapped = mapContractRouteError(error, locals.requestId);
-				if (mapped) return mapped;
-				return json({ error: errorMessage(error) }, { status: 400 });
+				return mapContractRouteError(error, locals.requestId);
 			}
 		}
 
@@ -301,9 +302,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const updated = await updateContractForLandlord(db, actor, id, updateData);
 		return json(toContractDto(updated));
 	} catch (error) {
-		const mapped = mapContractRouteError(error, locals.requestId);
-		if (mapped) return mapped;
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapContractRouteError(error, locals.requestId);
 	}
 };
 
@@ -323,8 +322,6 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 		await deleteContractForLandlord(db, actor, id);
 		return json({ success: true });
 	} catch (error) {
-		const mapped = mapContractRouteError(error, locals.requestId);
-		if (mapped) return mapped;
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapContractRouteError(error, locals.requestId);
 	}
 };
