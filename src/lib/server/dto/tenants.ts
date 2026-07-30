@@ -60,8 +60,8 @@ export function toTenantSummaryDto(row: {
 	user: {
 		id: string;
 		name: string;
-		email: string;
-		phone: string;
+		email: string | null;
+		phone: string | null;
 		isActive: boolean;
 	};
 	rooms?: Array<{

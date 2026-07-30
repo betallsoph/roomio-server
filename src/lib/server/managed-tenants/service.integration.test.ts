@@ -20,7 +20,6 @@ import { hashPassword } from '../password.js';
 import { createManagedTenant } from './service.js';
 import { issueTenantInvite, acceptTenantInvite } from '../tenant-invites/service.js';
 import { hashInviteToken } from '../tenant-invites/token.js';
-import { resetCanonicalInviteSchemaCacheForTests } from '../tenant-invites/schema-compat.js';
 import { isManagedTenantServiceError } from './state.js';
 import {
 	cleanupTenancyFixture,
@@ -54,7 +53,6 @@ if (skipReason) {
 		await cleanupTenancyFixture(pool, fixture);
 		await pool.end();
 		resetEnvForTests();
-		resetCanonicalInviteSchemaCacheForTests();
 	});
 
 	async function cleanupAuth009Rows(): Promise<void> {
@@ -65,32 +63,8 @@ if (skipReason) {
 			fixture.landlordA.landlordId,
 			`${fixture.runId}-auth009-%`
 		]);
-		await pool.query(`DELETE FROM "User" WHERE id LIKE $1`, [`${fixture.runId}-invite-legacy-%`]);
-		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [
-			`${fixture.runId}-invite-legacy-profile-%`
-		]);
 		await pool.query(`DELETE FROM "User" WHERE id LIKE $1`, [`tg-%`]);
 		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [`tg-profile-%`]);
-	}
-
-	async function attachLegacyTenantProfileForInvite(managedTenantId: string): Promise<string> {
-		const userId = `${fixture.runId}-invite-legacy-${managedTenantId}`;
-		const profileId = `${fixture.runId}-invite-legacy-profile-${managedTenantId}`;
-		await db.insert(users).values({
-			id: userId,
-			email: `${userId}@auth009.test`,
-			phone: userId,
-			passwordHash: await hashPassword('invite-test-password'),
-			name: 'Invite legacy profile',
-			role: 'TENANT',
-			isActive: true
-		});
-		await db.insert(tenantProfiles).values({ id: profileId, userId });
-		await db
-			.update(managedTenants)
-			.set({ legacyTenantProfileId: profileId })
-			.where(eq(managedTenants.id, managedTenantId));
-		return profileId;
 	}
 
 	async function countUsersLike(prefix: string): Promise<number> {
@@ -149,7 +123,6 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Invite target'
 		});
-		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA2,
 			managedTenantId: managed.id,
@@ -168,6 +141,7 @@ if (skipReason) {
 
 		const stored = await db
 			.select({
+				tenantId: tenantInvites.tenantId,
 				token: tenantInvites.token,
 				tokenHash: tenantInvites.tokenHash,
 				status: tenantInvites.status,
@@ -178,6 +152,8 @@ if (skipReason) {
 			.where(eq(tenantInvites.id, issued.inviteId));
 
 		assert.equal(stored[0]?.tokenHash, hashInviteToken(issued.token));
+		assert.equal(stored[0]?.tenantId, null);
+		assert.equal(stored[0]?.token, null);
 		assert.equal(stored[0]?.status, 'PENDING');
 		assert.equal(stored[0]?.purpose, 'INITIAL_CLAIM');
 		assert.equal(stored[0]?.expectedClaimVersion, 0);
@@ -188,7 +164,6 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Concurrent invite'
 		});
-		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA3,
 			managedTenantId: managed.id,
@@ -237,7 +212,6 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Claim target'
 		});
-		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA1,
 			managedTenantId: managed.id,
@@ -306,7 +280,6 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Already claimed'
 		});
-		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA2,
 			managedTenantId: managed.id,

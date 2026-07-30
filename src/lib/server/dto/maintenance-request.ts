@@ -2,7 +2,7 @@
 
 export type MaintenanceRequestUserDto = {
 	name: string;
-	phone: string;
+	phone: string | null;
 };
 
 export type MaintenanceRequestDto = {
@@ -29,7 +29,7 @@ export type MaintenanceRequestDto = {
 };
 
 function toMaintenanceRequestUserDto(
-	row: { name: string; phone: string } | null | undefined
+	row: { name: string; phone: string | null } | null | undefined
 ): MaintenanceRequestUserDto | null {
 	if (!row) return null;
 	return { name: row.name, phone: row.phone };
@@ -57,11 +57,11 @@ export function toMaintenanceRequestDto(row: {
 	roomId: string | null;
 	tenant?: {
 		id: string;
-		user?: { name: string; phone: string } | null;
+		user?: { name: string; phone: string | null } | null;
 	} | null;
 	assignedTo?: {
 		id: string;
-		user?: { name: string; phone: string } | null;
+		user?: { name: string; phone: string | null } | null;
 	} | null;
 }): MaintenanceRequestDto {
 	return {

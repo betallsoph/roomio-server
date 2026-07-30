@@ -7,12 +7,10 @@ import crypto from 'node:crypto';
 import test, { after, before } from 'node:test';
 import type { Pool } from 'pg';
 import { eq, sql } from 'drizzle-orm';
-import { managedTenants, tenantProfiles, users } from '../db/schema.js';
+import { managedTenants, users } from '../db/schema.js';
 import { resetEnvForTests } from '../env.js';
-import { hashPassword } from '../password.js';
 import { createManagedTenant } from '../managed-tenants/service.js';
 import { issueTenantInvite } from './service.js';
-import { resetCanonicalInviteSchemaCacheForTests } from './schema-compat.js';
 import {
 	cleanupTenancyFixture,
 	createTenancyTestDb,
@@ -77,10 +75,6 @@ if (skipReason) {
 		await pool.query(`DELETE FROM "TenantInvite" WHERE "landlordId" = ANY($1)`, [
 			[fixture.landlordA.landlordId, fixture.landlordB.landlordId]
 		]);
-		await pool.query(`DELETE FROM "User" WHERE id LIKE $1`, [`${fixture.runId}-invite-legacy-%`]);
-		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [
-			`${fixture.runId}-invite-legacy-profile-%`
-		]);
 		await pool.query(`DELETE FROM "User" WHERE id = $1`, [`tg-${telegramUserId}`]);
 		await pool.query(`DELETE FROM "TenantProfile" WHERE "telegramUserId" = $1`, [
 			String(telegramUserId)
@@ -89,27 +83,7 @@ if (skipReason) {
 		await pool.end();
 		delete process.env.BOT_TOKEN;
 		resetEnvForTests();
-		resetCanonicalInviteSchemaCacheForTests();
 	});
-
-	async function attachLegacyTenantProfileForInvite(managedTenantId: string): Promise<void> {
-		const userId = `${fixture.runId}-invite-legacy-${managedTenantId}`;
-		const profileId = `${fixture.runId}-invite-legacy-profile-${managedTenantId}`;
-		await db.insert(users).values({
-			id: userId,
-			email: `${userId}@auth009.test`,
-			phone: userId,
-			passwordHash: await hashPassword('invite-test-password'),
-			name: 'Invite legacy profile',
-			role: 'TENANT',
-			isActive: true
-		});
-		await db.insert(tenantProfiles).values({ id: profileId, userId });
-		await db
-			.update(managedTenants)
-			.set({ legacyTenantProfileId: profileId })
-			.where(eq(managedTenants.id, managedTenantId));
-	}
 
 	async function postTelegramAuth(body: Record<string, unknown>) {
 		pinTelegramEnv();
@@ -150,7 +124,6 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Unsigned body probe'
 		});
-		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA1,
 			managedTenantId: managed.id,
@@ -181,7 +154,6 @@ if (skipReason) {
 		const firstManaged = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'First claim'
 		});
-		await attachLegacyTenantProfileForInvite(firstManaged.id);
 		const firstTenancy = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA2,
 			managedTenantId: firstManaged.id,
@@ -197,10 +169,21 @@ if (skipReason) {
 		});
 		assert.equal(bootstrap.status, 200);
 
+		const tgUser = await db
+			.select({
+				email: users.email,
+				phone: users.phone,
+				passwordHash: users.passwordHash
+			})
+			.from(users)
+			.where(eq(users.id, `tg-${telegramUserId}`));
+		assert.equal(tgUser[0]?.email, null);
+		assert.equal(tgUser[0]?.phone, null);
+		assert.equal(tgUser[0]?.passwordHash, null);
+
 		const secondManaged = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Second claim'
 		});
-		await attachLegacyTenantProfileForInvite(secondManaged.id);
 		const secondTenancy = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA3,
 			managedTenantId: secondManaged.id,

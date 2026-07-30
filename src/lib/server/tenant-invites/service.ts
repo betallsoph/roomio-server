@@ -3,7 +3,6 @@
  * Authority from scoped SQL; plaintext token returned once; hash stored only.
  */
 
-import crypto from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '$lib/server/db/schema';
@@ -19,9 +18,7 @@ import {
 import type { LandlordActor } from '$lib/server/authorization/actor';
 import { appendAudit, auditActorFromUserActor, type AuditTx } from '$lib/server/audit';
 import { getEnv } from '$lib/server/env';
-import { hashPassword } from '$lib/server/password';
 import { loadManagedTenantInScope } from '$lib/server/managed-tenants/service.js';
-import { schemaSupportsCanonicalTenantInvites } from './schema-compat.js';
 import { generateInviteToken, hashInviteToken } from './token.js';
 import {
 	inviteError,
@@ -56,27 +53,6 @@ function buildDeepLink(token: string): string | null {
 	const telegram = getEnv().telegram;
 	if (telegram.status !== 'CONFIGURED') return null;
 	return `https://t.me/${telegram.botUsername}/${telegram.miniappShortName}?startapp=${token}`;
-}
-
-async function resolveExistingLegacyTenantId(
-	tx: TenantInviteTx,
-	managedTenant: {
-		legacyTenantProfileId: string | null;
-		claimedByUserId: string | null;
-	}
-): Promise<string | null> {
-	if (managedTenant.legacyTenantProfileId) return managedTenant.legacyTenantProfileId;
-
-	if (managedTenant.claimedByUserId) {
-		const rows = await tx
-			.select({ id: tenantProfiles.id })
-			.from(tenantProfiles)
-			.where(eq(tenantProfiles.userId, managedTenant.claimedByUserId))
-			.limit(1);
-		if (rows[0]?.id) return rows[0].id;
-	}
-
-	return null;
 }
 
 async function loadActiveTenancyForInvite(
@@ -185,14 +161,6 @@ export async function issueTenantInvite(
 			tenancyId: rawInput.tenancyId.trim()
 		});
 
-		const canonicalSchema = await schemaSupportsCanonicalTenantInvites(tx);
-		const legacyTenantId = await resolveExistingLegacyTenantId(tx, managedTenant);
-		if (!canonicalSchema && !legacyTenantId) {
-			throw new Error(
-				'issueTenantInvite requires migration 0026 canonical TenantInvite columns when managed tenant has no legacy TenantProfile'
-			);
-		}
-
 		await revokePendingInvitesForTenancy(
 			tx,
 			actor,
@@ -201,23 +169,19 @@ export async function issueTenantInvite(
 			options.requestId ?? null
 		);
 
-		const insertValues = {
-			landlordId: actor.landlordId,
-			tokenHash,
-			expiresAt,
-			managedTenantId: managedTenant.id,
-			tenancyId: rawInput.tenancyId.trim(),
-			status: 'PENDING',
-			purpose: 'INITIAL_CLAIM',
-			expectedClaimVersion: managedTenant.claimVersion,
-			updatedAt: now,
-			...(legacyTenantId ? { tenantId: legacyTenantId } : {}),
-			...(!canonicalSchema ? { token: tokenHash } : {})
-		} as typeof tenantInvites.$inferInsert;
-
 		const inserted = await tx
 			.insert(tenantInvites)
-			.values(insertValues)
+			.values({
+				landlordId: actor.landlordId,
+				tokenHash,
+				expiresAt,
+				managedTenantId: managedTenant.id,
+				tenancyId: rawInput.tenancyId.trim(),
+				status: 'PENDING',
+				purpose: 'INITIAL_CLAIM',
+				expectedClaimVersion: managedTenant.claimVersion,
+				updatedAt: now
+			})
 			.returning({ id: tenantInvites.id });
 
 		const inviteId = inserted[0]?.id;
@@ -506,12 +470,8 @@ async function ensureTelegramIdentityInTx(
 		.limit(1);
 
 	if (!existingUser[0]) {
-		const passwordHash = await hashPassword(crypto.randomBytes(32).toString('hex'));
 		await tx.insert(users).values({
 			id: userId,
-			email: `${userId}@telegram.invalid`,
-			phone: telegramUserId,
-			passwordHash,
 			name: displayName,
 			role: 'TENANT',
 			isActive: true

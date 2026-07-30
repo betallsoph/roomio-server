@@ -269,7 +269,7 @@ export function toInvoiceDto(row: InvoiceRowForDto): InvoiceDto {
 
 export type BulkInvoicePrepTenantUserDto = {
 	name: string;
-	phone: string;
+	phone: string | null;
 };
 
 export type BulkInvoicePrepTenantDto = {

@@ -87,7 +87,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				if (existingInvoice) continue;
 
 				const tenantName = room.tenant.user.name;
-				const tenantPhone = room.tenant.user.phone;
+				const tenantPhone = room.tenant.user.phone ?? '';
 				const roomReadings = readings[room.id] || {};
 				const roomManualAmounts = manualAmounts[room.id] || {};
 				const activeContract = await tx.query.contracts.findFirst({

@@ -20,9 +20,11 @@ const datetime = (name: string) => timestamp(name, { withTimezone: true, mode: '
 
 export const users = pgTable('User', {
 	id: text('id').primaryKey().$defaultFn(uuid),
-	email: text('email').notNull().unique(),
-	phone: text('phone').notNull().unique(),
-	passwordHash: text('passwordHash').notNull(),
+	// AUTH-009: Telegram-only tenants have no email/phone/password; legacy rows unchanged.
+	email: text('email').unique(),
+	phone: text('phone').unique(),
+	passwordHash: text('passwordHash'),
+	passwordSetAt: datetime('passwordSetAt'),
 	name: text('name').notNull(),
 	avatar: text('avatar'),
 	role: text('role').notNull().default('TENANT'), // "SUPER_ADMIN" | "LANDLORD" | "STAFF" | "TENANT"
@@ -307,10 +309,10 @@ export const tenantInvites = pgTable(
 		landlordId: text('landlordId')
 			.notNull()
 			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
-		tenantId: text('tenantId')
-			.notNull()
-			.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
-		token: text('token').notNull().unique(),
+		// Legacy rows only; new INITIAL_CLAIM invites bind managedTenantId + tenancyId + tokenHash.
+		tenantId: text('tenantId').references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+		// Legacy plaintext token; new rows store tokenHash only.
+		token: text('token').unique(),
 		expiresAt: datetime('expiresAt').notNull(),
 		usedAt: datetime('usedAt'), // null = chưa dùng
 		createdAt: datetime('createdAt').notNull().$defaultFn(now),

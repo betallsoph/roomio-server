@@ -100,7 +100,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				if (needsRehash) {
 					await db
 						.update(users)
-						.set({ passwordHash: await hashPassword(password) })
+						.set({
+							passwordHash: await hashPassword(password),
+							passwordSetAt: new Date()
+						})
 						.where(eq(users.id, user.id));
 				}
 
@@ -116,7 +119,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 					});
 
 					return json(
-						superAdminLoginResponse({ id: user.id, email: user.email, name: user.name }, user.id)
+						superAdminLoginResponse(
+							{ id: user.id, email: user.email ?? '', name: user.name },
+							user.id
+						)
 					);
 				}
 

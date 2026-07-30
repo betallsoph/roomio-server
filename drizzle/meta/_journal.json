@@ -183,6 +183,13 @@
       "when": 1785354845660,
       "tag": "0025_auth013_maintenance_request_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785395751459,
+      "tag": "0026_auth009_tenant_invite_telegram_identity",
+      "breakpoints": true
     }
   ]
 }

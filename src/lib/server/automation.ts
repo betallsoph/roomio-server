@@ -356,7 +356,7 @@ export async function generateDraftInvoices(landlordId: string, month: string, d
 						roomId: room.id,
 						roomNumber: room.roomNumber,
 						tenantName: room.tenant.user.name,
-						tenantPhone: room.tenant.user.phone,
+						tenantPhone: room.tenant.user.phone ?? '',
 						month,
 						rentAmount: built.rentAmount,
 						totalAmount: built.totalAmount,

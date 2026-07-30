@@ -10,7 +10,7 @@ function toIso(value: Date | string): string {
 
 export type ContractTenantUserDto = {
 	name: string;
-	phone: string;
+	phone: string | null;
 };
 
 export type ContractTenantDto = {

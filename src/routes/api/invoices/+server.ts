@@ -140,7 +140,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 
 		const tenantName = room.tenant.user.name;
-		const tenantPhone = room.tenant.user.phone;
+		const tenantPhone = room.tenant.user.phone ?? '';
 		const activeContract = await db.query.contracts.findFirst({
 			where: and(eq(contracts.roomId, roomId), eq(contracts.status, 'active')),
 			columns: { paymentAccountId: true },

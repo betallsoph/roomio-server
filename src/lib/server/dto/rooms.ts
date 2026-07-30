@@ -139,8 +139,8 @@ export const ROOM_DETAIL_WITH = {
 export type PublicUserDto = {
 	id: string;
 	name: string;
-	email: string;
-	phone: string;
+	email: string | null;
+	phone: string | null;
 	isActive: boolean;
 };
 
@@ -289,8 +289,8 @@ export function toPublicUserDto(
 		| {
 				id: string;
 				name: string;
-				email: string;
-				phone: string;
+				email: string | null;
+				phone: string | null;
 				isActive: boolean;
 		  }
 		| null
@@ -400,8 +400,8 @@ export function toTenantProfileDto(
 				user?: {
 					id: string;
 					name: string;
-					email: string;
-					phone: string;
+					email: string | null;
+					phone: string | null;
 					isActive: boolean;
 				} | null;
 		  }
