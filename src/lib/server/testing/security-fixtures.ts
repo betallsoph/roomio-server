@@ -596,7 +596,10 @@ export async function seedSecurityFixtures(
 			title: 'Old tenant leak',
 			description: 'Fixture request from former tenant',
 			status: 'completed',
-			priority: 'normal'
+			priority: 'normal',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId,
+			roomId: ids.roomA1R1.roomId
 		},
 		{
 			id: ids.maintenanceANow.maintenanceRequestId,
@@ -607,7 +610,10 @@ export async function seedSecurityFixtures(
 			title: 'Current tenant outlet',
 			description: 'Fixture request from current tenant',
 			status: 'pending',
-			priority: 'important'
+			priority: 'important',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId,
+			roomId: ids.roomA1R1.roomId
 		}
 	]);
 

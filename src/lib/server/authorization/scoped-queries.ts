@@ -545,13 +545,15 @@ export async function findMeterReadingForStaff(
 	meterReadingId: string
 ) {
 	const row = await database.query.meterReadings.findFirst({
-		where: and(
-			eq(meterReadings.id, meterReadingId),
-			eq(meterReadings.landlordId, actor.landlordId),
-			inArray(meterReadings.propertyId, assignedPropertyIds(actor))
-		)
+		where: eq(meterReadings.id, meterReadingId)
 	});
 	if (!row) {
+		throwScopedNotFound();
+	}
+	if (!row.landlordId || row.landlordId !== actor.landlordId) {
+		throwScopedNotFound();
+	}
+	if (!row.propertyId || !assignedPropertyIds(actor).includes(row.propertyId)) {
 		throwScopedNotFound();
 	}
 	assertStaffPermission(actor, 'MANAGE_METERS');
@@ -604,13 +606,15 @@ export async function findMaintenanceRequestForStaff(
 	requestId: string
 ) {
 	const row = await database.query.maintenanceRequests.findFirst({
-		where: and(
-			eq(maintenanceRequests.id, requestId),
-			eq(maintenanceRequests.landlordId, actor.landlordId),
-			inArray(maintenanceRequests.propertyId, assignedPropertyIds(actor))
-		)
+		where: eq(maintenanceRequests.id, requestId)
 	});
 	if (!row) {
+		throwScopedNotFound();
+	}
+	if (!row.landlordId || row.landlordId !== actor.landlordId) {
+		throwScopedNotFound();
+	}
+	if (!row.propertyId || !assignedPropertyIds(actor).includes(row.propertyId)) {
 		throwScopedNotFound();
 	}
 	assertStaffPermission(actor, 'MANAGE_REQUESTS');
