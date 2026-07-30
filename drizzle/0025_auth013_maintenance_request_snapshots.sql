@@ -16,6 +16,10 @@ ALTER TABLE "MeterReading" ADD CONSTRAINT "MeterReading_landlordId_LandlordProfi
 ALTER TABLE "MeterReading" ADD CONSTRAINT "MeterReading_propertyId_Property_id_fk" FOREIGN KEY ("propertyId") REFERENCES "public"."Property"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "MeterReading" ADD CONSTRAINT "MeterReading_managedTenantId_ManagedTenant_id_fk" FOREIGN KEY ("managedTenantId") REFERENCES "public"."ManagedTenant"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "MeterReading" ADD CONSTRAINT "MeterReading_tenancyId_Tenancy_id_fk" FOREIGN KEY ("tenancyId") REFERENCES "public"."Tenancy"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "MeterReading" DROP CONSTRAINT "MeterReading_roomId_Room_id_fk";--> statement-breakpoint
+ALTER TABLE "MeterReading" ADD CONSTRAINT "MeterReading_roomId_Room_id_fk" FOREIGN KEY ("roomId") REFERENCES "public"."Room"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "MaintenanceRequest" DROP CONSTRAINT "MaintenanceRequest_tenantId_TenantProfile_id_fk";--> statement-breakpoint
+ALTER TABLE "MaintenanceRequest" ADD CONSTRAINT "MaintenanceRequest_tenantId_TenantProfile_id_fk" FOREIGN KEY ("tenantId") REFERENCES "public"."TenantProfile"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "MaintenanceRequest_landlordId_idx" ON "MaintenanceRequest" USING btree ("landlordId");--> statement-breakpoint
 CREATE INDEX "MaintenanceRequest_propertyId_idx" ON "MaintenanceRequest" USING btree ("propertyId");--> statement-breakpoint
 CREATE INDEX "MaintenanceRequest_roomId_idx" ON "MaintenanceRequest" USING btree ("roomId");--> statement-breakpoint

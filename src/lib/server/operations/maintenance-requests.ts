@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, isNotNull, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
 import type { db as AppDb } from '$lib/server/db';
-import { maintenanceRequests } from '$lib/server/db/schema';
+import { maintenanceRequests, managedTenants, tenancies } from '$lib/server/db/schema';
 import type {
 	LandlordActor,
 	StaffActor,
@@ -9,10 +9,7 @@ import type {
 } from '$lib/server/authorization/actor';
 import { forbiddenError } from '$lib/server/authorization/errors';
 import { staffHasPermission } from '$lib/server/authorization/staff-scope';
-import {
-	listClaimedTenancyScopesForTenant,
-	requireActiveTenancyForTenant
-} from './active-tenancy.js';
+import { requireActiveTenancyForTenant } from './active-tenancy.js';
 import { assertStaffAssigneeForProperty } from './assignee.js';
 import {
 	isOperationsError,
@@ -109,27 +106,91 @@ async function staffCanAccessRequestRow(
 	return row;
 }
 
-async function tenantTenancyScopeWhere(database: OperationsDb, actor: TenantActor): Promise<SQL> {
-	const scopes = await listClaimedTenancyScopesForTenant(database, actor);
-	const tenancyIds = scopes.map((scope) => scope.tenancyId);
-	if (tenancyIds.length === 0) {
-		throw operationsForbidden('Bạn không có lần thuê được phép truy cập');
-	}
-	return and(
-		isNotNull(maintenanceRequests.tenancyId),
-		inArray(maintenanceRequests.tenancyId, tenancyIds)
-	)!;
-}
-
 export async function listMaintenanceRequestsForActor(
 	database: OperationsDb,
 	actor: LandlordActor | StaffActor | TenantActor
 ): Promise<MaintenanceRequestListRow[]> {
+	const columns = {
+		id: true,
+		tenantId: true,
+		roomNumber: true,
+		buildingName: true,
+		category: true,
+		title: true,
+		description: true,
+		imageUrl: true,
+		status: true,
+		priority: true,
+		createdAt: true,
+		updatedAt: true,
+		response: true,
+		assignedToId: true,
+		managedTenantId: true,
+		tenancyId: true,
+		landlordId: true,
+		propertyId: true,
+		roomId: true
+	} as const;
+
+	const withRelations = {
+		tenant: {
+			columns: { id: true },
+			with: {
+				user: {
+					columns: PUBLIC_USER_COLUMNS
+				}
+			}
+		},
+		assignedTo: {
+			columns: { id: true },
+			with: {
+				user: {
+					columns: PUBLIC_USER_COLUMNS
+				}
+			}
+		}
+	} as const;
+
+	if (actor.role === 'TENANT') {
+		const rows = await database
+			.select({ id: maintenanceRequests.id })
+			.from(maintenanceRequests)
+			.innerJoin(
+				tenancies,
+				and(
+					eq(maintenanceRequests.tenancyId, tenancies.id),
+					eq(maintenanceRequests.managedTenantId, tenancies.managedTenantId)
+				)
+			)
+			.innerJoin(
+				managedTenants,
+				and(
+					eq(tenancies.managedTenantId, managedTenants.id),
+					eq(managedTenants.claimedByUserId, actor.userId),
+					isNull(managedTenants.claimAccessSuspendedAt)
+				)
+			);
+
+		if (rows.length === 0) {
+			return [];
+		}
+
+		return database.query.maintenanceRequests.findMany({
+			where: inArray(
+				maintenanceRequests.id,
+				rows.map((row) => row.id)
+			),
+			columns,
+			with: withRelations,
+			orderBy: desc(maintenanceRequests.createdAt)
+		});
+	}
+
 	const conditions: SQL[] = [];
 
 	if (actor.role === 'LANDLORD') {
 		conditions.push(eq(maintenanceRequests.landlordId, actor.landlordId));
-	} else if (actor.role === 'STAFF') {
+	} else {
 		if (!staffHasPermission(actor, 'MANAGE_REQUESTS')) {
 			throw forbiddenError();
 		}
@@ -138,51 +199,12 @@ export async function listMaintenanceRequestsForActor(
 			eq(maintenanceRequests.landlordId, actor.landlordId),
 			inArray(maintenanceRequests.propertyId, propertyIds)
 		);
-	} else {
-		conditions.push(await tenantTenancyScopeWhere(database, actor));
 	}
 
 	return database.query.maintenanceRequests.findMany({
 		where: and(...conditions),
-		columns: {
-			id: true,
-			tenantId: true,
-			roomNumber: true,
-			buildingName: true,
-			category: true,
-			title: true,
-			description: true,
-			imageUrl: true,
-			status: true,
-			priority: true,
-			createdAt: true,
-			updatedAt: true,
-			response: true,
-			assignedToId: true,
-			managedTenantId: true,
-			tenancyId: true,
-			landlordId: true,
-			propertyId: true,
-			roomId: true
-		},
-		with: {
-			tenant: {
-				columns: { id: true },
-				with: {
-					user: {
-						columns: PUBLIC_USER_COLUMNS
-					}
-				}
-			},
-			assignedTo: {
-				columns: { id: true },
-				with: {
-					user: {
-						columns: PUBLIC_USER_COLUMNS
-					}
-				}
-			}
-		},
+		columns,
+		with: withRelations,
 		orderBy: desc(maintenanceRequests.createdAt)
 	});
 }

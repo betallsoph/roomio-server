@@ -221,7 +221,9 @@ if (!RUN) {
 				currValue: 100,
 				recordedAt: '2026-05-31',
 				status: 'approved',
-				submittedBy: 'LANDLORD'
+				submittedBy: 'LANDLORD',
+				landlordId: LA,
+				propertyId: PA
 			},
 			{
 				id: 'a13-mr-a-cur',
@@ -233,7 +235,9 @@ if (!RUN) {
 				recordedAt: '2026-06-30',
 				status: 'pending',
 				submittedBy: 'TENANT',
-				photoUrl: 'x.jpg'
+				photoUrl: 'x.jpg',
+				landlordId: LA,
+				propertyId: PA
 			},
 			{
 				id: 'a13-mr-b',
@@ -244,7 +248,9 @@ if (!RUN) {
 				currValue: 80,
 				recordedAt: '2026-06-30',
 				status: 'approved',
-				submittedBy: 'LANDLORD'
+				submittedBy: 'LANDLORD',
+				landlordId: LB,
+				propertyId: PB
 			}
 		]);
 
@@ -307,15 +313,15 @@ if (!RUN) {
 		assert.equal(Array.isArray(r.body), false);
 	});
 
-	test('super-admin bị chặn operational → 401, không dump toàn hệ thống', async () => {
+	test('super-admin bị chặn operational → 403, không dump toàn hệ thống', async () => {
 		const r = await getReadings(superAdminActor());
-		assert.equal(r.status, 401);
+		assert.equal(r.status, 403);
 		assert.equal(Array.isArray(r.body), false);
 	});
 
-	test('super-admin kèm landlordId vẫn bị chặn operational → 401', async () => {
+	test('super-admin kèm landlordId vẫn bị chặn operational → 403', async () => {
 		const r = await getReadings(superAdminActor(), { landlordId: LA });
-		assert.equal(r.status, 401);
+		assert.equal(r.status, 403);
 		assert.equal(Array.isArray(r.body), false);
 	});
 

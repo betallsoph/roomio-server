@@ -11,6 +11,7 @@ import {
 	type PolicyContext,
 	type TenancyStatus
 } from './capabilities.js';
+import { authorizationErrorToResponse, forbiddenError, unauthenticatedError } from './errors.js';
 import { staffHasCapability, staffHasProperty } from './staff-scope.js';
 
 /**
@@ -43,6 +44,31 @@ export function operationalActorDenyReason(actor: ActorContext): AuthorizeDenyRe
 		return 'SUPER_ADMIN_OPERATIONAL';
 	}
 	return null;
+}
+
+export type OperationalActorGuardResult =
+	| { ok: true; actor: OperationalUserActor }
+	| { ok: false; response: Response };
+
+/**
+ * Route boundary: null/missing actor → 401; authenticated SUPER_ADMIN on operational routes → 403.
+ */
+export function guardOperationalUserActor(
+	actor: ActorContext | null | undefined
+): OperationalActorGuardResult {
+	if (!actor) {
+		return { ok: false, response: authorizationErrorToResponse(unauthenticatedError()) };
+	}
+	if (operationalActorDenyReason(actor) === 'SUPER_ADMIN_OPERATIONAL') {
+		return {
+			ok: false,
+			response: authorizationErrorToResponse(forbiddenError('Không có quyền truy cập dữ liệu này'))
+		};
+	}
+	if (!isOperationalUserActor(actor)) {
+		return { ok: false, response: authorizationErrorToResponse(unauthenticatedError()) };
+	}
+	return { ok: true, actor };
 }
 
 function deny(reason: AuthorizeDenyReason): AuthorizeResult {

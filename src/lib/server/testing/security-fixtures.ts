@@ -553,7 +553,9 @@ export async function seedSecurityFixtures(
 			currValue: 120,
 			recordedAt: '2025-11-30',
 			status: 'approved',
-			submittedBy: 'LANDLORD'
+			submittedBy: 'LANDLORD',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
 		},
 		{
 			id: ids.meterReadingANow.meterReadingId,
@@ -565,7 +567,9 @@ export async function seedSecurityFixtures(
 			recordedAt: '2026-06-30',
 			status: 'pending',
 			submittedBy: 'TENANT',
-			photoUrl: 'fixture-meter-a-now.jpg'
+			photoUrl: 'fixture-meter-a-now.jpg',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
 		},
 		{
 			id: ids.meterReadingBNow.meterReadingId,
@@ -576,7 +580,9 @@ export async function seedSecurityFixtures(
 			currValue: 95,
 			recordedAt: '2026-06-30',
 			status: 'approved',
-			submittedBy: 'LANDLORD'
+			submittedBy: 'LANDLORD',
+			landlordId: ids.landlordB.landlordProfileId,
+			propertyId: ids.propertyB1.propertyId
 		}
 	]);
 

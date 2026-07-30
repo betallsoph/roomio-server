@@ -454,7 +454,7 @@ export const meterReadings = pgTable(
 		id: text('id').primaryKey().$defaultFn(uuid),
 		roomId: text('roomId')
 			.notNull()
-			.references(() => rooms.id, { onDelete: 'cascade' }),
+			.references(() => rooms.id, { onDelete: 'restrict' }),
 		serviceId: text('serviceId').notNull(), // Chỉ số đo lường cho dịch vụ nào (Ví dụ dịch vụ Điện / Nước)
 		month: text('month').notNull(), // Định dạng YYYY-MM
 		prevValue: doublePrecision('prevValue').notNull(),
@@ -554,7 +554,7 @@ export const maintenanceRequests = pgTable(
 		id: text('id').primaryKey().$defaultFn(uuid),
 		tenantId: text('tenantId')
 			.notNull()
-			.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+			.references(() => tenantProfiles.id, { onDelete: 'restrict' }),
 		roomNumber: text('roomNumber').notNull(),
 		buildingName: text('buildingName').notNull(),
 		category: text('category').notNull(), // 'maintenance' | 'plumbing' | 'electrical' | 'internet' | 'other'

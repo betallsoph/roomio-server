@@ -10,7 +10,7 @@ import {
 	unauthenticatedError,
 	wrongRoleError
 } from '$lib/server/authorization/errors';
-import { operationalActorDenyReason } from '$lib/server/authorization/policies';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
 import { authorizeMeterServiceForActor } from '$lib/server/operations/meter-readings';
 import { isOperationsError } from '$lib/server/operations/errors';
 import { toMeterOcrDto } from '$lib/server/dto/meter-ocr';
@@ -18,14 +18,15 @@ import { toMeterOcrDto } from '$lib/server/dto/meter-ocr';
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const actor = locals.actor;
-		if (!actor || operationalActorDenyReason(actor)) {
-			return authorizationErrorToResponse(unauthenticatedError());
+		const guard = guardOperationalUserActor(actor);
+		if (!guard.ok) {
+			return guard.response;
 		}
 
-		const tenant = requireTenantActor(actor);
-		const landlord = requireLandlordActor(actor);
+		const tenant = requireTenantActor(guard.actor);
+		const landlord = requireLandlordActor(guard.actor);
 		if (!tenant.ok && !landlord.ok) {
-			if (actor.kind === 'USER') {
+			if (guard.actor.kind === 'USER') {
 				return authorizationErrorToResponse(
 					wrongRoleError('Không có quyền thực hiện thao tác này')
 				);

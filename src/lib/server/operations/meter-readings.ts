@@ -1,11 +1,13 @@
-import { and, desc, eq, inArray, isNotNull, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
 import type { db as AppDb } from '$lib/server/db';
 import {
+	managedTenants,
 	meterReadings,
 	properties,
 	rooms,
 	roomServiceConfigs,
-	services
+	services,
+	tenancies
 } from '$lib/server/db/schema';
 import type {
 	LandlordActor,
@@ -20,10 +22,7 @@ import {
 } from '$lib/server/authorization/scoped-queries';
 import { forbiddenError } from '$lib/server/authorization/errors';
 import { staffHasPermission } from '$lib/server/authorization/staff-scope';
-import {
-	listClaimedTenancyScopesForTenant,
-	resolveTenancyForTenantMutation
-} from './active-tenancy.js';
+import { resolveTenancyForTenantMutation } from './active-tenancy.js';
 import {
 	isOperationsError,
 	operationsConflict,
@@ -70,18 +69,32 @@ function staffMeterScopeWhere(actor: StaffActor): SQL {
 		throw forbiddenError();
 	}
 	return and(
-		eq(properties.landlordId, actor.landlordId),
-		inArray(properties.id, assignedPropertyIds(actor))
+		eq(meterReadings.landlordId, actor.landlordId),
+		inArray(meterReadings.propertyId, assignedPropertyIds(actor))
 	)!;
 }
 
-async function tenantTenancyScopeWhere(database: OperationsDb, actor: TenantActor): Promise<SQL> {
-	const scopes = await listClaimedTenancyScopesForTenant(database, actor);
-	const tenancyIds = scopes.map((scope) => scope.tenancyId);
-	if (tenancyIds.length === 0) {
-		throw operationsForbidden('Bạn không có lần thuê được phép truy cập');
-	}
-	return and(isNotNull(meterReadings.tenancyId), inArray(meterReadings.tenancyId, tenancyIds))!;
+function meterReadingListSelect() {
+	return {
+		id: meterReadings.id,
+		roomId: meterReadings.roomId,
+		serviceId: meterReadings.serviceId,
+		month: meterReadings.month,
+		prevValue: meterReadings.prevValue,
+		submittedValue: meterReadings.submittedValue,
+		currValue: meterReadings.currValue,
+		recordedAt: meterReadings.recordedAt,
+		photoUrl: meterReadings.photoUrl,
+		ocrParsedValue: meterReadings.ocrParsedValue,
+		status: meterReadings.status,
+		submittedBy: meterReadings.submittedBy,
+		isAnomalous: meterReadings.isAnomalous,
+		managedTenantId: meterReadings.managedTenantId,
+		tenancyId: meterReadings.tenancyId,
+		roomNumber: rooms.roomNumber,
+		propertyName: properties.shortName,
+		serviceName: services.name
+	};
 }
 
 export async function listMeterReadingsForActor(
@@ -91,14 +104,6 @@ export async function listMeterReadingsForActor(
 ): Promise<MeterReadingListRow[]> {
 	const conditions: SQL[] = [];
 
-	if (actor.role === 'LANDLORD') {
-		conditions.push(eq(properties.landlordId, actor.landlordId));
-	} else if (actor.role === 'STAFF') {
-		conditions.push(staffMeterScopeWhere(actor));
-	} else {
-		conditions.push(await tenantTenancyScopeWhere(database, actor));
-	}
-
 	if (filters.status) {
 		conditions.push(eq(meterReadings.status, filters.status));
 	}
@@ -106,31 +111,41 @@ export async function listMeterReadingsForActor(
 		conditions.push(eq(meterReadings.month, filters.month));
 	}
 
-	return database
-		.select({
-			id: meterReadings.id,
-			roomId: meterReadings.roomId,
-			serviceId: meterReadings.serviceId,
-			month: meterReadings.month,
-			prevValue: meterReadings.prevValue,
-			submittedValue: meterReadings.submittedValue,
-			currValue: meterReadings.currValue,
-			recordedAt: meterReadings.recordedAt,
-			photoUrl: meterReadings.photoUrl,
-			ocrParsedValue: meterReadings.ocrParsedValue,
-			status: meterReadings.status,
-			submittedBy: meterReadings.submittedBy,
-			isAnomalous: meterReadings.isAnomalous,
-			managedTenantId: meterReadings.managedTenantId,
-			tenancyId: meterReadings.tenancyId,
-			roomNumber: rooms.roomNumber,
-			propertyName: properties.shortName,
-			serviceName: services.name
-		})
+	const listQuery = database
+		.select(meterReadingListSelect())
 		.from(meterReadings)
 		.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
 		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.leftJoin(services, eq(meterReadings.serviceId, services.id))
+		.leftJoin(services, eq(meterReadings.serviceId, services.id));
+
+	if (actor.role === 'TENANT') {
+		return listQuery
+			.innerJoin(
+				tenancies,
+				and(
+					eq(meterReadings.tenancyId, tenancies.id),
+					eq(meterReadings.managedTenantId, tenancies.managedTenantId)
+				)
+			)
+			.innerJoin(
+				managedTenants,
+				and(
+					eq(tenancies.managedTenantId, managedTenants.id),
+					eq(managedTenants.claimedByUserId, actor.userId),
+					isNull(managedTenants.claimAccessSuspendedAt)
+				)
+			)
+			.where(and(...conditions))
+			.orderBy(desc(meterReadings.month), desc(meterReadings.recordedAt));
+	}
+
+	if (actor.role === 'LANDLORD') {
+		conditions.push(eq(meterReadings.landlordId, actor.landlordId));
+	} else {
+		conditions.push(staffMeterScopeWhere(actor));
+	}
+
+	return listQuery
 		.where(and(...conditions))
 		.orderBy(desc(meterReadings.month), desc(meterReadings.recordedAt));
 }
@@ -299,12 +314,20 @@ export async function submitMeterReadingForActor(
 		pastUsages.length > 0 ? pastUsages.reduce((a, b) => a + b, 0) / pastUsages.length : 0;
 	const isAnomalous = avgUsage > 0 && Math.abs(usage - avgUsage) / avgUsage > ANOMALY_THRESHOLD;
 
+	const existingConditions = [
+		eq(meterReadings.roomId, roomId),
+		eq(meterReadings.serviceId, serviceId),
+		eq(meterReadings.month, month)
+	];
+	if (actor.role === 'TENANT' && tenancyScope) {
+		existingConditions.push(
+			eq(meterReadings.managedTenantId, tenancyScope.managedTenantId),
+			eq(meterReadings.tenancyId, tenancyScope.tenancyId)
+		);
+	}
+
 	const existing = await database.query.meterReadings.findFirst({
-		where: and(
-			eq(meterReadings.roomId, roomId),
-			eq(meterReadings.serviceId, serviceId),
-			eq(meterReadings.month, month)
-		)
+		where: and(...existingConditions)
 	});
 	if (existing?.status === 'approved') {
 		throw operationsConflict('Chỉ số tháng này đã được chủ nhà chốt, không thể gửi lại');

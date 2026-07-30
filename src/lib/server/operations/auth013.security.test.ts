@@ -119,11 +119,21 @@ async function seedAuth013Extensions(
 
 	await db
 		.update(meterReadings)
-		.set({ managedTenantId: managedTenantANow, tenancyId: tenancyANowActive })
+		.set({
+			managedTenantId: managedTenantANow,
+			tenancyId: tenancyANowActive,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
+		})
 		.where(eq(meterReadings.id, ids.meterReadingANow.meterReadingId));
 	await db
 		.update(meterReadings)
-		.set({ managedTenantId: managedTenantAOld, tenancyId: tenancyAOldEnded })
+		.set({
+			managedTenantId: managedTenantAOld,
+			tenancyId: tenancyAOldEnded,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
+		})
 		.where(eq(meterReadings.id, ids.meterReadingAOld.meterReadingId));
 
 	await db
@@ -426,24 +436,30 @@ if (skipReason) {
 				assert.equal(result.status, 409);
 			});
 
-			await t.test('multi-active tenant POST maintenance without tenancyId returns 422', async () => {
-				const result = await readJson(
-					await callHandler(postRequests, {
-						request: new Request('http://localhost/api/requests', {
-							method: 'POST',
-							headers: { 'content-type': 'application/json' },
-							body: JSON.stringify({
-								category: 'plumbing',
-								title: 'Ambiguous tenancy',
-								description: 'Must disambiguate active claims'
-							})
-						}),
-						locals: { actor: tenantANow }
-					})
-				);
-				assert.equal(result.status, 422);
-				assert.match(String((result.body as { error?: string })?.error ?? ''), /tenancyId|roomId/);
-			});
+			await t.test(
+				'multi-active tenant POST maintenance without tenancyId returns 422',
+				async () => {
+					const result = await readJson(
+						await callHandler(postRequests, {
+							request: new Request('http://localhost/api/requests', {
+								method: 'POST',
+								headers: { 'content-type': 'application/json' },
+								body: JSON.stringify({
+									category: 'plumbing',
+									title: 'Ambiguous tenancy',
+									description: 'Must disambiguate active claims'
+								})
+							}),
+							locals: { actor: tenantANow }
+						})
+					);
+					assert.equal(result.status, 422);
+					assert.match(
+						String((result.body as { error?: string })?.error ?? ''),
+						/tenancyId|roomId/
+					);
+				}
+			);
 
 			await t.test('OCR parse requires roomId and serviceId before provider', async () => {
 				const missing = await readJson(

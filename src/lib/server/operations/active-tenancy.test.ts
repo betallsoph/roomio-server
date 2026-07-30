@@ -23,7 +23,9 @@ const tenantActor: TenantActor = {
 	tenantProfileId: 'tp-multi-claim'
 };
 
-function activeRow(overrides: Partial<MockTenancyRow> & Pick<MockTenancyRow, 'tenancyId' | 'roomId'>) {
+function activeRow(
+	overrides: Partial<MockTenancyRow> & Pick<MockTenancyRow, 'tenancyId' | 'roomId'>
+) {
 	return {
 		managedTenantId: overrides.managedTenantId ?? `mt-${overrides.tenancyId}`,
 		tenancyId: overrides.tenancyId,
@@ -52,7 +54,7 @@ test('resolveTenancyForTenantMutation returns 422 when user has multiple ACTIVE 
 	]);
 
 	await assert.rejects(
-		() => resolveTenancyForTenantMutation(db, tenantActor, {}),
+		() => resolveTenancyForTenantMutation(db as never, tenantActor, {}),
 		(error: unknown) => {
 			assert.equal(isOperationsError(error), true);
 			const opsError = error as { status: number; message: string };
@@ -73,7 +75,7 @@ test('resolveTenancyForTenantMutation returns 422 when multiple ACTIVE tenancies
 	]);
 
 	await assert.rejects(
-		() => resolveTenancyForTenantMutation(db, tenantActor, { roomId: 'room-shared' }),
+		() => resolveTenancyForTenantMutation(db as never, tenantActor, { roomId: 'room-shared' }),
 		(error: unknown) => {
 			assert.equal(isOperationsError(error), true);
 			const opsError = error as { status: number; message: string };

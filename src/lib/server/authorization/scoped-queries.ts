@@ -530,17 +530,13 @@ export async function findMeterReadingForLandlord(
 	actor: LandlordActor,
 	meterReadingId: string
 ) {
-	const rows = await database
-		.select({ meterReading: meterReadings })
-		.from(meterReadings)
-		.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
-		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(meterReadings.id, meterReadingId), landlordRoomWhere(actor)))
-		.limit(1);
-	if (!rows[0]) {
+	const row = await database.query.meterReadings.findFirst({
+		where: and(eq(meterReadings.id, meterReadingId), eq(meterReadings.landlordId, actor.landlordId))
+	});
+	if (!row) {
 		throwScopedNotFound();
 	}
-	return rows[0].meterReading;
+	return row;
 }
 
 export async function findMeterReadingForStaff(
@@ -548,24 +544,18 @@ export async function findMeterReadingForStaff(
 	actor: StaffActor,
 	meterReadingId: string
 ) {
-	const rows = await database
-		.select({ meterReading: meterReadings })
-		.from(meterReadings)
-		.innerJoin(rooms, eq(meterReadings.roomId, rooms.id))
-		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(
-			and(
-				eq(meterReadings.id, meterReadingId),
-				eq(properties.landlordId, actor.landlordId),
-				inArray(properties.id, assignedPropertyIds(actor))
-			)
+	const row = await database.query.meterReadings.findFirst({
+		where: and(
+			eq(meterReadings.id, meterReadingId),
+			eq(meterReadings.landlordId, actor.landlordId),
+			inArray(meterReadings.propertyId, assignedPropertyIds(actor))
 		)
-		.limit(1);
-	if (!rows[0]) {
+	});
+	if (!row) {
 		throwScopedNotFound();
 	}
 	assertStaffPermission(actor, 'MANAGE_METERS');
-	return rows[0].meterReading;
+	return row;
 }
 
 export async function findMeterReadingForTenantHistory(
@@ -596,16 +586,16 @@ export async function findMaintenanceRequestForLandlord(
 	actor: LandlordActor,
 	requestId: string
 ) {
-	const rows = await database
-		.select({ request: maintenanceRequests })
-		.from(maintenanceRequests)
-		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
-		.where(and(eq(maintenanceRequests.id, requestId), landlordTenancyWhere(actor)))
-		.limit(1);
-	if (!rows[0]) {
+	const row = await database.query.maintenanceRequests.findFirst({
+		where: and(
+			eq(maintenanceRequests.id, requestId),
+			eq(maintenanceRequests.landlordId, actor.landlordId)
+		)
+	});
+	if (!row) {
 		throwScopedNotFound();
 	}
-	return rows[0].request;
+	return row;
 }
 
 export async function findMaintenanceRequestForStaff(
@@ -613,23 +603,18 @@ export async function findMaintenanceRequestForStaff(
 	actor: StaffActor,
 	requestId: string
 ) {
-	const rows = await database
-		.select({ request: maintenanceRequests })
-		.from(maintenanceRequests)
-		.innerJoin(tenancies, eq(maintenanceRequests.tenancyId, tenancies.id))
-		.where(
-			and(
-				eq(maintenanceRequests.id, requestId),
-				eq(tenancies.landlordId, actor.landlordId),
-				inArray(tenancies.propertyId, assignedPropertyIds(actor))
-			)
+	const row = await database.query.maintenanceRequests.findFirst({
+		where: and(
+			eq(maintenanceRequests.id, requestId),
+			eq(maintenanceRequests.landlordId, actor.landlordId),
+			inArray(maintenanceRequests.propertyId, assignedPropertyIds(actor))
 		)
-		.limit(1);
-	if (!rows[0]) {
+	});
+	if (!row) {
 		throwScopedNotFound();
 	}
 	assertStaffPermission(actor, 'MANAGE_REQUESTS');
-	return rows[0].request;
+	return row;
 }
 
 export async function findMaintenanceRequestForTenantHistory(

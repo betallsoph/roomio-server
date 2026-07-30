@@ -1446,7 +1446,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "MaintenanceRequest_assignedToId_StaffProfile_id_fk": {
@@ -2002,7 +2002,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "MeterReading_managedTenantId_ManagedTenant_id_fk": {

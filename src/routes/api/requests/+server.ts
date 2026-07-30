@@ -13,7 +13,7 @@ import {
 	unauthenticatedError,
 	wrongRoleError
 } from '$lib/server/authorization/errors';
-import { operationalActorDenyReason } from '$lib/server/authorization/policies';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
 import { ScopedResourceNotFoundError } from '$lib/server/authorization/scoped-queries';
 import {
 	createMaintenanceRequestForActor,
@@ -44,16 +44,9 @@ function operationalWrongRoleResponse(actor: App.Locals['actor']) {
 	return authorizationErrorToResponse(unauthenticatedError());
 }
 
-function requireOperationalActor(actor: App.Locals['actor']) {
-	if (!actor || operationalActorDenyReason(actor)) {
-		return { ok: false as const, response: authorizationErrorToResponse(unauthenticatedError()) };
-	}
-	return { ok: true as const, actor };
-}
-
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const guard = requireOperationalActor(locals.actor);
+		const guard = guardOperationalUserActor(locals.actor);
 		if (!guard.ok) return guard.response;
 
 		const landlord = requireLandlordActor(guard.actor);
@@ -80,7 +73,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const guard = requireOperationalActor(locals.actor);
+		const guard = guardOperationalUserActor(locals.actor);
 		if (!guard.ok) return guard.response;
 
 		const tenant = requireTenantActor(guard.actor);
@@ -98,7 +91,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
-		const guard = requireOperationalActor(locals.actor);
+		const guard = guardOperationalUserActor(locals.actor);
 		if (!guard.ok) return guard.response;
 
 		const body = await request.json();
@@ -123,7 +116,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const guard = requireOperationalActor(locals.actor);
+		const guard = guardOperationalUserActor(locals.actor);
 		if (!guard.ok) return guard.response;
 
 		const id = url.searchParams.get('id');
