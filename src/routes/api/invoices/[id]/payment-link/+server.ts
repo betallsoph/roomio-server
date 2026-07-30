@@ -4,9 +4,25 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { invoices } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { forbidden, landlordOwnsInvoice, tenantOwnsInvoice } from '$lib/server/authz';
+import { requireLandlordActor, requireTenantActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	isAuthorizationError,
+	wrongRoleError
+} from '$lib/server/authorization/errors';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
+import {
+	findPaymentAccountForTenantHistory,
+	ScopedResourceNotFoundError
+} from '$lib/server/authorization/scoped-queries';
 import { createPayOSPaymentLink, makePayOSOrderCode, resolvePayOSConfig } from '$lib/server/payos';
-import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
+import {
+	getInvoiceForLandlord,
+	getInvoiceForTenant,
+	getPaymentAccountForInvoiceLandlord,
+	mapFinanceScopeError
+} from '$lib/server/operations/finance-scope';
+import { isOperationsError } from '$lib/server/operations/errors';
 
 function paymentDescription(invoiceId: string) {
 	const compact = invoiceId
@@ -16,8 +32,6 @@ function paymentDescription(invoiceId: string) {
 	return `RIO${compact}`.slice(0, 25);
 }
 
-// VietQR quick-link (ảnh QR miễn phí của vietqr.io) — tiền chuyển THẲNG vào TK ngân hàng chủ trọ.
-// Dùng khi chủ trọ CHƯA kết nối PayOS riêng: hiển thị QR, đối soát thủ công bằng nút "Đã nhận".
 function buildVietQRImageUrl(opts: {
 	bankCode: string;
 	accountNumber: string;
@@ -36,6 +50,23 @@ function buildVietQRImageUrl(opts: {
 
 const STALE_PAYOS_STATUSES = ['CANCELLED', 'EXPIRED'];
 
+function mapHandlerError(error: unknown) {
+	const mapped = mapFinanceScopeError(error);
+	if (mapped) {
+		return json({ error: mapped.message }, { status: mapped.status });
+	}
+	if (error instanceof ScopedResourceNotFoundError) {
+		return json({ error: error.message }, { status: 404 });
+	}
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
+	}
+	if (isOperationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
+}
+
 export const POST: RequestHandler = async ({ params, locals }) => {
 	try {
 		const { id } = params;
@@ -43,47 +74,61 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			return json({ error: 'Missing invoice ID' }, { status: 400 });
 		}
 
-		const invoice = await db.query.invoices.findFirst({
-			where: eq(invoices.id, id),
-			with: {
-				items: true,
-				paymentAccount: true,
-				room: { with: { property: { columns: { landlordId: true } } } }
-			}
-		});
-		if (!invoice) {
-			return json({ error: 'Invoice not found' }, { status: 404 });
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+
+		const landlord = requireLandlordActor(guard.actor);
+		const tenant = requireTenantActor(guard.actor);
+		if (!landlord.ok && !tenant.ok) {
+			return authorizationErrorToResponse(
+				wrongRoleError('Không có quyền truy cập dữ liệu này')
+			);
 		}
+
+		let invoice;
+		let landlordId: string;
+		let paymentAccount;
+
+		if (landlord.ok) {
+			invoice = await getInvoiceForLandlord(db, landlord.value, id);
+			if (!invoice) {
+				return json({ error: 'Invoice not found' }, { status: 404 });
+			}
+			landlordId = landlord.value.landlordId;
+			paymentAccount = await getPaymentAccountForInvoiceLandlord(db, landlord.value, id);
+		} else if (tenant.ok) {
+			const tenantActor = tenant.value;
+			invoice = await getInvoiceForTenant(db, tenantActor, id);
+			if (!invoice?.managedTenantId || !invoice.tenancyId) {
+				return json({ error: 'Invoice not found' }, { status: 404 });
+			}
+			const propertyLandlord = invoice.room?.property?.landlord?.id;
+			if (!propertyLandlord) {
+				return json({ error: 'Invoice not found' }, { status: 404 });
+			}
+			landlordId = propertyLandlord;
+			paymentAccount = await findPaymentAccountForTenantHistory(
+				db,
+				tenantActor,
+				{
+					managedTenantId: invoice.managedTenantId,
+					tenancyId: invoice.tenancyId
+				},
+				id
+			);
+		} else {
+			return authorizationErrorToResponse(
+				wrongRoleError('Không có quyền truy cập dữ liệu này')
+			);
+		}
+
 		if (invoice.status === 'paid') {
 			return json({ error: 'Hóa đơn đã thanh toán' }, { status: 400 });
 		}
 
-		// Quyền: khách thuê sở hữu HĐ, hoặc chủ trọ sở hữu HĐ
-		if (
-			locals.session?.role === 'TENANT' &&
-			!(await tenantOwnsInvoice(locals.session.tenantProfileId!, id))
-		) {
-			return forbidden();
-		}
-		if (
-			locals.session?.role === 'LANDLORD' &&
-			!(await landlordOwnsInvoice(locals.session.landlordProfileId!, id))
-		) {
-			return forbidden();
-		}
-		if (locals.session?.role !== 'TENANT' && locals.session?.role !== 'LANDLORD') {
-			return forbidden();
-		}
-
-		const landlordId = invoice.room.property.landlordId;
-		const paymentAccount = await getPaymentAccountForLandlord(
-			landlordId,
-			invoice.paymentAccountId || null
-		);
 		const amountDue = Math.max(invoice.totalAmount - invoice.paidAmount, 0);
 		const description = paymentDescription(invoice.id);
 
-		// Link PayOS cũ còn hiệu lực → trả lại luôn (idempotent)
 		const hasLiveLink =
 			invoice.payosCheckoutUrl &&
 			invoice.payosPaymentLinkId &&
@@ -105,7 +150,6 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			paymentAccountId: paymentAccount.id
 		});
 
-		// Chủ trọ CHƯA kết nối PayOS riêng → VietQR + xác nhận thủ công
 		if (!config) {
 			if (!paymentAccount.accountNumber || !paymentAccount.bankCode) {
 				return json({ error: 'Chủ trọ chưa cấu hình tài khoản nhận tiền' }, { status: 400 });
@@ -130,13 +174,13 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			});
 		}
 
-		// Fix B: KHÔNG tái dùng orderCode cũ nếu link trước đã hủy/hết hạn (PayOS cấm tái dùng)
 		const stale = STALE_PAYOS_STATUSES.includes(invoice.payosStatus ?? '');
 		const orderCode =
 			invoice.payosOrderCode && !stale
 				? Number(invoice.payosOrderCode)
 				: makePayOSOrderCode(stale ? `${invoice.id}:${Date.now()}` : invoice.id);
 
+		const invoiceItems = invoice.items ?? [];
 		const paymentLink = await createPayOSPaymentLink(config, {
 			invoiceId: invoice.id,
 			orderCode,
@@ -145,8 +189,8 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			buyerName: invoice.tenantName,
 			buyerPhone: invoice.tenantPhone,
 			items:
-				invoice.items.length > 0
-					? invoice.items.map((item) => ({ name: item.name, quantity: 1, price: item.amount }))
+				invoiceItems.length > 0
+					? invoiceItems.map((item) => ({ name: item.name, quantity: 1, price: item.amount }))
 					: [{ name: `Hoa don ${invoice.id}`, quantity: 1, price: invoice.totalAmount }]
 		});
 
@@ -174,6 +218,6 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			status: paymentLink.status
 		});
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };
