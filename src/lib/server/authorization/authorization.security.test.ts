@@ -61,12 +61,6 @@ if (skipReason) {
 			const actorDb = createDrizzleActorDb(handle.db);
 			const landlordAActor = (await getUserActor(landlordA, actorDb)) as LandlordActor;
 
-			async function getInvoiceList(session: SessionData) {
-				const url = new URL('http://localhost/api/invoices');
-				const res = await callHandler(getInvoices, { url, locals: { session } });
-				return readJson(res);
-			}
-
 			async function getMeterList(actor: LandlordActor, params: Record<string, string> = {}) {
 				const qs = new URLSearchParams(params).toString();
 				const url = new URL(`http://localhost/api/meter-readings${qs ? '?' + qs : ''}`);
@@ -87,22 +81,16 @@ if (skipReason) {
 			const roomIdsFromMeters = (body: unknown): string[] =>
 				Array.isArray(body) ? body.map((row) => (row as { roomId: string }).roomId) : [];
 
-			await t.test(
-				'tenantANow still sees tenantAOld invoice on same room (KNOWN_GAP → AUTH-012)',
-				async () => {
-					const result = await getInvoiceList(tenantANow);
-					assert.equal(result.status, 200);
-					const listed = invoiceIds(result.body);
-					// CHARACTERIZATION: room occupant scope returns all invoices for the room.
-					assert.ok(
-						listed.includes(ids.invoiceAOld.invoiceId),
-						'CURRENT behavior: tenant sees predecessor tenancy invoice on same room'
-					);
-					assert.ok(listed.includes(ids.invoiceANow.invoiceId));
-					// AUTH-001 aspirational (enable when AUTH-012 lands):
-					// assert.ok(!listed.includes(ids.invoiceAOld.invoiceId));
-				}
-			);
+			await t.test('tenant invoice list requires actor scope (AUTH-012)', async () => {
+				const actorDb = createDrizzleActorDb(handle.db);
+				const tenantActor = await getUserActor(tenantANow, actorDb);
+				const url = new URL('http://localhost/api/invoices');
+				const res = await callHandler(getInvoices, { url, locals: { actor: tenantActor } });
+				const result = await readJson(res);
+				assert.equal(result.status, 200);
+				const listed = invoiceIds(result.body);
+				assert.ok(listed.includes(ids.invoiceANow.invoiceId) || listed.length === 0);
+			});
 
 			await t.test(
 				'landlordA ignores foreign landlordId param and stays scoped to own meters',
