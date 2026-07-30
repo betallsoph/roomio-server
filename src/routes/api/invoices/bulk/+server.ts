@@ -17,18 +17,19 @@ import {
 	isAuthorizationError
 } from '$lib/server/authorization/errors';
 import { guardOperationalUserActor } from '$lib/server/authorization/policies';
-import {
-	findPropertyForLandlord,
-	ScopedResourceNotFoundError
-} from '$lib/server/authorization/scoped-queries';
+import { findPropertyForLandlord } from '$lib/server/authorization/scoped-queries';
 import { toBulkInvoicePrepRoomDto, toInvoiceDto } from '$lib/server/dto/invoice';
 import { isOperationsError } from '$lib/server/operations/errors';
+import {
+	mapFinanceScopeError,
+	validateScopedRoomIdsForProperty
+} from '$lib/server/operations/finance-scope';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
-import { validateScopedRoomIdsForProperty } from './scoped-rooms';
 
 function mapHandlerError(error: unknown) {
-	if (error instanceof ScopedResourceNotFoundError) {
-		return json({ error: error.message }, { status: 404 });
+	const mapped = mapFinanceScopeError(error);
+	if (mapped) {
+		return json({ error: mapped.message }, { status: mapped.status });
 	}
 	if (isAuthorizationError(error)) {
 		return authorizationErrorToResponse(error);
