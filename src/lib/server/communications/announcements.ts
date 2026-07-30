@@ -239,7 +239,10 @@ export async function deleteAnnouncementForLandlord(
 	announcementId: string
 ): Promise<void> {
 	const row = await database.query.announcements.findFirst({
-		where: and(eq(announcements.id, announcementId), eq(announcements.landlordId, actor.landlordId)),
+		where: and(
+			eq(announcements.id, announcementId),
+			eq(announcements.landlordId, actor.landlordId)
+		),
 		columns: { id: true }
 	});
 	if (!row) throw communicationsNotFound();

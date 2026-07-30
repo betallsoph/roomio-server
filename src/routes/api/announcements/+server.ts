@@ -59,9 +59,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 		const landlord = requireLandlordActor(guard.actor);
 		if (landlord.ok) {
-			return json(
-				await listAnnouncementsForLandlord(db, landlord.value, { targetType, targetId })
-			);
+			return json(await listAnnouncementsForLandlord(db, landlord.value, { targetType, targetId }));
 		}
 
 		const staff = requireStaffActor(guard.actor);

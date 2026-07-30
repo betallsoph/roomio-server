@@ -8,7 +8,11 @@ import {
 	resolveConversationForTenant,
 	type ResolvedConversation
 } from './conversations.js';
-import { communicationsNotFound, communicationsValidation, type CommunicationsDb } from './errors.js';
+import {
+	communicationsNotFound,
+	communicationsValidation,
+	type CommunicationsDb
+} from './errors.js';
 
 export type MessageRow = typeof messages.$inferSelect;
 
@@ -239,7 +243,4 @@ export async function sendMessageForTenant(
 	return { message: created, conversation };
 }
 
-export {
-	findOrCreateConversationForLandlord,
-	findOrCreateConversationForStaff
-};
+export { findOrCreateConversationForLandlord, findOrCreateConversationForStaff };

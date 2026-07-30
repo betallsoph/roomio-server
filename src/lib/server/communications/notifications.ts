@@ -12,7 +12,11 @@ import {
 } from '$lib/server/db/schema';
 import type { LandlordActor, TenantActor } from '$lib/server/authorization/actor';
 import { listClaimedTenancyScopesForTenant } from '$lib/server/operations/active-tenancy';
-import { communicationsForbidden, communicationsNotFound, type CommunicationsDb } from './errors.js';
+import {
+	communicationsForbidden,
+	communicationsNotFound,
+	type CommunicationsDb
+} from './errors.js';
 
 export async function assertNotificationRecipientScoped(
 	database: CommunicationsDb,
@@ -101,10 +105,7 @@ export async function assertNotificationRecipientScoped(
 	}
 }
 
-export async function listSpecialNotesForTenant(
-	database: CommunicationsDb,
-	actor: TenantActor
-) {
+export async function listSpecialNotesForTenant(database: CommunicationsDb, actor: TenantActor) {
 	const scopes = await listClaimedTenancyScopesForTenant(database, actor);
 	if (scopes.length === 0) return [];
 

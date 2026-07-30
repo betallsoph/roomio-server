@@ -2,10 +2,7 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import {
-	requireLandlordActor,
-	requireTenantActor
-} from '$lib/server/authorization/actor';
+import { requireLandlordActor, requireTenantActor } from '$lib/server/authorization/actor';
 import {
 	authorizationErrorToResponse,
 	isAuthorizationError,

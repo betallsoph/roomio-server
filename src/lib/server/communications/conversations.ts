@@ -4,7 +4,11 @@ import type { LandlordActor, StaffActor, TenantActor } from '$lib/server/authori
 import { forbiddenError } from '$lib/server/authorization/errors';
 import { staffHasPermission } from '$lib/server/authorization/staff-scope';
 import { resolveTenancyForTenantMutation } from '$lib/server/operations/active-tenancy';
-import { communicationsNotFound, communicationsValidation, type CommunicationsDb } from './errors.js';
+import {
+	communicationsNotFound,
+	communicationsValidation,
+	type CommunicationsDb
+} from './errors.js';
 
 export type ConversationRow = typeof conversations.$inferSelect;
 
