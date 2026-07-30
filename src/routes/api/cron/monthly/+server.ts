@@ -1,31 +1,39 @@
 import { json } from '@sveltejs/kit';
-import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { properties } from '$lib/server/db/schema';
-import {
-	cleanupAutomationHistory,
-	generateDraftInvoices,
-	queueContractReminders,
-	queueInvoiceReminders,
-	queueMeterReminders,
-	runOverdueSweep
-} from '$lib/server/automation';
+import { cleanupAutomationHistory, runAutomationJob } from '$lib/server/automation';
 import { childRequestLogger, logJobEvent } from '$lib/server/logger';
 import { getEnv } from '$lib/server/env';
+import {
+	createMachineActor,
+	logMachineVerificationFailure,
+	verifyCronSecret
+} from '$lib/server/authorization/machine-verification';
 
-// Cron hằng ngày — gọi từ lịch ngoài (GitHub Actions / crontab) bằng header x-cron-secret.
-// Chạy nhắc + quét quá hạn + tự soạn hóa đơn NHÁP cho mọi chủ trọ. Không có session người dùng.
-// Idempotent: nhắc/nháp đều chống trùng, nên chạy lại trong ngày vô hại.
+const CRON_JOB_TYPES = [
+	'overdue_sweep',
+	'invoice_reminder',
+	'meter_reminder',
+	'contract_reminder',
+	'auto_draft'
+] as const;
+
+// Cron hằng ngày — gọi từ lịch ngoài bằng header x-cron-secret. Verify trước mọi enqueue/write;
+// landlord scope derive từ DB, không tin payload tự khai.
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const log = childRequestLogger(locals.requestId, { jobType: 'cron-monthly' });
 	const secret = getEnv().cronSecret;
 	if (!secret) {
 		return json({ error: 'CRON_SECRET chưa cấu hình trên server' }, { status: 500 });
 	}
-	if (request.headers.get('x-cron-secret') !== secret) {
+	if (!verifyCronSecret(request.headers.get('x-cron-secret'), secret)) {
+		logMachineVerificationFailure(log, locals.requestId, 'CRON', 'invalid_secret');
 		return json({ error: 'Unauthorized' }, { status: 401 });
 	}
+
+	const actor = createMachineActor('CRON', locals.requestId);
 
 	try {
 		let body: Record<string, unknown> = {};
@@ -36,13 +44,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 		const month =
 			typeof body.month === 'string' ? body.month : new Date().toISOString().slice(0, 7);
-		const draft = body.draft !== false; // mặc định soạn nháp; truyền {"draft":false} để chỉ chạy nhắc
+		const draft = body.draft !== false;
 
 		logJobEvent({
 			requestId: locals.requestId,
 			jobType: 'cron-monthly',
 			outcome: 'started',
-			detail: { month, draft }
+			detail: { month, draft, machineChannel: actor.channel }
 		});
 
 		const rows = await db.select({ landlordId: properties.landlordId }).from(properties);
@@ -54,19 +62,20 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		for (const landlordId of landlordIds) {
 			try {
-				await runOverdueSweep(landlordId);
-				await queueInvoiceReminders(landlordId);
-				await queueMeterReminders(landlordId, month);
-				await queueContractReminders(landlordId);
+				await runAutomationJob(landlordId, 'overdue_sweep');
+				await runAutomationJob(landlordId, 'invoice_reminder');
+				await runAutomationJob(landlordId, 'meter_reminder', { month });
+				await runAutomationJob(landlordId, 'contract_reminder');
 				if (draft) {
-					const r = await generateDraftInvoices(landlordId, month);
-					draftInvoices += r.draftInvoices;
+					const job = await runAutomationJob(landlordId, 'auto_draft', { month });
+					const result = job.result ? JSON.parse(job.result) : {};
+					draftInvoices += Number(result.draftInvoices ?? 0);
 				}
 				await cleanupAutomationHistory(landlordId);
 				processed += 1;
 			} catch (err) {
-				// Một chủ trọ lỗi không được chặn cả mẻ
-				errors.push(`${landlordId}: ${errorMessage(err)}`);
+				const message = err instanceof Error ? err.message : 'Unexpected cron error';
+				errors.push(`${landlordId}: ${message}`);
 			}
 		}
 
@@ -79,7 +88,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				landlords: landlordIds.length,
 				processed,
 				draftInvoices,
-				errorCount: errors.length
+				errorCount: errors.length,
+				jobTypes: draft ? CRON_JOB_TYPES : CRON_JOB_TYPES.filter((t) => t !== 'auto_draft')
 			}
 		});
 

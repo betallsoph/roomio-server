@@ -19,6 +19,11 @@ import { uploadR2Object } from '$lib/server/r2';
 import { and, eq, lt } from 'drizzle-orm';
 import { childRequestLogger } from '$lib/server/logger';
 import { getEnv } from '$lib/server/env';
+import {
+	createMachineActor,
+	logMachineVerificationFailure,
+	verifyTelegramWebhookSecret
+} from '$lib/server/authorization/machine-verification';
 
 const FLOW = 'maintenance_request';
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -419,9 +424,17 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!webhookSecret) {
 		return json({ error: 'Server chưa cấu hình TELEGRAM_WEBHOOK_SECRET' }, { status: 503 });
 	}
-	if (request.headers.get('x-telegram-bot-api-secret-token') !== webhookSecret) {
+	if (
+		!verifyTelegramWebhookSecret(
+			request.headers.get('x-telegram-bot-api-secret-token'),
+			webhookSecret
+		)
+	) {
+		logMachineVerificationFailure(log, locals.requestId, 'TELEGRAM_WEBHOOK', 'invalid_secret');
 		return json({ error: 'Unauthorized' }, { status: 401 });
 	}
+
+	const actor = createMachineActor('TELEGRAM_WEBHOOK', locals.requestId);
 
 	try {
 		await cleanupExpiredSessions();
@@ -436,7 +449,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		} else if (update.message) {
 			await handleMessage(update.message);
 		}
-		log.info({ updateKind }, 'telegram webhook processed');
+		log.info({ updateKind, machineChannel: actor.channel }, 'telegram webhook processed');
 	} catch (error) {
 		log.error({ err: error }, 'telegram webhook failed');
 	}

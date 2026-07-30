@@ -5,31 +5,31 @@ import { invoices, paymentTransactions, rooms } from '$lib/server/db/schema';
 import { eq, or, sql } from 'drizzle-orm';
 import { resolvePayOSConfig, verifyPayOSWebhook } from '$lib/server/payos';
 import { childRequestLogger } from '$lib/server/logger';
+import {
+	createMachineActor,
+	extractPayOSOrderIdentifiers,
+	logMachineVerificationFailure,
+	parsePayOSWebhookBody
+} from '$lib/server/authorization/machine-verification';
 
-// Webhook tiền thuê (khách thuê → chủ trọ). Mỗi chủ trọ dùng PayOS RIÊNG nên không thể verify
-// trước khi biết hóa đơn thuộc chủ trọ nào: ta MATCH hóa đơn theo orderCode/paymentLinkId TRƯỚC
-// (đọc dữ liệu chưa tin), suy ra chủ trọ, rồi VERIFY chữ ký bằng checksumKey của chính chủ trọ đó.
-// Chỉ áp tiền SAU khi chữ ký hợp lệ. orderCode được sinh tất định toàn cục (từ invoiceId) nên
-// match 1 endpoint không nhầm giữa các chủ trọ.
+// Webhook tiền thuê (khách thuê → chủ trọ). Mỗi chủ trọ dùng PayOS RIÊNG: đọc orderCode/paymentLinkId
+// chỉ để map READ-ONLY tới hóa đơn → suy ra checksumKey chủ trọ, VERIFY chữ ký, rồi mới ghi DB.
+// Không ghi operational table trước verify; unmatched/unverified chỉ log bảo mật.
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const log = childRequestLogger(locals.requestId, { handler: 'payos-webhook' });
 
 	try {
 		const body = await request.json();
-		const { code, desc, success, data, signature } = body;
-		if (!data || typeof data !== 'object' || !signature) {
+		const parsed = parsePayOSWebhookBody(body);
+		if (!parsed) {
+			logMachineVerificationFailure(log, locals.requestId, 'PAYMENT_WEBHOOK', 'invalid_payload');
 			return json({ error: 'Payload PayOS không hợp lệ' }, { status: 400 });
 		}
 
-		const orderCode = data.orderCode !== undefined ? String(data.orderCode) : null;
-		const paymentLinkId = data.paymentLinkId ? String(data.paymentLinkId) : null;
-		const amount = Number(data.amount) || 0;
-		const providerTransactionId = String(
-			data.reference ??
-				`${orderCode ?? 'unknown'}:${paymentLinkId ?? 'unknown'}:${data.transactionDateTime ?? ''}:${amount}`
-		);
-		const rawPayload = JSON.stringify(body);
+		const { data, signature, code, desc, success } = parsed;
+		const { orderCode, paymentLinkId, amount, providerTransactionId } =
+			extractPayOSOrderIdentifiers(data);
 
 		const matchCondition =
 			orderCode && paymentLinkId
@@ -47,38 +47,47 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				})
 			: null;
 
-		// Không khớp hóa đơn → chưa biết key chủ trọ nào để verify; log (KHÔNG áp tiền) rồi ack 200.
 		if (!invoice) {
-			log.info({ orderCode, outcome: 'unmatched' }, 'payos webhook received');
-			await db.insert(paymentTransactions).values({
-				provider: 'payos',
-				providerTransactionId,
-				invoiceCode: orderCode,
-				amount,
-				transferType: 'webhook',
-				content: data.description ?? 'PayOS webhook không khớp hóa đơn',
-				status: 'unmatched',
-				rawPayload
+			logMachineVerificationFailure(log, locals.requestId, 'PAYMENT_WEBHOOK', 'unmatched_invoice', {
+				orderCode,
+				paymentLinkId
 			});
 			return json({ success: true, message: 'Không tìm thấy hóa đơn khớp PayOS' });
 		}
 
 		const landlordId = invoice.room.property.landlordId;
-
-		// Verify bằng checksumKey RIÊNG của chủ trọ sở hữu hóa đơn này
 		const config = await resolvePayOSConfig({
 			scope: 'rent',
 			landlordId,
 			paymentAccountId: invoice.paymentAccountId
 		});
 		if (!config) {
+			logMachineVerificationFailure(
+				log,
+				locals.requestId,
+				'PAYMENT_WEBHOOK',
+				'missing_payos_config',
+				{
+					landlordId,
+					invoiceId: invoice.id
+				}
+			);
 			return json({ error: 'Chủ trọ chưa kết nối PayOS để nhận webhook' }, { status: 400 });
 		}
-		if (!verifyPayOSWebhook(data, String(signature), config.checksumKey)) {
+
+		if (!verifyPayOSWebhook(data, signature, config.checksumKey)) {
+			logMachineVerificationFailure(log, locals.requestId, 'PAYMENT_WEBHOOK', 'invalid_signature', {
+				landlordId,
+				invoiceId: invoice.id,
+				orderCode
+			});
 			return json({ error: 'Sai chữ ký PayOS' }, { status: 401 });
 		}
 
-		// Chống xử lý trùng (chỉ sau khi đã verify chữ ký)
+		const actor = createMachineActor('PAYMENT_WEBHOOK', locals.requestId, {
+			verifiedAccountId: invoice.paymentAccountId ?? undefined
+		});
+
 		const existingTransaction = await db.query.paymentTransactions.findFirst({
 			where: eq(paymentTransactions.providerTransactionId, providerTransactionId),
 			columns: { id: true }
@@ -87,7 +96,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json({ success: true, message: 'Giao dịch PayOS đã được xử lý trước đó' });
 		}
 
-		// Webhook báo thất bại → log ignored rồi ack
+		const rawPayload = JSON.stringify(body);
+		const paymentContent =
+			data.description !== undefined && data.description !== null ? String(data.description) : null;
+		const ignoredContent =
+			desc ??
+			(data.desc !== undefined ? String(data.desc) : null) ??
+			'PayOS webhook không thành công';
+
 		if (!success || code !== '00' || data.code !== '00') {
 			await db.insert(paymentTransactions).values({
 				landlordId,
@@ -98,7 +114,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				invoiceCode: orderCode,
 				amount,
 				transferType: 'webhook',
-				content: desc ?? data.desc ?? 'PayOS webhook không thành công',
+				content: ignoredContent,
 				status: 'ignored',
 				rawPayload
 			});
@@ -115,7 +131,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				invoiceCode: orderCode,
 				amount,
 				transferType: 'webhook',
-				content: data.description ?? null,
+				content: paymentContent,
 				status: 'duplicate',
 				rawPayload
 			});
@@ -136,7 +152,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				invoiceCode: orderCode,
 				amount,
 				transferType: 'webhook',
-				content: data.description ?? null,
+				content: paymentContent,
 				status: 'applied',
 				rawPayload
 			});
@@ -169,7 +185,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				invoiceId: invoice.id,
 				landlordId,
 				orderCode,
-				outcome: fullyPaid ? 'paid' : 'partial'
+				outcome: fullyPaid ? 'paid' : 'partial',
+				machineChannel: actor.channel,
+				verifiedAccountId: actor.verifiedAccountId
 			},
 			'payos webhook applied'
 		);
