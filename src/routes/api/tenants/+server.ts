@@ -11,14 +11,9 @@ import {
 	meterReadings,
 	contracts
 } from '$lib/server/db/schema';
-import { and, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
+import { and, eq, like, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
-import {
-	forbidden,
-	landlordOwnsRoom,
-	landlordOwnsTenant,
-	requireLandlord
-} from '$lib/server/authz';
+import { forbidden, landlordOwnsRoom, requireLandlord } from '$lib/server/authz';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import { requireLandlordActor, type LandlordActor } from '$lib/server/authorization/actor';
 import {
@@ -38,33 +33,30 @@ import {
 } from '$lib/server/tenancies/state';
 import { TENANT_DETAIL_WITH, toTenantSummaryDto } from '$lib/server/dto/tenants';
 import type { SessionData } from '$lib/server/session';
+import { requireOperationalActor } from '$lib/server/property-scope';
+import {
+	findManagedTenantDetailForActor,
+	listManagedTenantsForActor,
+	tenantScopeErrorToResponse
+} from '$lib/server/tenant-scope';
+import {
+	findManagedTenantForLandlord,
+	findManagedTenantForTenant
+} from '$lib/server/authorization/scoped-queries';
+import { appendAudit, auditActorFromUserActor } from '$lib/server/audit';
+import { AuditValidationError } from '$lib/server/audit/metadata';
+import { isLandlordActor, isTenantActor } from '$lib/server/property-scope/actor';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const landlordId =
-			locals.session?.role === 'STAFF'
-				? locals.session.staffLandlordId
-				: locals.session?.landlordProfileId;
-		if (!landlordId || (locals.session?.role !== 'LANDLORD' && locals.session?.role !== 'STAFF')) {
-			return forbidden();
-		}
+		const actorResult = requireOperationalActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
-		// Tenants that currently occupy a room in one of the landlord's properties
-		const tenantIdsSubquery = db
-			.select({ id: rooms.tenantId })
-			.from(rooms)
-			.innerJoin(properties, eq(rooms.propertyId, properties.id))
-			.where(and(eq(properties.landlordId, landlordId), isNotNull(rooms.tenantId)));
-
-		const tenants = await db.query.tenantProfiles.findMany({
-			where: inArray(tenantProfiles.id, tenantIdsSubquery),
-			with: TENANT_DETAIL_WITH
-		});
-
-		tenants.sort((a, b) => a.user.name.localeCompare(b.user.name, 'vi'));
-
-		return json(tenants.map(toTenantSummaryDto));
+		const result = await listManagedTenantsForActor(db, actorResult.actor);
+		return json(result);
 	} catch (error) {
+		const scoped = tenantScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
@@ -469,22 +461,31 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const actorResult = requireOperationalActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const actor = actorResult.actor;
+
 		const body = await request.json();
-		const { id, idNumber, idFrontImage, idBackImage, vehicleImage, checkInImage } = body;
+		const tenantId = typeof body?.id === 'string' ? body.id.trim() : '';
+		const { idNumber, idFrontImage, idBackImage, vehicleImage, checkInImage } = body;
 
-		if (!id) {
-			return json({ error: 'Missing tenant profile ID' }, { status: 400 });
+		if (!tenantId) {
+			return json({ error: 'Missing tenantId (ManagedTenant.id)' }, { status: 400 });
 		}
 
-		// Khách thuê chỉ được cập nhật hồ sơ của chính mình
-		if (locals.session?.role === 'TENANT' && id !== locals.session.tenantProfileId) {
-			return json({ error: 'Không có quyền cập nhật hồ sơ này' }, { status: 403 });
-		}
-		if (
-			locals.session?.role === 'LANDLORD' &&
-			!(await landlordOwnsTenant(locals.session.landlordProfileId!, id))
-		) {
+		const managedTenant = isLandlordActor(actor)
+			? await findManagedTenantForLandlord(db, actor, tenantId)
+			: isTenantActor(actor)
+				? await findManagedTenantForTenant(db, actor, tenantId)
+				: null;
+
+		if (!managedTenant) {
 			return forbidden();
+		}
+
+		const legacyProfileId = managedTenant.legacyTenantProfileId;
+		if (!legacyProfileId) {
+			return json({ error: 'Hồ sơ legacy chưa được liên kết' }, { status: 422 });
 		}
 
 		const updateData: Record<string, unknown> = {};
@@ -495,16 +496,36 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (checkInImage !== undefined) updateData.checkInImage = checkInImage;
 
 		if (Object.keys(updateData).length > 0) {
-			await db.update(tenantProfiles).set(updateData).where(eq(tenantProfiles.id, id));
+			await db.transaction(async (tx) => {
+				const updated = await tx
+					.update(tenantProfiles)
+					.set(updateData)
+					.where(eq(tenantProfiles.id, legacyProfileId))
+					.returning({ id: tenantProfiles.id });
+				if (!updated[0]) {
+					throw new Error('Không tìm thấy hồ sơ người thuê');
+				}
+
+				await appendAudit(tx, auditActorFromUserActor(actor), {
+					scope: 'LANDLORD',
+					action: 'TENANCY.UPDATED',
+					resourceType: 'ManagedTenant',
+					resourceId: managedTenant.id,
+					landlordId: managedTenant.landlordId,
+					requestId: locals.requestId,
+					metadata: { fields: Object.keys(updateData) }
+				});
+			});
 		}
 
-		const updated = await db.query.tenantProfiles.findFirst({
-			where: eq(tenantProfiles.id, id),
-			with: TENANT_DETAIL_WITH
-		});
-
-		return json(updated ? toTenantSummaryDto(updated) : null);
+		const detail = await findManagedTenantDetailForActor(db, actor, tenantId);
+		return json(detail);
 	} catch (error) {
+		const scoped = tenantScopeErrorToResponse(error);
+		if (scoped) return scoped;
+		if (error instanceof AuditValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };

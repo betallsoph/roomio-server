@@ -154,7 +154,6 @@ export async function createR2PresignedUpload(input: CreatePresignedUploadInput)
 
 	const uploadUrl = await getSignedUrl(r2Client(config), command, { expiresIn: config.expiresIn });
 	new URL(uploadUrl);
-	const publicUrl = `${config.publicBaseUrl}/${objectKey}`;
 
 	return {
 		uploadUrl,
@@ -163,8 +162,6 @@ export async function createR2PresignedUpload(input: CreatePresignedUploadInput)
 			'Content-Type': contentType
 		},
 		objectKey,
-		publicUrl,
-		url: publicUrl,
 		expiresIn: config.expiresIn,
 		maxSize: config.maxUploadBytes
 	};

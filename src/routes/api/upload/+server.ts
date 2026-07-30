@@ -5,6 +5,18 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { getEnv } from '$lib/server/env';
+import { db } from '$lib/server/db';
+import { requireOperationalActor } from '$lib/server/property-scope';
+import {
+	assertSafeLocalFileName,
+	authorizeUploadResourceContext,
+	isFileAccessDeniedError,
+	mapUploadScopeError,
+	normalizeUploadPurpose,
+	parseUploadResourceContext
+} from '$lib/server/file-access';
+import { appendAudit, auditActorFromUserActor } from '$lib/server/audit';
+import { AuditValidationError } from '$lib/server/audit/metadata';
 
 const UPLOAD_DIR = getEnv().uploadDir;
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
@@ -16,10 +28,34 @@ const EXT_BY_TYPE: Record<string, string> = {
 	'application/pdf': 'pdf'
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const actorResult = requireOperationalActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+
 		const formData = await request.formData();
 		const file = formData.get('file');
+		const purpose = normalizeUploadPurpose(formData.get('purpose'));
+		const resourceContext = parseUploadResourceContext(
+			{
+				resourceType: formData.get('resourceType'),
+				resourceId: formData.get('resourceId'),
+				managedTenantId: formData.get('managedTenantId'),
+				tenancyId: formData.get('tenancyId')
+			},
+			purpose
+		);
+
+		let auditLandlordId: string;
+		try {
+			({ landlordId: auditLandlordId } = await authorizeUploadResourceContext(
+				db,
+				actorResult.actor,
+				resourceContext
+			));
+		} catch (error) {
+			mapUploadScopeError(error);
+		}
 
 		if (!(file instanceof File)) {
 			return json({ error: 'Thiếu file upload' }, { status: 400 });
@@ -35,11 +71,32 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		const name = `${crypto.randomUUID()}.${ext}`;
-		await fs.mkdir(UPLOAD_DIR, { recursive: true });
-		await fs.writeFile(path.join(UPLOAD_DIR, name), Buffer.from(await file.arrayBuffer()));
+		assertSafeLocalFileName(name);
+		const objectKey = path.posix.join('uploads', purpose, name);
 
-		return json({ url: `/api/files/${name}` });
+		await db.transaction(async (tx) => {
+			await fs.mkdir(UPLOAD_DIR, { recursive: true });
+			await fs.writeFile(path.join(UPLOAD_DIR, name), Buffer.from(await file.arrayBuffer()));
+
+			await appendAudit(tx, auditActorFromUserActor(actorResult.actor), {
+				scope: 'LANDLORD',
+				action: 'FILE.UPLOADED',
+				resourceType: resourceContext.resourceType,
+				resourceId: resourceContext.resourceId,
+				landlordId: auditLandlordId,
+				requestId: locals.requestId,
+				metadata: { objectKey, purpose }
+			});
+		});
+
+		return json({ objectKey, expiresIn: null });
 	} catch (error) {
+		if (error instanceof AuditValidationError) {
+			return json({ error: error.message }, { status: 400 });
+		}
+		if (isFileAccessDeniedError(error)) {
+			return json({ error: error.message }, { status: 403 });
+		}
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
