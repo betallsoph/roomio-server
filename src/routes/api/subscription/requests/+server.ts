@@ -9,6 +9,16 @@ import {
 	subscriptionChangeRequests
 } from '$lib/server/db/schema';
 import { errorMessage } from '$lib/server/api';
+import { requireLandlordActor, requireSuperAdminActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import {
+	toSubscriptionChangeRequestDto,
+	toSubscriptionChangeRequestListDto
+} from '$lib/server/dto/subscription';
+import { requireLandlordMutationActor } from '$lib/server/property-scope';
 import {
 	calculateSubscriptionQuote,
 	pricingGroupForRentalType,
@@ -37,22 +47,32 @@ async function roomCounts(landlordId: string) {
 	};
 }
 
-function requestedLandlordId(session: App.Locals['session'], url: URL): string | null {
-	if (session?.role === 'LANDLORD') return session.landlordProfileId ?? null;
-	if (session?.role === 'SUPER_ADMIN') return url.searchParams.get('landlordId');
-	return null;
-}
-
 export const GET: RequestHandler = async ({ locals, url }) => {
 	try {
-		const landlordId = requestedLandlordId(locals.session, url);
-		if (!landlordId) return json({ error: 'Không có quyền xem yêu cầu này' }, { status: 403 });
+		if (!locals.actor) {
+			return authorizationErrorToResponse(unauthenticatedError());
+		}
+
+		let landlordId: string | null = null;
+		const landlordGuard = requireLandlordActor(locals.actor);
+		if (landlordGuard.ok) {
+			landlordId = landlordGuard.value.landlordId;
+		} else {
+			const adminGuard = requireSuperAdminActor(locals.actor);
+			if (!adminGuard.ok) {
+				return authorizationErrorToResponse(adminGuard.error);
+			}
+			landlordId = url.searchParams.get('landlordId');
+			if (!landlordId) {
+				return json({ error: 'Thiếu landlordId cho Super Admin' }, { status: 400 });
+			}
+		}
 
 		const requests = await db.query.subscriptionChangeRequests.findMany({
 			where: eq(subscriptionChangeRequests.landlordId, landlordId),
 			orderBy: [desc(subscriptionChangeRequests.createdAt)]
 		});
-		return json(requests);
+		return json(toSubscriptionChangeRequestListDto(requests));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -60,10 +80,10 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		if (locals.session?.role !== 'LANDLORD' || !locals.session.landlordProfileId) {
-			return json({ error: 'Chỉ chủ trọ được gửi yêu cầu đổi gói' }, { status: 403 });
-		}
-		const landlordId = locals.session.landlordProfileId;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
+
 		const body = await request.json();
 		if (!SUBSCRIPTION_TIERS.includes(body.requestedTier as SubscriptionTier)) {
 			return json({ error: 'Gói yêu cầu không hợp lệ' }, { status: 400 });
@@ -212,7 +232,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				})
 				.returning()
 		)[0];
-		return json(created, { status: 201 });
+		return json(toSubscriptionChangeRequestDto(created), { status: 201 });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -220,6 +240,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		if (!locals.actor) {
+			return authorizationErrorToResponse(unauthenticatedError());
+		}
+
 		const body = await request.json();
 		if (!body.id) return json({ error: 'Thiếu mã yêu cầu' }, { status: 400 });
 
@@ -231,8 +255,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'Yêu cầu này đã được xử lý' }, { status: 409 });
 		}
 
-		if (locals.session?.role === 'LANDLORD') {
-			if (existing.landlordId !== locals.session.landlordProfileId || body.action !== 'cancel') {
+		const landlordGuard = requireLandlordActor(locals.actor);
+		if (landlordGuard.ok) {
+			if (existing.landlordId !== landlordGuard.value.landlordId || body.action !== 'cancel') {
 				return json({ error: 'Không có quyền hủy yêu cầu này' }, { status: 403 });
 			}
 			const cancelled = (
@@ -242,11 +267,12 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 					.where(eq(subscriptionChangeRequests.id, existing.id))
 					.returning()
 			)[0];
-			return json(cancelled);
+			return json(toSubscriptionChangeRequestDto(cancelled));
 		}
 
-		if (locals.session?.role !== 'SUPER_ADMIN') {
-			return json({ error: 'Chỉ Super Admin được xử lý yêu cầu' }, { status: 403 });
+		const adminGuard = requireSuperAdminActor(locals.actor);
+		if (!adminGuard.ok) {
+			return authorizationErrorToResponse(adminGuard.error);
 		}
 		if (body.action !== 'approve' && body.action !== 'reject') {
 			return json({ error: 'Thao tác không hợp lệ' }, { status: 400 });
@@ -319,7 +345,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 					.returning()
 			)[0];
 		});
-		return json(reviewed);
+		return json(toSubscriptionChangeRequestDto(reviewed));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

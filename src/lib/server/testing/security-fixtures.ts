@@ -75,12 +75,14 @@ export type SecurityFixtureIds = {
 	invoiceANow: { invoiceId: string };
 	invoiceA2Now: { invoiceId: string };
 	invoiceBNow: { invoiceId: string };
+	invoiceBPaid: { invoiceId: string };
 	meterReadingAOld: { meterReadingId: string };
 	meterReadingANow: { meterReadingId: string };
 	meterReadingBNow: { meterReadingId: string };
 	maintenanceAOld: { maintenanceRequestId: string };
 	maintenanceANow: { maintenanceRequestId: string };
 	expenseA: { expenseId: string };
+	expenseACommon: { expenseId: string };
 	expenseB: { expenseId: string };
 	supportContactA: { supportContactId: string };
 	supportContactB: { supportContactId: string };
@@ -156,12 +158,14 @@ export async function seedSecurityFixtures(
 		invoiceANow: { invoiceId: uuid() },
 		invoiceA2Now: { invoiceId: uuid() },
 		invoiceBNow: { invoiceId: uuid() },
+		invoiceBPaid: { invoiceId: uuid() },
 		meterReadingAOld: { meterReadingId: uuid() },
 		meterReadingANow: { meterReadingId: uuid() },
 		meterReadingBNow: { meterReadingId: uuid() },
 		maintenanceAOld: { maintenanceRequestId: uuid() },
 		maintenanceANow: { maintenanceRequestId: uuid() },
 		expenseA: { expenseId: uuid() },
+		expenseACommon: { expenseId: uuid() },
 		expenseB: { expenseId: uuid() },
 		supportContactA: { supportContactId: uuid() },
 		supportContactB: { supportContactId: uuid() }
@@ -249,7 +253,14 @@ export async function seedSecurityFixtures(
 		]);
 
 	await db.insert(landlordProfiles).values([
-		{ id: ids.landlordA.landlordProfileId, userId: ids.landlordA.userId },
+		{
+			id: ids.landlordA.landlordProfileId,
+			userId: ids.landlordA.userId,
+			payosClientId: `client-a-${tag}`,
+			payosApiKeyEnc: 'cipher:fixture-api-key-a',
+			payosChecksumKeyEnc: 'cipher:fixture-checksum-a',
+			payosConnectedAt: new Date('2026-01-01T00:00:00.000Z')
+		},
 		{ id: ids.landlordB.landlordProfileId, userId: ids.landlordB.userId }
 	]);
 
@@ -480,6 +491,7 @@ export async function seedSecurityFixtures(
 			dueDate: '2025-12-10',
 			paidDate: '2025-12-09',
 			status: 'paid',
+			paidAmount: 1_111_111,
 			paymentAccountId: ids.paymentAccountA.paymentAccountId,
 			createdAt: '2025-12-01',
 			notes: 'Legacy invoice for former tenant on same room'
@@ -525,6 +537,22 @@ export async function seedSecurityFixtures(
 			status: 'pending',
 			paymentAccountId: ids.paymentAccountB.paymentAccountId,
 			createdAt: '2026-06-01'
+		},
+		{
+			id: ids.invoiceBPaid.invoiceId,
+			roomId: ids.roomB1R1.roomId,
+			roomNumber: 'B1-R1',
+			tenantName: 'Tenant B Now',
+			tenantPhone: `0900${tag}07`,
+			month: '2026-05',
+			rentAmount: 2_800_000,
+			totalAmount: 3_000_000,
+			paidAmount: 8_888_888,
+			dueDate: '2026-05-10',
+			paidDate: '2026-05-09',
+			status: 'paid',
+			paymentAccountId: ids.paymentAccountB.paymentAccountId,
+			createdAt: '2026-05-01'
 		}
 	]);
 
@@ -626,6 +654,15 @@ export async function seedSecurityFixtures(
 			description: 'Landlord A expense',
 			amount: 500_000,
 			date: '2026-06-15'
+		},
+		{
+			id: ids.expenseACommon.expenseId,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: null,
+			category: 'other',
+			description: 'Landlord A common expense',
+			amount: 120_000,
+			date: '2026-06-20'
 		},
 		{
 			id: ids.expenseB.expenseId,

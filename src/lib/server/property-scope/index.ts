@@ -1,4 +1,4 @@
-export { requireLandlordMutationActor, requireOperationalActor } from './actor.js';
+export { requireLandlordMutationActor, requireOperationalActor, isTenantActor } from './actor.js';
 export { propertyScopeErrorToResponse } from './errors.js';
 export {
 	assertBlockBelongsToProperty,
@@ -28,5 +28,6 @@ export {
 export {
 	loadTenantActiveTenancies,
 	requireTenantActiveTenancy,
+	tenantLandlordIds,
 	type TenantActiveTenancy
 } from './tenant-tenancies.js';
