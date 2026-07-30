@@ -80,9 +80,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		const landlord = requireLandlordActor(guard.actor);
 		const tenant = requireTenantActor(guard.actor);
 		if (!landlord.ok && !tenant.ok) {
-			return authorizationErrorToResponse(
-				wrongRoleError('Không có quyền truy cập dữ liệu này')
-			);
+			return authorizationErrorToResponse(wrongRoleError('Không có quyền truy cập dữ liệu này'));
 		}
 
 		let invoice;
@@ -117,9 +115,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 				id
 			);
 		} else {
-			return authorizationErrorToResponse(
-				wrongRoleError('Không có quyền truy cập dữ liệu này')
-			);
+			return authorizationErrorToResponse(wrongRoleError('Không có quyền truy cập dữ liệu này'));
 		}
 
 		if (invoice.status === 'paid') {

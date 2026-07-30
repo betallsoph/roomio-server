@@ -117,7 +117,10 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 
 		if (action === 'confirmPaid') {
 			if (!landlord.ok) {
-				return json({ error: 'Chỉ chủ trọ sở hữu hóa đơn này được cập nhật thanh toán' }, { status: 403 });
+				return json(
+					{ error: 'Chỉ chủ trọ sở hữu hóa đơn này được cập nhật thanh toán' },
+					{ status: 403 }
+				);
 			}
 			const landlordActor = landlord.value;
 
