@@ -176,6 +176,13 @@
       "when": 1785242636228,
       "tag": "0024_auth005_staff_assignment_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785354845660,
+      "tag": "0025_auth013_maintenance_request_snapshots",
+      "breakpoints": true
     }
   ]
 }

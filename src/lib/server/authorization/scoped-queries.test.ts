@@ -1,14 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-	contracts,
-	invoices,
-	maintenanceRequests,
-	meterReadings,
-	roomAssets,
-	rooms,
-	services
-} from '$lib/server/db/schema';
+import { contracts, invoices, roomAssets, rooms, services } from '$lib/server/db/schema';
 import type { LandlordActor, StaffActor, SuperAdminActor, TenantActor } from './actor.js';
 import { AuthorizationError } from './errors.js';
 import {
@@ -590,17 +582,26 @@ test('tenant payment account binds via invoice→tenancy→account landlord matc
 
 test('landlord join helpers isolate landlord B from landlord A resources', async () => {
 	const ownedJoinDb = queryOnlyDb(
-		{} as never,
+		{
+			meterReadings: {
+				findFirst: async () => ({
+					id: 'meter-a',
+					landlordId: 'landlord-a',
+					propertyId: 'property-a1'
+				})
+			},
+			maintenanceRequests: {
+				findFirst: async () => ({
+					id: 'req-a',
+					landlordId: 'landlord-a',
+					propertyId: 'property-a1'
+				})
+			}
+		} as never,
 		joinSelect((table, depth) => {
 			if (table === rooms) return [{ room: { id: 'room-a1' } }];
 			if (table === invoices && depth === 'double') return [{ invoice: { id: 'inv-a' } }];
 			if (table === contracts && depth === 'double') return [{ contract: { id: 'ctr-a' } }];
-			if (table === meterReadings && depth === 'double') {
-				return [{ meterReading: { id: 'meter-a' } }];
-			}
-			if (table === maintenanceRequests && depth === 'single') {
-				return [{ request: { id: 'req-a' } }];
-			}
 			return [];
 		})
 	);
@@ -618,7 +619,10 @@ test('landlord join helpers isolate landlord B from landlord A resources', async
 	);
 
 	const emptyJoinDb = queryOnlyDb(
-		{} as never,
+		{
+			meterReadings: { findFirst: async () => null },
+			maintenanceRequests: { findFirst: async () => null }
+		} as never,
 		joinSelect(() => [])
 	);
 	for (const fn of [

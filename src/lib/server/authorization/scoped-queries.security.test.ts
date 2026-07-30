@@ -149,20 +149,42 @@ async function seedScopedSqlExtensions(
 
 	await db
 		.update(meterReadings)
-		.set({ managedTenantId: managedTenantAOld, tenancyId: tenancyAOldEnded })
+		.set({
+			managedTenantId: managedTenantAOld,
+			tenancyId: tenancyAOldEnded,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
+		})
 		.where(eq(meterReadings.id, ids.meterReadingAOld.meterReadingId));
 	await db
 		.update(meterReadings)
-		.set({ managedTenantId: managedTenantANow, tenancyId: tenancyANowActive })
+		.set({
+			managedTenantId: managedTenantANow,
+			tenancyId: tenancyANowActive,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
+		})
 		.where(eq(meterReadings.id, ids.meterReadingANow.meterReadingId));
 
 	await db
 		.update(maintenanceRequests)
-		.set({ managedTenantId: managedTenantAOld, tenancyId: tenancyAOldEnded })
+		.set({
+			managedTenantId: managedTenantAOld,
+			tenancyId: tenancyAOldEnded,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId,
+			roomId: ids.roomA1R1.roomId
+		})
 		.where(eq(maintenanceRequests.id, ids.maintenanceAOld.maintenanceRequestId));
 	await db
 		.update(maintenanceRequests)
-		.set({ managedTenantId: managedTenantANow, tenancyId: tenancyANowActive })
+		.set({
+			managedTenantId: managedTenantANow,
+			tenancyId: tenancyANowActive,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId,
+			roomId: ids.roomA1R1.roomId
+		})
 		.where(eq(maintenanceRequests.id, ids.maintenanceANow.maintenanceRequestId));
 
 	await db.insert(roomAssets).values({

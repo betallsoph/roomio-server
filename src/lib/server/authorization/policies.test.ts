@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ActorContext, LandlordActor, StaffActor, TenantActor } from './actor.js';
 import type { PolicyContext } from './capabilities.js';
-import { authorizeActor, isOperationalUserActor, operationalActorDenyReason } from './policies.js';
+import {
+	authorizeActor,
+	guardOperationalUserActor,
+	isOperationalUserActor,
+	operationalActorDenyReason
+} from './policies.js';
 
 const landlordA: LandlordActor = {
 	kind: 'USER',
@@ -88,6 +93,26 @@ test('authorizeActor denies machine actors by default', () => {
 	assert.equal(paymentMachine.ok, false);
 	if (paymentMachine.ok) return;
 	assert.equal(paymentMachine.reason, 'WRONG_ACTOR_KIND');
+});
+
+test('guardOperationalUserActor: null → 401, super-admin → 403', () => {
+	const missing = guardOperationalUserActor(null);
+	assert.equal(missing.ok, false);
+	if (missing.ok) return;
+	assert.equal(missing.response.status, 401);
+
+	const blocked = guardOperationalUserActor(superAdmin);
+	assert.equal(blocked.ok, false);
+	if (blocked.ok) return;
+	assert.equal(blocked.response.status, 403);
+
+	const allowed = guardOperationalUserActor(landlordA);
+	assert.equal(allowed.ok, true);
+	if (!allowed.ok) return;
+	assert.equal(allowed.actor.role, 'LANDLORD');
+	if (allowed.actor.role === 'LANDLORD') {
+		assert.equal(allowed.actor.landlordId, 'landlord-a');
+	}
 });
 
 test('operationalActorDenyReason blocks machine and super admin specifically', () => {

@@ -454,7 +454,7 @@ export const meterReadings = pgTable(
 		id: text('id').primaryKey().$defaultFn(uuid),
 		roomId: text('roomId')
 			.notNull()
-			.references(() => rooms.id, { onDelete: 'cascade' }),
+			.references(() => rooms.id, { onDelete: 'restrict' }),
 		serviceId: text('serviceId').notNull(), // Chỉ số đo lường cho dịch vụ nào (Ví dụ dịch vụ Điện / Nước)
 		month: text('month').notNull(), // Định dạng YYYY-MM
 		prevValue: doublePrecision('prevValue').notNull(),
@@ -467,11 +467,14 @@ export const meterReadings = pgTable(
 		status: text('status').notNull().default('approved'), // 'pending' | 'approved' | 'rejected'
 		submittedBy: text('submittedBy').notNull().default('LANDLORD'), // 'LANDLORD' | 'TENANT'
 		isAnomalous: boolean('isAnomalous').notNull().default(false), // Lệch quá ngưỡng so với trung bình 3 tháng
-		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		// AUTH-004 snapshot (nullable): quyền lịch sử đọc từ tenancyId/managedTenantId.
 		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
-			onDelete: 'set null'
+			onDelete: 'restrict'
 		}),
-		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'restrict' }),
+		// AUTH-013 snapshot (nullable, additive): scope ownership without legacy room joins.
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'restrict' }),
+		propertyId: text('propertyId').references(() => properties.id, { onDelete: 'restrict' })
 	},
 	(t) => ({
 		roomIdx: index('MeterReading_roomId_idx').on(t.roomId),
@@ -479,7 +482,9 @@ export const meterReadings = pgTable(
 			t.roomId,
 			t.serviceId,
 			t.month
-		)
+		),
+		landlordIdx: index('MeterReading_landlordId_idx').on(t.landlordId),
+		propertyIdx: index('MeterReading_propertyId_idx').on(t.propertyId)
 	})
 );
 
@@ -549,7 +554,7 @@ export const maintenanceRequests = pgTable(
 		id: text('id').primaryKey().$defaultFn(uuid),
 		tenantId: text('tenantId')
 			.notNull()
-			.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+			.references(() => tenantProfiles.id, { onDelete: 'restrict' }),
 		roomNumber: text('roomNumber').notNull(),
 		buildingName: text('buildingName').notNull(),
 		category: text('category').notNull(), // 'maintenance' | 'plumbing' | 'electrical' | 'internet' | 'other'
@@ -562,15 +567,22 @@ export const maintenanceRequests = pgTable(
 		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now),
 		response: text('response'),
 		assignedToId: text('assignedToId').references(() => staffProfiles.id, { onDelete: 'set null' }),
-		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		// AUTH-004 snapshot (nullable): quyền lịch sử đọc từ tenancyId/managedTenantId.
 		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
-			onDelete: 'set null'
+			onDelete: 'restrict'
 		}),
-		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'restrict' }),
+		// AUTH-013 snapshot (nullable, additive): scope ownership without legacy room joins.
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'restrict' }),
+		propertyId: text('propertyId').references(() => properties.id, { onDelete: 'restrict' }),
+		roomId: text('roomId').references(() => rooms.id, { onDelete: 'restrict' })
 	},
 	(t) => ({
 		tenantIdx: index('MaintenanceRequest_tenantId_idx').on(t.tenantId),
-		assignedToIdx: index('MaintenanceRequest_assignedToId_idx').on(t.assignedToId)
+		assignedToIdx: index('MaintenanceRequest_assignedToId_idx').on(t.assignedToId),
+		landlordIdx: index('MaintenanceRequest_landlordId_idx').on(t.landlordId),
+		propertyIdx: index('MaintenanceRequest_propertyId_idx').on(t.propertyId),
+		roomIdx: index('MaintenanceRequest_roomId_idx').on(t.roomId)
 	})
 );
 
@@ -1009,6 +1021,18 @@ export const maintenanceRequestsRelations = relations(maintenanceRequests, ({ on
 	assignedTo: one(staffProfiles, {
 		fields: [maintenanceRequests.assignedToId],
 		references: [staffProfiles.id]
+	}),
+	landlord: one(landlordProfiles, {
+		fields: [maintenanceRequests.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	property: one(properties, {
+		fields: [maintenanceRequests.propertyId],
+		references: [properties.id]
+	}),
+	room: one(rooms, {
+		fields: [maintenanceRequests.roomId],
+		references: [rooms.id]
 	})
 }));
 

@@ -74,7 +74,10 @@ export function extractMeterValueFromText(text: string): number | null {
 }
 
 async function fetchImageBytes(photoUrl: string): Promise<{ bytes: Uint8Array; mimeType: string }> {
-	const response = await fetch(photoUrl);
+	const response = await fetch(photoUrl, { redirect: 'manual' });
+	if (response.status >= 300 && response.status < 400) {
+		throw new Error('URL ảnh không được chuyển hướng ra nguồn khác');
+	}
 	if (!response.ok) {
 		throw new Error(`Không tải được ảnh (${response.status})`);
 	}

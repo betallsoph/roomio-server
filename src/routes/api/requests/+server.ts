@@ -2,220 +2,136 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { maintenanceRequests, rooms, properties } from '$lib/server/db/schema';
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
-import { forbidden, landlordOwnsTenant } from '$lib/server/authz';
+import {
+	requireLandlordActor,
+	requireStaffActor,
+	requireTenantActor
+} from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	isAuthorizationError,
+	unauthenticatedError,
+	wrongRoleError
+} from '$lib/server/authorization/errors';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
+import { ScopedResourceNotFoundError } from '$lib/server/authorization/scoped-queries';
+import {
+	createMaintenanceRequestForActor,
+	deleteMaintenanceRequestForActor,
+	isOperationsError,
+	listMaintenanceRequestsForActor,
+	updateMaintenanceRequestForActor
+} from '$lib/server/operations/maintenance-requests';
+import { toMaintenanceRequestDto } from '$lib/server/dto/maintenance-request';
 
-async function landlordOwnsRequest(landlordId: string, requestId: string) {
-	const row = await db
-		.select({ id: maintenanceRequests.id })
-		.from(maintenanceRequests)
-		.innerJoin(rooms, eq(maintenanceRequests.tenantId, rooms.tenantId))
-		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(maintenanceRequests.id, requestId), eq(properties.landlordId, landlordId)))
-		.limit(1);
-	return row.length > 0;
+function mapOperationalError(error: unknown) {
+	if (error instanceof ScopedResourceNotFoundError) {
+		return json({ error: error.message }, { status: 404 });
+	}
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
+	}
+	if (isOperationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
 }
 
-export const GET: RequestHandler = async ({ url, locals }) => {
+function operationalWrongRoleResponse(actor: App.Locals['actor']) {
+	if (actor?.kind === 'USER') {
+		return authorizationErrorToResponse(wrongRoleError('Không có quyền thực hiện thao tác này'));
+	}
+	return authorizationErrorToResponse(unauthenticatedError());
+}
+
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-		const tenantId = url.searchParams.get('tenantId');
-		const staffId = url.searchParams.get('staffId');
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
-		const conditions = [];
-
-		if (locals.session?.role === 'TENANT') {
-			if (!locals.session.tenantProfileId) return forbidden();
-			if (tenantId && tenantId !== locals.session.tenantProfileId) return forbidden();
-			conditions.push(eq(maintenanceRequests.tenantId, locals.session.tenantProfileId));
-		} else if (locals.session?.role === 'LANDLORD') {
-			if (!locals.session.landlordProfileId) return forbidden();
-			if (landlordId && landlordId !== locals.session.landlordProfileId) return forbidden();
-			conditions.push(
-				inArray(
-					maintenanceRequests.tenantId,
-					db
-						.select({ id: rooms.tenantId })
-						.from(rooms)
-						.innerJoin(properties, eq(rooms.propertyId, properties.id))
-						.where(
-							and(
-								eq(properties.landlordId, locals.session.landlordProfileId),
-								isNotNull(rooms.tenantId)
-							)
-						)
-				)
-			);
-		} else if (locals.session?.role === 'STAFF') {
-			if (!locals.session.staffProfileId) return forbidden();
-			if (staffId && staffId !== locals.session.staffProfileId) return forbidden();
-			conditions.push(eq(maintenanceRequests.assignedToId, locals.session.staffProfileId));
-		} else if (landlordId) {
-			// Requests from tenants currently renting one of the landlord's rooms
-			conditions.push(
-				inArray(
-					maintenanceRequests.tenantId,
-					db
-						.select({ id: rooms.tenantId })
-						.from(rooms)
-						.innerJoin(properties, eq(rooms.propertyId, properties.id))
-						.where(and(eq(properties.landlordId, landlordId), isNotNull(rooms.tenantId)))
-				)
-			);
-		} else if (tenantId) {
-			conditions.push(eq(maintenanceRequests.tenantId, tenantId));
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			const rows = await listMaintenanceRequestsForActor(db, landlord.value);
+			return json(rows.map(toMaintenanceRequestDto));
+		}
+		const staff = requireStaffActor(guard.actor);
+		if (staff.ok) {
+			const rows = await listMaintenanceRequestsForActor(db, staff.value);
+			return json(rows.map(toMaintenanceRequestDto));
+		}
+		const tenant = requireTenantActor(guard.actor);
+		if (tenant.ok) {
+			const rows = await listMaintenanceRequestsForActor(db, tenant.value);
+			return json(rows.map(toMaintenanceRequestDto));
 		}
 
-		// Lọc theo nhân viên được giao — dùng cho cổng /staff
-		if (staffId && locals.session?.role !== 'STAFF') {
-			conditions.push(eq(maintenanceRequests.assignedToId, staffId));
-		}
-
-		if (conditions.length === 0) {
-			return json({ error: 'Missing landlordId or tenantId' }, { status: 400 });
-		}
-
-		const requests = await db.query.maintenanceRequests.findMany({
-			where: and(...conditions),
-			with: {
-				tenant: {
-					with: {
-						user: {
-							columns: { name: true, phone: true }
-						}
-					}
-				},
-				assignedTo: {
-					with: {
-						user: {
-							columns: { name: true, phone: true }
-						}
-					}
-				}
-			},
-			orderBy: desc(maintenanceRequests.createdAt)
-		});
-
-		return json(requests);
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapOperationalError(error);
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+
+		const tenant = requireTenantActor(guard.actor);
+		if (!tenant.ok) {
+			return operationalWrongRoleResponse(guard.actor);
+		}
+
 		const body = await request.json();
-		const { tenantId, roomNumber, buildingName, category, title, description, imageUrl, priority } =
-			body;
-		const effectiveTenantId =
-			locals.session?.role === 'TENANT' ? locals.session.tenantProfileId : tenantId;
-
-		if (!effectiveTenantId || !roomNumber || !buildingName || !category || !title || !description) {
-			return json({ error: 'Missing required maintenance request fields' }, { status: 400 });
-		}
-		if (
-			locals.session?.role === 'TENANT' &&
-			tenantId &&
-			tenantId !== locals.session.tenantProfileId
-		) {
-			return forbidden();
-		}
-		if (
-			locals.session?.role === 'LANDLORD' &&
-			!(await landlordOwnsTenant(locals.session.landlordProfileId!, effectiveTenantId))
-		) {
-			return forbidden();
-		}
-
-		const created = await db
-			.insert(maintenanceRequests)
-			.values({
-				tenantId: effectiveTenantId,
-				roomNumber,
-				buildingName,
-				category,
-				title,
-				description,
-				imageUrl,
-				priority: priority || 'normal',
-				status: 'pending'
-			})
-			.returning();
-
-		return json(created[0]);
+		const created = await createMaintenanceRequestForActor(db, tenant.value, body);
+		return json(toMaintenanceRequestDto(created));
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapOperationalError(error);
 	}
 };
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+
 		const body = await request.json();
-		const { id, status, response, assignedToId } = body;
-
-		if (!id) {
-			return json({ error: 'Missing maintenance request ID' }, { status: 400 });
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			return json(
+				toMaintenanceRequestDto(await updateMaintenanceRequestForActor(db, landlord.value, body))
+			);
+		}
+		const staff = requireStaffActor(guard.actor);
+		if (staff.ok) {
+			return json(
+				toMaintenanceRequestDto(await updateMaintenanceRequestForActor(db, staff.value, body))
+			);
 		}
 
-		// Nhân viên chỉ được cập nhật sự cố đã giao cho mình
-		if (locals.session?.role === 'STAFF') {
-			const existing = await db.query.maintenanceRequests.findFirst({
-				where: eq(maintenanceRequests.id, id)
-			});
-			if (!existing || existing.assignedToId !== locals.session.staffProfileId) {
-				return json({ error: 'Bạn chỉ được cập nhật sự cố được giao cho mình' }, { status: 403 });
-			}
-		}
-		if (
-			locals.session?.role === 'LANDLORD' &&
-			!(await landlordOwnsRequest(locals.session.landlordProfileId!, id))
-		) {
-			return forbidden();
-		}
-
-		const updateData: Record<string, unknown> = {};
-		if (status !== undefined) updateData.status = status;
-		if (response !== undefined) updateData.response = response;
-		// Chỉ chủ trọ được đổi người phụ trách; nhân viên không tự giao việc cho mình
-		if (assignedToId !== undefined && locals.session?.role !== 'STAFF') {
-			updateData.assignedToId = assignedToId;
-		}
-
-		if (Object.keys(updateData).length === 0) {
-			return json({ error: 'No fields to update' }, { status: 400 });
-		}
-
-		const updated = await db
-			.update(maintenanceRequests)
-			.set(updateData)
-			.where(eq(maintenanceRequests.id, id))
-			.returning();
-
-		return json(updated[0]);
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapOperationalError(error);
 	}
 };
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const id = url.searchParams.get('id');
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
+		const id = url.searchParams.get('id');
 		if (!id) {
 			return json({ error: 'Missing maintenance request ID' }, { status: 400 });
 		}
-		if (
-			locals.session?.role !== 'LANDLORD' ||
-			!(await landlordOwnsRequest(locals.session.landlordProfileId!, id))
-		) {
-			return forbidden();
+
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) {
+			return operationalWrongRoleResponse(guard.actor);
 		}
 
-		await db.delete(maintenanceRequests).where(eq(maintenanceRequests.id, id));
-
+		await deleteMaintenanceRequestForActor(db, landlord.value, id);
 		return json({ success: true });
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapOperationalError(error);
 	}
 };

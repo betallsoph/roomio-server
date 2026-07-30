@@ -553,7 +553,9 @@ export async function seedSecurityFixtures(
 			currValue: 120,
 			recordedAt: '2025-11-30',
 			status: 'approved',
-			submittedBy: 'LANDLORD'
+			submittedBy: 'LANDLORD',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
 		},
 		{
 			id: ids.meterReadingANow.meterReadingId,
@@ -565,7 +567,9 @@ export async function seedSecurityFixtures(
 			recordedAt: '2026-06-30',
 			status: 'pending',
 			submittedBy: 'TENANT',
-			photoUrl: 'fixture-meter-a-now.jpg'
+			photoUrl: 'fixture-meter-a-now.jpg',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId
 		},
 		{
 			id: ids.meterReadingBNow.meterReadingId,
@@ -576,7 +580,9 @@ export async function seedSecurityFixtures(
 			currValue: 95,
 			recordedAt: '2026-06-30',
 			status: 'approved',
-			submittedBy: 'LANDLORD'
+			submittedBy: 'LANDLORD',
+			landlordId: ids.landlordB.landlordProfileId,
+			propertyId: ids.propertyB1.propertyId
 		}
 	]);
 
@@ -590,7 +596,10 @@ export async function seedSecurityFixtures(
 			title: 'Old tenant leak',
 			description: 'Fixture request from former tenant',
 			status: 'completed',
-			priority: 'normal'
+			priority: 'normal',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId,
+			roomId: ids.roomA1R1.roomId
 		},
 		{
 			id: ids.maintenanceANow.maintenanceRequestId,
@@ -601,7 +610,10 @@ export async function seedSecurityFixtures(
 			title: 'Current tenant outlet',
 			description: 'Fixture request from current tenant',
 			status: 'pending',
-			priority: 'important'
+			priority: 'important',
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA1.propertyId,
+			roomId: ids.roomA1R1.roomId
 		}
 	]);
 
