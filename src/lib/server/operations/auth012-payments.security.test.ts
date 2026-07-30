@@ -2,12 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
-import {
-	invoices,
-	managedTenants,
-	paymentTransactions,
-	tenancies
-} from '../db/schema.js';
+import { invoices, managedTenants, paymentTransactions, tenancies } from '../db/schema.js';
 import type { LandlordActor, TenantActor } from '../authorization/actor.js';
 import { createDrizzleActorDb, getUserActor } from '../authorization/load-user-actor.js';
 import { expectNoForbiddenKeys } from '../authorization/security-assertions.js';
