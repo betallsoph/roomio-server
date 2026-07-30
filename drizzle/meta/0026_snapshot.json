@@ -1,5 +1,5 @@
 {
-  "id": "d4462830-58bb-4579-be53-9c495e394ac6",
+  "id": "8bec58ba-2981-4ce2-a545-a0a6c586bb8e",
   "prevId": "da15a569-9245-49f1-aff1-bbf27bf97e0c",
   "version": "7",
   "dialect": "postgresql",
@@ -1446,7 +1446,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "MaintenanceRequest_assignedToId_StaffProfile_id_fk": {
@@ -2002,7 +2002,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "MeterReading_managedTenantId_ManagedTenant_id_fk": {
