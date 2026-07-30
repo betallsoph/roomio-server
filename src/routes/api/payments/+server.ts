@@ -14,10 +14,26 @@ import {
 } from '$lib/server/authorization/errors';
 import { guardOperationalUserActor } from '$lib/server/authorization/policies';
 import { toPaymentTransactionDto } from '$lib/server/dto/payment-transaction';
+import { mapFinanceScopeError } from '$lib/server/operations/finance-scope';
+import { isOperationsError } from '$lib/server/operations/errors';
 import {
 	listPaymentTransactionsForLandlord,
 	listPaymentTransactionsForTenant
 } from '$lib/server/operations/payments';
+
+function mapHandlerError(error: unknown) {
+	const mapped = mapFinanceScopeError(error);
+	if (mapped) {
+		return json({ error: mapped.message }, { status: mapped.status });
+	}
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
+	}
+	if (isOperationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
+}
 
 function operationalWrongRoleResponse(actor: App.Locals['actor']) {
 	if (actor?.kind === 'USER') {
@@ -48,9 +64,6 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 		return operationalWrongRoleResponse(actor);
 	} catch (error) {
-		if (isAuthorizationError(error)) {
-			return authorizationErrorToResponse(error);
-		}
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };

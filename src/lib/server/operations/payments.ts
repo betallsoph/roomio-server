@@ -3,16 +3,12 @@ import type { db as AppDb } from '$lib/server/db';
 import { invoices, paymentTransactions } from '$lib/server/db/schema';
 import type { LandlordActor, TenantActor } from '$lib/server/authorization/actor';
 import { listClaimedTenancyScopesForTenant } from './active-tenancy.js';
+import type { TenancySnapshot } from './finance-scope.js';
 
-type PaymentsDb = typeof AppDb;
+type PaymentsDb = Pick<typeof AppDb, 'query' | 'select'>;
 
 export type PaymentListFilters = {
 	status?: string | null;
-};
-
-type TenancySnapshot = {
-	managedTenantId: string;
-	tenancyId: string;
 };
 
 const PAYMENT_TRANSACTION_COLUMNS = {

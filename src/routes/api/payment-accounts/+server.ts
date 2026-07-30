@@ -11,11 +11,10 @@ import {
 	wrongRoleError
 } from '$lib/server/authorization/errors';
 import { guardOperationalUserActor } from '$lib/server/authorization/policies';
-import {
-	findPaymentAccountForLandlord,
-	ScopedResourceNotFoundError
-} from '$lib/server/authorization/scoped-queries';
+import { findPaymentAccountForLandlord } from '$lib/server/authorization/scoped-queries';
 import { toPaymentAccountDto } from '$lib/server/dto/payment-account';
+import { mapFinanceScopeError } from '$lib/server/operations/finance-scope';
+import { isOperationsError } from '$lib/server/operations/errors';
 import {
 	ensureDefaultPaymentAccount,
 	getPaymentAccountForLandlord,
@@ -26,11 +25,15 @@ import { encryptSecret } from '$lib/server/secrets';
 import { confirmPayOSWebhook, getPayosWebhookUrl } from '$lib/server/payos';
 
 function mapHandlerError(error: unknown) {
-	if (error instanceof ScopedResourceNotFoundError) {
-		return json({ error: error.message }, { status: 404 });
+	const mapped = mapFinanceScopeError(error);
+	if (mapped) {
+		return json({ error: mapped.message }, { status: mapped.status });
 	}
 	if (isAuthorizationError(error)) {
 		return authorizationErrorToResponse(error);
+	}
+	if (isOperationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
 	}
 	return json({ error: errorMessage(error) }, { status: 500 });
 }
