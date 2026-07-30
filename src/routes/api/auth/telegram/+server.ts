@@ -1,12 +1,12 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { tenantProfiles, users } from '$lib/server/db/schema';
+import { tenantProfiles } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { createSession } from '$lib/server/session';
 import { verifyInitData, telegramConfigured, TelegramAuthError } from '$lib/server/telegram';
 import { errorMessage } from '$lib/server/api';
-import { acceptTenantInvite } from '$lib/server/tenant-invites/service';
+import { claimTenantInviteViaTelegram } from '$lib/server/tenant-invites/service';
 import { isTenantInviteServiceError, toInviteErrorBody } from '$lib/server/tenant-invites/state';
 
 async function findTenantProfileByTelegramId(telegramUserId: string) {
@@ -14,47 +14,6 @@ async function findTenantProfileByTelegramId(telegramUserId: string) {
 		where: eq(tenantProfiles.telegramUserId, telegramUserId),
 		with: { user: true }
 	});
-}
-
-async function ensureTelegramTenantProfile(
-	telegramUserId: string,
-	displayName: string
-): Promise<{ userId: string; tenantProfileId: string }> {
-	const existing = await findTenantProfileByTelegramId(telegramUserId);
-	if (existing?.user?.isActive) {
-		return { userId: existing.user.id, tenantProfileId: existing.id };
-	}
-
-	const userId = `tg-${telegramUserId}`;
-	const profileId = `tg-profile-${telegramUserId}`;
-
-	const existingUser = await db.query.users.findFirst({ where: eq(users.id, userId) });
-	if (!existingUser) {
-		await db.insert(users).values({
-			id: userId,
-			email: `${userId}@telegram.invalid`,
-			phone: telegramUserId,
-			passwordHash: 'telegram-only-no-password',
-			name: displayName,
-			role: 'TENANT',
-			isActive: true
-		});
-	}
-
-	const existingProfile = await db.query.tenantProfiles.findFirst({
-		where: eq(tenantProfiles.id, profileId)
-	});
-	if (!existingProfile) {
-		await db.insert(tenantProfiles).values({
-			id: profileId,
-			userId,
-			telegramUserId
-		});
-	} else if (!existingProfile.telegramUserId) {
-		await db.update(tenantProfiles).set({ telegramUserId }).where(eq(tenantProfiles.id, profileId));
-	}
-
-	return { userId, tenantProfileId: profileId };
 }
 
 function tenantDisplayName(user: {
@@ -94,29 +53,29 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 		let tenant = await findTenantProfileByTelegramId(tgId);
 
 		if (startParam) {
-			const identity = tenant?.user?.isActive
-				? { userId: tenant.user.id, tenantProfileId: tenant.id }
-				: await ensureTelegramTenantProfile(tgId, tenantDisplayName(verified.user));
-
 			try {
-				await acceptTenantInvite(
+				const claimed = await claimTenantInviteViaTelegram(
 					db,
 					{
 						token: startParam,
-						actorUserId: identity.userId,
-						actorTenantProfileId: identity.tenantProfileId,
-						telegramUserId: tgId
+						telegramUserId: tgId,
+						displayName: tenantDisplayName(verified.user)
 					},
 					{ requestId: locals.requestId }
 				);
+				tenant = await findTenantProfileByTelegramId(tgId);
+				if (!tenant) {
+					tenant = await db.query.tenantProfiles.findFirst({
+						where: eq(tenantProfiles.id, claimed.tenantProfileId),
+						with: { user: true }
+					});
+				}
 			} catch (error) {
 				if (isTenantInviteServiceError(error)) {
 					return json(toInviteErrorBody(error, locals.requestId), { status: error.status });
 				}
 				throw error;
 			}
-
-			tenant = await findTenantProfileByTelegramId(tgId);
 		} else if (!tenant) {
 			return json(
 				{

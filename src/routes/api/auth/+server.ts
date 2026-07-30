@@ -84,6 +84,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 				conditions.length > 0 ? await db.query.users.findFirst({ where: or(...conditions) }) : null;
 
 			if (user) {
+				if (!user.passwordHash) {
+					return json({ error: 'Mật khẩu không chính xác' }, { status: 401 });
+				}
+
 				const { valid, needsRehash } = await verifyPassword(password, user.passwordHash);
 				if (!valid) {
 					return json({ error: 'Mật khẩu không chính xác' }, { status: 401 });

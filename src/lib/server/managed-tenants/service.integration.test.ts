@@ -16,9 +16,11 @@ import {
 } from '../db/schema.js';
 import { expectNoForbiddenKeys } from '../authorization/security-assertions.js';
 import { resetEnvForTests } from '../env.js';
+import { hashPassword } from '../password.js';
 import { createManagedTenant } from './service.js';
 import { issueTenantInvite, acceptTenantInvite } from '../tenant-invites/service.js';
 import { hashInviteToken } from '../tenant-invites/token.js';
+import { resetCanonicalInviteSchemaCacheForTests } from '../tenant-invites/schema-compat.js';
 import { isManagedTenantServiceError } from './state.js';
 import {
 	cleanupTenancyFixture,
@@ -52,6 +54,7 @@ if (skipReason) {
 		await cleanupTenancyFixture(pool, fixture);
 		await pool.end();
 		resetEnvForTests();
+		resetCanonicalInviteSchemaCacheForTests();
 	});
 
 	async function cleanupAuth009Rows(): Promise<void> {
@@ -62,10 +65,32 @@ if (skipReason) {
 			fixture.landlordA.landlordId,
 			`${fixture.runId}-auth009-%`
 		]);
-		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [`invite-anchor-profile-%`]);
-		await pool.query(`DELETE FROM "User" WHERE id LIKE $1`, [`invite-anchor-%`]);
+		await pool.query(`DELETE FROM "User" WHERE id LIKE $1`, [`${fixture.runId}-invite-legacy-%`]);
+		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [
+			`${fixture.runId}-invite-legacy-profile-%`
+		]);
 		await pool.query(`DELETE FROM "User" WHERE id LIKE $1`, [`tg-%`]);
 		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [`tg-profile-%`]);
+	}
+
+	async function attachLegacyTenantProfileForInvite(managedTenantId: string): Promise<string> {
+		const userId = `${fixture.runId}-invite-legacy-${managedTenantId}`;
+		const profileId = `${fixture.runId}-invite-legacy-profile-${managedTenantId}`;
+		await db.insert(users).values({
+			id: userId,
+			email: `${userId}@auth009.test`,
+			phone: userId,
+			passwordHash: await hashPassword('invite-test-password'),
+			name: 'Invite legacy profile',
+			role: 'TENANT',
+			isActive: true
+		});
+		await db.insert(tenantProfiles).values({ id: profileId, userId });
+		await db
+			.update(managedTenants)
+			.set({ legacyTenantProfileId: profileId })
+			.where(eq(managedTenants.id, managedTenantId));
+		return profileId;
 	}
 
 	async function countUsersLike(prefix: string): Promise<number> {
@@ -124,6 +149,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Invite target'
 		});
+		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA2,
 			managedTenantId: managed.id,
@@ -162,6 +188,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Concurrent invite'
 		});
+		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA3,
 			managedTenantId: managed.id,
@@ -193,12 +220,24 @@ if (skipReason) {
 				and(eq(tenantInvites.tenancyId, started.tenancy.id), eq(tenantInvites.status, 'REVOKED'))
 			);
 		assert.ok((revoked[0]?.count ?? 0) >= 9);
+
+		const revokeAudits = await db
+			.select({ action: auditEvents.action, resourceId: auditEvents.resourceId })
+			.from(auditEvents)
+			.where(
+				and(
+					eq(auditEvents.landlordId, fixture.landlordA.landlordId),
+					eq(auditEvents.action, 'TENANCY.INVITE_REVOKED')
+				)
+			);
+		assert.ok(revokeAudits.length >= 9);
 	});
 
 	test('accept invite claims managed tenant without starting tenancy or creating contracts', async () => {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Claim target'
 		});
+		await attachLegacyTenantProfileForInvite(managed.id);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA1,
 			managedTenantId: managed.id,
@@ -261,6 +300,53 @@ if (skipReason) {
 		});
 		assert.equal(replay.idempotent, true);
 		assert.equal(replay.managedTenantId, managed.id);
+	});
+
+	test('already claimed managed tenant still consumes a pending invite for same actor', async () => {
+		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
+			displayName: 'Already claimed'
+		});
+		await attachLegacyTenantProfileForInvite(managed.id);
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA2,
+			managedTenantId: managed.id,
+			startDate: '2026-07-04'
+		});
+		const issued = await issueTenantInvite(db, fixture.landlordA.actor, {
+			managedTenantId: managed.id,
+			tenancyId: started.tenancy.id
+		});
+
+		const tenantUserId = `${fixture.runId}-claimed-user`;
+		const tenantProfileId = `${fixture.runId}-claimed-profile`;
+		await db.insert(users).values({
+			id: tenantUserId,
+			email: `${tenantUserId}@auth009.test`,
+			phone: tenantUserId,
+			passwordHash: await hashPassword('claim-test-password'),
+			name: 'Claimed user',
+			role: 'TENANT',
+			isActive: true
+		});
+		await db.insert(tenantProfiles).values({ id: tenantProfileId, userId: tenantUserId });
+		await db
+			.update(managedTenants)
+			.set({ claimedByUserId: tenantUserId, claimVersion: 1 })
+			.where(eq(managedTenants.id, managed.id));
+
+		const accepted = await acceptTenantInvite(db, {
+			token: issued.token,
+			actorUserId: tenantUserId,
+			actorTenantProfileId: tenantProfileId
+		});
+		assert.equal(accepted.idempotent, true);
+
+		const inviteRow = await db
+			.select({ status: tenantInvites.status, usedAt: tenantInvites.usedAt })
+			.from(tenantInvites)
+			.where(eq(tenantInvites.id, issued.inviteId));
+		assert.equal(inviteRow[0]?.status, 'ACCEPTED');
+		assert.ok(inviteRow[0]?.usedAt);
 	});
 
 	test('foreign landlord cannot issue invite for managed tenant B', async () => {
