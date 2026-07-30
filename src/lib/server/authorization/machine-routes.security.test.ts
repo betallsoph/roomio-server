@@ -60,12 +60,14 @@ function buildPayosWebhookBody(
 	checksumKey: string,
 	overrides: Record<string, unknown> = {}
 ) {
-	const signature = createPayOSSignature(data, checksumKey);
+	// PayOS signs the `data` object as delivered — including nested `code`.
+	const signedData = { ...data, code: '00' };
+	const signature = createPayOSSignature(signedData, checksumKey);
 	return {
 		code: '00',
 		desc: 'success',
 		success: true,
-		data: { ...data, code: '00' },
+		data: signedData,
 		signature,
 		...overrides
 	};
