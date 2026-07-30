@@ -2,160 +2,141 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { messages, notificationQueue } from '$lib/server/db/schema';
-import { forbidden, landlordOwnsTenant } from '$lib/server/authz';
+import { managedTenants } from '$lib/server/db/schema';
+import { eq } from 'drizzle-orm';
+import {
+	requireLandlordActor,
+	requireStaffActor,
+	requireTenantActor
+} from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	isAuthorizationError,
+	unauthenticatedError,
+	wrongRoleError
+} from '$lib/server/authorization/errors';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
+import { isCommunicationsError } from '$lib/server/communications/errors';
+import {
+	listMessagesForLandlord,
+	listMessagesForStaff,
+	listMessagesForTenant,
+	sendMessageForLandlord,
+	sendMessageForStaff,
+	sendMessageForTenant
+} from '$lib/server/communications/messages';
 import {
 	deliverLandlordMessageToTelegram,
 	type TelegramDelivery
 } from '$lib/server/message-delivery';
 import { childRequestLogger } from '$lib/server/logger';
-import { and, asc, eq, inArray } from 'drizzle-orm';
 
-// Hội thoại 1-1 giữa chủ nhà và khách thuê
-function conversationId(landlordId: string, tenantId: string) {
-	return `${landlordId}_${tenantId}`;
+function mapCommunicationsError(error: unknown) {
+	if (isCommunicationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
 }
 
-function sessionLandlordId(session: App.Locals['session']) {
-	if (session?.role === 'LANDLORD') return session.landlordProfileId;
-	if (session?.role === 'STAFF') return session.staffLandlordId;
-	return null;
+function operationalWrongRoleResponse(actor: App.Locals['actor']) {
+	if (actor?.kind === 'USER') {
+		return authorizationErrorToResponse(wrongRoleError('Không có quyền thực hiện thao tác này'));
+	}
+	return authorizationErrorToResponse(unauthenticatedError());
 }
 
-async function authorizeConversation(
-	session: App.Locals['session'],
-	landlordId: string,
-	tenantId: string
-) {
-	if (!session?.userId) {
-		return json({ error: 'Vui lòng đăng nhập' }, { status: 401 });
-	}
-
-	if (session.role === 'TENANT' && tenantId !== session.tenantProfileId) {
-		return json({ error: 'Không có quyền truy cập hội thoại này' }, { status: 403 });
-	}
-
-	const landlordProfileId = sessionLandlordId(session);
-	if (landlordProfileId && landlordId !== landlordProfileId) {
-		return json({ error: 'Không có quyền truy cập hội thoại này' }, { status: 403 });
-	}
-
-	if (session.role !== 'TENANT' && !landlordProfileId) {
-		return json({ error: 'Không có quyền truy cập hội thoại này' }, { status: 403 });
-	}
-
-	if (!(await landlordOwnsTenant(landlordId, tenantId))) {
-		return forbidden('Hội thoại không thuộc nhà trọ này');
-	}
-
-	return null;
+function readQuery(url: URL) {
+	return {
+		conversationId: url.searchParams.get('conversationId'),
+		managedTenantId: url.searchParams.get('managedTenantId'),
+		tenancyId: url.searchParams.get('tenancyId'),
+		legacyTenantProfileId: url.searchParams.get('tenantId'),
+		cursor: url.searchParams.get('cursor'),
+		limit: url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : null
+	};
 }
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-		const tenantId = url.searchParams.get('tenantId');
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
-		if (!landlordId || !tenantId) {
-			return json({ error: 'Missing landlordId or tenantId' }, { status: 400 });
+		const query = readQuery(url);
+
+		const tenant = requireTenantActor(guard.actor);
+		if (tenant.ok) {
+			return json(await listMessagesForTenant(db, tenant.value, query));
 		}
 
-		const authError = await authorizeConversation(locals.session, landlordId, tenantId);
-		if (authError) return authError;
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			return json(await listMessagesForLandlord(db, landlord.value, query));
+		}
 
-		const result = await db
-			.select()
-			.from(messages)
-			.where(eq(messages.conversationId, conversationId(landlordId, tenantId)))
-			.orderBy(asc(messages.createdAt))
-			.limit(500);
+		const staff = requireStaffActor(guard.actor);
+		if (staff.ok) {
+			return json(await listMessagesForStaff(db, staff.value, query));
+		}
 
-		const messageIds = result.map((message) => message.id);
-		const deliveries =
-			messageIds.length === 0
-				? []
-				: await db
-						.select({
-							id: notificationQueue.id,
-							relatedId: notificationQueue.relatedId,
-							status: notificationQueue.status,
-							attemptCount: notificationQueue.attemptCount,
-							lastError: notificationQueue.lastError,
-							sentAt: notificationQueue.sentAt
-						})
-						.from(notificationQueue)
-						.where(
-							and(
-								eq(notificationQueue.channel, 'telegram'),
-								eq(notificationQueue.relatedType, 'message'),
-								inArray(notificationQueue.relatedId, messageIds)
-							)
-						);
-		const deliveryByMessageId = new Map(
-			deliveries.map((delivery) => [delivery.relatedId, delivery])
-		);
-
-		return json(
-			result.map((message) => {
-				const delivery = deliveryByMessageId.get(message.id);
-				return {
-					...message,
-					telegramDelivery: delivery
-						? {
-								notificationId: delivery.id,
-								status: delivery.status,
-								attemptCount: delivery.attemptCount,
-								lastError: delivery.lastError,
-								sentAt: delivery.sentAt
-							}
-						: null
-				};
-			})
-		);
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const body = await request.json();
-		const landlordId = typeof body.landlordId === 'string' ? body.landlordId : '';
-		const tenantId = typeof body.tenantId === 'string' ? body.tenantId : '';
-		const content = typeof body.content === 'string' ? body.content.trim() : '';
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
-		if (!landlordId || !tenantId || !content) {
+		const body = await request.json();
+		const content = typeof body.content === 'string' ? body.content.trim() : '';
+		if (!content) {
 			return json({ error: 'Thiếu thông tin tin nhắn' }, { status: 400 });
 		}
 
-		const authError = await authorizeConversation(locals.session, landlordId, tenantId);
-		if (authError) return authError;
-
-		const created = await db
-			.insert(messages)
-			.values({
-				conversationId: conversationId(landlordId, tenantId),
-				senderId: locals.session!.userId,
+		const tenant = requireTenantActor(guard.actor);
+		if (tenant.ok) {
+			const { message } = await sendMessageForTenant(db, tenant.value, {
+				conversationId: body.conversationId,
+				managedTenantId: body.managedTenantId,
+				tenancyId: body.tenancyId,
 				content
-			})
-			.returning();
+			});
+			return json({ ...message, telegramDelivery: null });
+		}
 
-		let telegramDelivery: TelegramDelivery | null = null;
-		if (locals.session?.role !== 'TENANT') {
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			const { message, conversation } = await sendMessageForLandlord(db, landlord.value, {
+				managedTenantId: body.managedTenantId,
+				legacyTenantProfileId: body.tenantId,
+				tenancyId: body.tenancyId,
+				content
+			});
+
+			let telegramDelivery: TelegramDelivery | null = null;
+			const managedTenant = await db.query.managedTenants.findFirst({
+				where: eq(managedTenants.id, conversation.managedTenantId),
+				columns: { legacyTenantProfileId: true }
+			});
 			try {
 				telegramDelivery = await deliverLandlordMessageToTelegram({
-					landlordId,
-					tenantId,
-					messageId: created[0].id,
+					landlordId: conversation.landlordId,
+					tenantId: managedTenant?.legacyTenantProfileId ?? '',
+					messageId: message.id,
 					content
 				});
 			} catch (deliveryError) {
 				childRequestLogger(locals.requestId, { route: '/api/messages' }).error(
 					{
 						event: 'telegram_delivery_failed_after_message_saved',
-						landlordId,
-						tenantId,
-						messageId: created[0].id,
+						landlordId: conversation.landlordId,
+						managedTenantId: conversation.managedTenantId,
+						messageId: message.id,
 						err: deliveryError
 					},
 					'Telegram delivery failed after message was saved'
@@ -168,10 +149,56 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					retryable: true
 				};
 			}
+
+			return json({ ...message, telegramDelivery });
 		}
 
-		return json({ ...created[0], telegramDelivery });
+		const staff = requireStaffActor(guard.actor);
+		if (staff.ok) {
+			const { message, conversation } = await sendMessageForStaff(db, staff.value, {
+				managedTenantId: body.managedTenantId,
+				legacyTenantProfileId: body.tenantId,
+				tenancyId: body.tenancyId,
+				content
+			});
+
+			let telegramDelivery: TelegramDelivery | null = null;
+			const managedTenant = await db.query.managedTenants.findFirst({
+				where: eq(managedTenants.id, conversation.managedTenantId),
+				columns: { legacyTenantProfileId: true }
+			});
+			try {
+				telegramDelivery = await deliverLandlordMessageToTelegram({
+					landlordId: conversation.landlordId,
+					tenantId: managedTenant?.legacyTenantProfileId ?? '',
+					messageId: message.id,
+					content
+				});
+			} catch (deliveryError) {
+				childRequestLogger(locals.requestId, { route: '/api/messages' }).error(
+					{
+						event: 'telegram_delivery_failed_after_message_saved',
+						landlordId: conversation.landlordId,
+						managedTenantId: conversation.managedTenantId,
+						messageId: message.id,
+						err: deliveryError
+					},
+					'Telegram delivery failed after message was saved'
+				);
+				telegramDelivery = {
+					status: 'failed',
+					delivered: false,
+					code: 'delivery_error',
+					message: 'Tin đã lưu nhưng không ghi được trạng thái gửi Telegram',
+					retryable: true
+				};
+			}
+
+			return json({ ...message, telegramDelivery });
+		}
+
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };

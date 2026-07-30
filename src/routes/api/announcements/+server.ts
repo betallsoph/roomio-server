@@ -2,103 +2,86 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { announcements, blocks, rooms } from '$lib/server/db/schema';
-import { and, desc, eq, isNull, or } from 'drizzle-orm';
 import {
-	forbidden,
-	landlordOwnsProperty,
-	landlordOwnsRoom,
-	landlordOwnsTenant,
-	requireLandlord
-} from '$lib/server/authz';
+	requireLandlordActor,
+	requireStaffActor,
+	requireTenantActor
+} from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	isAuthorizationError,
+	unauthenticatedError,
+	wrongRoleError
+} from '$lib/server/authorization/errors';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
+import {
+	createAnnouncementForLandlord,
+	deleteAnnouncementForLandlord,
+	listAnnouncementsForLandlord,
+	listAnnouncementsForStaff,
+	listAnnouncementsForTenant
+} from '$lib/server/communications/announcements';
+import { isCommunicationsError } from '$lib/server/communications/errors';
 import { queueAnnouncementTelegramDeliveries } from '$lib/server/message-delivery';
 import { childRequestLogger } from '$lib/server/logger';
 
-async function landlordOwnsBlock(landlordId: string, blockId: string) {
-	const row = await db.query.blocks.findFirst({
-		where: eq(blocks.id, blockId),
-		with: { property: { columns: { landlordId: true } } }
-	});
-	return row?.property.landlordId === landlordId;
+function mapCommunicationsError(error: unknown) {
+	if (isCommunicationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
 }
 
-async function landlordOwnsAnnouncement(landlordUserId: string, announcementId: string) {
-	const announcement = await db.query.announcements.findFirst({
-		where: and(eq(announcements.id, announcementId), eq(announcements.senderId, landlordUserId)),
-		columns: { id: true }
-	});
-	return !!announcement;
+function operationalWrongRoleResponse(actor: App.Locals['actor']) {
+	if (actor?.kind === 'USER') {
+		return authorizationErrorToResponse(wrongRoleError('Không có quyền thực hiện thao tác này'));
+	}
+	return authorizationErrorToResponse(unauthenticatedError());
 }
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const senderId = url.searchParams.get('senderId');
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+
+		const audience = url.searchParams.get('audience');
 		const targetType = url.searchParams.get('targetType');
 		const targetId = url.searchParams.get('targetId');
 
-		// Chế độ dành cho khách thuê: gom mọi thông báo nhắm tới họ
-		// (toàn hệ thống, tòa nhà, block, phòng hoặc đích danh khách)
-		const audience = url.searchParams.get('audience');
+		const tenant = requireTenantActor(guard.actor);
+		if (tenant.ok || audience === 'tenant') {
+			if (!tenant.ok) return operationalWrongRoleResponse(guard.actor);
+			return json(await listAnnouncementsForTenant(db, tenant.value));
+		}
 
-		if (locals.session?.role === 'TENANT' || audience === 'tenant') {
-			const tenantId = locals.session?.tenantProfileId;
-			if (!tenantId) return forbidden();
-			const room = await db.query.rooms.findFirst({
-				where: eq(rooms.tenantId, tenantId),
-				columns: { id: true, propertyId: true, blockId: true, tenantId: true }
-			});
-
-			const targets = [and(eq(announcements.targetType, 'ALL'), isNull(announcements.targetId))];
-			if (room?.propertyId)
-				targets.push(
-					and(eq(announcements.targetType, 'PROPERTY'), eq(announcements.targetId, room.propertyId))
-				);
-			if (room?.blockId)
-				targets.push(
-					and(eq(announcements.targetType, 'BLOCK'), eq(announcements.targetId, room.blockId))
-				);
-			if (room?.id)
-				targets.push(
-					and(eq(announcements.targetType, 'ROOM'), eq(announcements.targetId, room.id))
-				);
-			targets.push(
-				and(eq(announcements.targetType, 'TENANT'), eq(announcements.targetId, tenantId))
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			return json(
+				await listAnnouncementsForLandlord(db, landlord.value, { targetType, targetId })
 			);
-
-			const result = await db
-				.select()
-				.from(announcements)
-				.where(or(...targets))
-				.orderBy(desc(announcements.isImportant), desc(announcements.createdAt));
-
-			return json(result);
 		}
 
-		const conditions = [];
-		if (locals.session?.role === 'LANDLORD') {
-			conditions.push(eq(announcements.senderId, locals.session.userId));
-		} else if (senderId) {
-			conditions.push(eq(announcements.senderId, senderId));
+		const staff = requireStaffActor(guard.actor);
+		if (staff.ok) {
+			return json(await listAnnouncementsForStaff(db, staff.value, { targetType, targetId }));
 		}
-		if (targetType) conditions.push(eq(announcements.targetType, targetType));
-		if (targetId) conditions.push(eq(announcements.targetId, targetId));
 
-		const result = await db
-			.select()
-			.from(announcements)
-			.where(conditions.length > 0 ? and(...conditions) : undefined)
-			.orderBy(desc(announcements.createdAt));
-
-		return json(result);
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) return operationalWrongRoleResponse(guard.actor);
 
 		const body = await request.json();
 		const { title, content, isImportant, targetType, targetId } = body;
@@ -106,54 +89,34 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!title || !content) {
 			return json({ error: 'Missing required announcement fields' }, { status: 400 });
 		}
-		if (
-			targetType === 'PROPERTY' &&
-			targetId &&
-			!(await landlordOwnsProperty(auth.value, targetId))
-		) {
-			return forbidden();
-		}
-		if (targetType === 'BLOCK' && targetId && !(await landlordOwnsBlock(auth.value, targetId))) {
-			return forbidden();
-		}
-		if (targetType === 'ROOM' && targetId && !(await landlordOwnsRoom(auth.value, targetId))) {
-			return forbidden();
-		}
-		if (targetType === 'TENANT' && targetId && !(await landlordOwnsTenant(auth.value, targetId))) {
-			return forbidden();
-		}
 
-		const created = await db
-			.insert(announcements)
-			.values({
-				senderId: locals.session!.userId,
-				title,
-				content,
-				isImportant: isImportant || false,
-				targetType: targetType || 'ALL',
-				targetId: targetId || null
-			})
-			.returning();
+		const created = await createAnnouncementForLandlord(db, landlord.value, {
+			title,
+			content,
+			isImportant,
+			targetType,
+			targetId
+		});
 
 		let telegramDelivery = null;
 		try {
 			telegramDelivery = await queueAnnouncementTelegramDeliveries({
-				landlordId: auth.value,
-				announcementId: created[0].id,
+				landlordId: landlord.value.landlordId,
+				announcementId: created.id,
 				title,
 				content,
 				isImportant: !!isImportant,
-				targetType: targetType || 'ALL',
-				targetId: targetId || null
+				targetType: created.targetType,
+				targetId: created.targetId
 			});
 		} catch (deliveryError) {
 			childRequestLogger(locals.requestId, { route: '/api/announcements' }).error(
 				{
 					event: 'telegram_delivery_failed_after_announcement_saved',
-					landlordId: auth.value,
-					announcementId: created[0].id,
-					targetType: targetType || 'ALL',
-					targetId: targetId || null,
+					landlordId: landlord.value.landlordId,
+					announcementId: created.id,
+					targetType: created.targetType,
+					targetId: created.targetId,
 					err: deliveryError
 				},
 				'Telegram delivery failed after announcement was saved'
@@ -167,30 +130,28 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			};
 		}
 
-		return json({ ...created[0], telegramDelivery });
+		return json({ ...created, telegramDelivery });
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const id = url.searchParams.get('id');
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) return operationalWrongRoleResponse(guard.actor);
+
+		const id = url.searchParams.get('id');
 		if (!id) {
 			return json({ error: 'Missing announcement ID' }, { status: 400 });
 		}
-		if (
-			locals.session?.role !== 'LANDLORD' ||
-			!(await landlordOwnsAnnouncement(locals.session.userId, id))
-		) {
-			return forbidden();
-		}
 
-		await db.delete(announcements).where(eq(announcements.id, id));
-
+		await deleteAnnouncementForLandlord(db, landlord.value, id);
 		return json({ success: true });
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };

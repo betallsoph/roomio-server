@@ -6,6 +6,7 @@ import {
 	sendTelegramMessage,
 	type TelegramSendResult
 } from '$lib/server/telegram-bot';
+import { assertNotificationRecipientScoped } from '$lib/server/communications/notifications';
 import { getLogger } from '$lib/server/logger';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
@@ -306,6 +307,17 @@ export async function sendQueuedTelegramNotification(
 				? Number(notification.providerMessageId)
 				: null
 		};
+	}
+
+	try {
+		await assertNotificationRecipientScoped(db, notification);
+	} catch {
+		return markTelegramDeliveryFailed(notification, {
+			ok: false,
+			code: 'bad_request',
+			message: 'Delivery không thuộc phạm vi landlord/tenancy',
+			retryable: false
+		});
 	}
 
 	if (!notification.tenantId) {

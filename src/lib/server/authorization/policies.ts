@@ -317,8 +317,14 @@ function evaluateLandlordPolicy(
 					return deny('DEFAULT_DENY');
 			}
 		case 'conversation':
-			// AUTH-014 — no tenancy-scoped conversation resolver yet; fail closed.
-			return deny('DEFAULT_DENY');
+			switch (action) {
+				case 'list':
+				case 'detail':
+				case 'create':
+					return allow();
+				default:
+					return deny('DEFAULT_DENY');
+			}
 		case 'file':
 			// DATA-002 — TenantFile schema/helpers not production-ready; fail closed.
 			return deny('DEFAULT_DENY');
@@ -423,8 +429,14 @@ function evaluateTenantPolicy(
 					return deny('DEFAULT_DENY');
 			}
 		case 'conversation':
-			// AUTH-014 — legacy conversationId is not tenancy-scoped; fail closed until resolver exists.
-			return deny('DEFAULT_DENY');
+			switch (action) {
+				case 'list':
+				case 'detail':
+				case 'create':
+					return tenantClaimsManagedTenant(actor, context) ? allow() : deny('TENANT_CLAIM');
+				default:
+					return deny('DEFAULT_DENY');
+			}
 		case 'file':
 			// DATA-002 — fileVisibility missing/undefined must not allow; foundation denies all file actions.
 			// Re-open only with production TenantFile + visibility-aware scoped helpers.

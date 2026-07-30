@@ -190,6 +190,13 @@
       "when": 1785395751459,
       "tag": "0026_auth009_tenant_invite_telegram_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785405491275,
+      "tag": "0027_auth014_communication_scope",
+      "breakpoints": true
     }
   ]
 }
