@@ -849,9 +849,7 @@ export async function runContractTenancyBatch(
 		delta.scanned += 1;
 		checkpoint.cursor.lastId = row.contractId;
 		if (row.existingTenancyId) {
-			if (
-				await recognizeAppliedContractMapping(db, checkpoint, row.contractId)
-			) {
+			if (await recognizeAppliedContractMapping(db, checkpoint, row.contractId)) {
 				delta.skipped += 1;
 				continue;
 			}
@@ -1071,12 +1069,7 @@ export async function runCurrentRoomTenancyBatch(
 		if (activeTenancy.length > 0) {
 			if (
 				managedTenantId &&
-				(await recognizeAppliedCurrentRoomTenancy(
-					db,
-					checkpoint,
-					row.roomId,
-					managedTenantId
-				))
+				(await recognizeAppliedCurrentRoomTenancy(db, checkpoint, row.roomId, managedTenantId))
 			) {
 				delta.skipped += 1;
 				continue;
@@ -1154,14 +1147,7 @@ export async function runCurrentRoomTenancyBatch(
 				return { ok: true as const };
 			});
 			if (!txResult) {
-				if (
-					await recognizeAppliedCurrentRoomTenancy(
-						db,
-						checkpoint,
-						row.roomId,
-						managedTenantId
-					)
-				) {
+				if (await recognizeAppliedCurrentRoomTenancy(db, checkpoint, row.roomId, managedTenantId)) {
 					delta.skipped += 1;
 				} else {
 					delta.errors += 1;
@@ -1488,15 +1474,29 @@ export type ReconcileFinding = {
 export function expectedReconcileFindingCodes(): string[] {
 	const codes = ['DUPLICATE_ACTIVE_TENANCY_PER_ROOM', 'OVERLAPPING_CONTRACT_WINDOWS'];
 	const resourceCodes = [
-		['UNSCOPED_INVOICES', 'PARTIAL_SCOPE_INVOICE', 'ORPHAN_SCOPE_INVOICE', 'INVOICE_OUTSIDE_TENANCY_RANGE'],
-		['UNSCOPED_CONTRACTS', 'PARTIAL_SCOPE_CONTRACT', 'ORPHAN_SCOPE_CONTRACT', 'CONTRACT_OUTSIDE_TENANCY_RANGE'],
+		[
+			'UNSCOPED_INVOICES',
+			'PARTIAL_SCOPE_INVOICE',
+			'ORPHAN_SCOPE_INVOICE',
+			'INVOICE_OUTSIDE_TENANCY_RANGE'
+		],
+		[
+			'UNSCOPED_CONTRACTS',
+			'PARTIAL_SCOPE_CONTRACT',
+			'ORPHAN_SCOPE_CONTRACT',
+			'CONTRACT_OUTSIDE_TENANCY_RANGE'
+		],
 		[
 			'UNSCOPED_METER_READINGS',
 			'PARTIAL_SCOPE_METER_READING',
 			'ORPHAN_SCOPE_METER_READING',
 			'METER_READING_OUTSIDE_TENANCY_RANGE'
 		],
-		['UNSCOPED_MAINTENANCE_REQUESTS', 'PARTIAL_SCOPE_MAINTENANCE_REQUEST', 'ORPHAN_SCOPE_MAINTENANCE_REQUEST']
+		[
+			'UNSCOPED_MAINTENANCE_REQUESTS',
+			'PARTIAL_SCOPE_MAINTENANCE_REQUEST',
+			'ORPHAN_SCOPE_MAINTENANCE_REQUEST'
+		]
 	] as const;
 	for (const group of resourceCodes) {
 		codes.push(...group);

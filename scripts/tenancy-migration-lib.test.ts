@@ -1,22 +1,32 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { after, describe, it } from 'node:test';
 import {
 	assertBackfillEnvironmentAllowed,
 	backfillManagedTenantClaimFields,
+	belongsToBackfillRun,
 	buildBackfillSource,
 	buildInputScope,
 	canRollbackResourceMapping,
 	canRollbackRoomCompatibility,
+	checkpointPath,
 	contactFingerprint,
 	datesOverlap,
 	decideResourceMapping,
 	detectOverlappingContracts,
 	ensureDryRunVirtual,
+	expectedReconcileFindingCodes,
 	findTenancyForDate,
+	loadCheckpoint,
 	mergeReport,
+	newCheckpoint,
 	parseBackfillCliArgs,
 	parseBackfillSource,
 	resolveTenancyCandidates,
+	rollbackBackfillRun,
+	saveCheckpoint,
 	shouldReloadTenancyCandidatesAtPhaseStart,
 	validateCheckpointResumeContext,
 	CHECKPOINT_SCHEMA_VERSION,
@@ -354,5 +364,227 @@ describe('AUTH-007 tenancy migration lib', () => {
 			limit: 25,
 			batchSize: 5
 		});
+	});
+
+	it('expectedReconcileFindingCodes covers scope, orphan, overlap, and date-range per resource', () => {
+		const codes = expectedReconcileFindingCodes();
+		assert.ok(codes.includes('DUPLICATE_ACTIVE_TENANCY_PER_ROOM'));
+		assert.ok(codes.includes('OVERLAPPING_CONTRACT_WINDOWS'));
+		for (const prefix of ['INVOICE', 'CONTRACT', 'METER_READING']) {
+			assert.ok(codes.some((c) => c.startsWith('UNSCOPED_') && c.includes(prefix.split('_')[0]!)));
+			assert.ok(codes.some((c) => c.startsWith('PARTIAL_SCOPE_')));
+			assert.ok(codes.some((c) => c.startsWith('ORPHAN_SCOPE_')));
+			assert.ok(
+				codes.some((c) => c.endsWith('_OUTSIDE_TENANCY_RANGE') && c.includes(prefix.split('_')[0]!))
+			);
+		}
+		assert.ok(codes.includes('UNSCOPED_MAINTENANCE_REQUESTS'));
+		assert.ok(codes.includes('PARTIAL_SCOPE_MAINTENANCE_REQUEST'));
+		assert.ok(codes.includes('ORPHAN_SCOPE_MAINTENANCE_REQUEST'));
+		assert.equal(codes.length, 17);
+	});
+
+	it('belongsToBackfillRun identifies rows from the same run for crash-resume idempotency', () => {
+		const runId = 'crash-run';
+		const source = buildBackfillSource(runId, 'LEGACY_TENANT_PROFILE');
+		assert.equal(belongsToBackfillRun(source, runId), true);
+		assert.equal(belongsToBackfillRun(source, 'other-run'), false);
+		assert.equal(belongsToBackfillRun(null, runId), false);
+	});
+});
+
+describe('AUTH-007 checkpoint persistence', () => {
+	let tempRoot = '';
+
+	after(async () => {
+		if (tempRoot) {
+			await fs.rm(tempRoot, { recursive: true, force: true });
+		}
+	});
+
+	async function tempCheckpointDir(): Promise<string> {
+		tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'auth007-checkpoint-'));
+		return path.join(tempRoot, 'checkpoints');
+	}
+
+	it('saveCheckpoint writes atomically with tight directory and file permissions', async () => {
+		const dir = await tempCheckpointDir();
+		const opts = parseBackfillCliArgs(['--landlord-id', 'landlord-a', '--limit', '10']);
+		const checkpoint = newCheckpoint(opts, 'perm-run');
+		checkpoint.stats.scanned = 3;
+
+		await saveCheckpoint(dir, checkpoint);
+
+		const filePath = checkpointPath(dir, 'perm-run');
+		const dirStat = await fs.stat(dir);
+		const fileStat = await fs.stat(filePath);
+		assert.equal(dirStat.mode & 0o777, 0o700);
+		assert.equal(fileStat.mode & 0o777, 0o600);
+
+		const dirEntries = await fs.readdir(dir);
+		assert.equal(dirEntries.length, 1);
+		assert.equal(dirEntries[0], 'tenancy-backfill-perm-run.json');
+		assert.equal(
+			dirEntries.some((name) => name.includes('.tmp')),
+			false
+		);
+	});
+
+	it('crash/resume reloads checkpoint and accepts matching resume context', async () => {
+		const dir = await tempCheckpointDir();
+		const opts = parseBackfillCliArgs([
+			'--landlord-id',
+			'landlord-a',
+			'--limit',
+			'100',
+			'--batch-size',
+			'10'
+		]);
+		const checkpoint = newCheckpoint(opts, 'resume-run');
+		checkpoint.cursor = { phase: 'tenancies_contract', lastId: 'contract-42' };
+		checkpoint.stats = mergeReport(checkpoint.stats, { scanned: 5, managedTenantsCreated: 2 });
+		checkpoint.created.managedTenantIds.push('mt-1', 'mt-2');
+
+		await saveCheckpoint(dir, checkpoint);
+		const reloaded = await loadCheckpoint(dir, 'resume-run');
+		assert.ok(reloaded);
+		assert.deepEqual(reloaded!.cursor, checkpoint.cursor);
+		assert.deepEqual(reloaded!.stats, checkpoint.stats);
+		assert.deepEqual(reloaded!.created.managedTenantIds, ['mt-1', 'mt-2']);
+
+		const resumeOpts = parseBackfillCliArgs([
+			'--resume',
+			'resume-run',
+			'--landlord-id',
+			'landlord-a',
+			'--limit',
+			'100',
+			'--batch-size',
+			'10'
+		]);
+		assert.doesNotThrow(() => validateCheckpointResumeContext(reloaded!, resumeOpts));
+	});
+
+	it('resume twice from the same checkpoint is idempotent', async () => {
+		const dir = await tempCheckpointDir();
+		const opts = parseBackfillCliArgs(['--landlord-id', 'landlord-a', '--limit', '50']);
+		const checkpoint = newCheckpoint(opts, 'twice-run');
+		checkpoint.created.tenancyIds.push('ten-1');
+
+		await saveCheckpoint(dir, checkpoint);
+		const first = await loadCheckpoint(dir, 'twice-run');
+		await saveCheckpoint(dir, first!);
+		const second = await loadCheckpoint(dir, 'twice-run');
+		assert.deepEqual(second, first);
+	});
+
+	it('validateCheckpointResumeContext rejects dry-run checkpoint resumed in commit mode', () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true });
+		const commitResume = parseBackfillCliArgs([
+			'--resume',
+			'run-1',
+			'--commit',
+			'--landlord-id',
+			'landlord-a',
+			'--limit',
+			'100',
+			'--batch-size',
+			'10'
+		]);
+		assert.throws(
+			() => validateCheckpointResumeContext(checkpoint, commitResume),
+			/Checkpoint mode mismatch/
+		);
+	});
+});
+
+describe('AUTH-007 dry-run parity and rollback safety', () => {
+	it('dry-run virtual plan matches resource mapping decisions in later phases', () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true, runId: 'parity-run' });
+		const virtual = ensureDryRunVirtual(checkpoint);
+		virtual.managedTenantByLegacyKey['landlord-a:legacy-1'] = 'mt-1';
+		virtual.tenancies.push(
+			{
+				id: 'ten-contract',
+				managedTenantId: 'mt-1',
+				roomId: 'room-a',
+				startDate: '2024-01-01',
+				endDate: '2024-12-31',
+				status: 'ENDED',
+				backfillSource: buildBackfillSource('parity-run', 'CONTRACT')
+			},
+			{
+				id: 'ten-room',
+				managedTenantId: 'mt-1',
+				roomId: 'room-b',
+				startDate: '2024-06-01',
+				endDate: null,
+				status: 'ACTIVE',
+				backfillSource: buildBackfillSource('parity-run', 'CURRENT_ROOM')
+			}
+		);
+
+		const candidates = resolveTenancyCandidates([], checkpoint);
+		assert.equal(candidates.length, 2);
+
+		const invoiceDecision = decideResourceMapping({
+			roomId: 'room-a',
+			eventDate: '2024-03-01',
+			resourceKind: 'invoice',
+			tenancyCandidates: candidates
+		});
+		assert.deepEqual(invoiceDecision, {
+			action: 'map',
+			tenancyId: 'ten-contract',
+			managedTenantId: 'mt-1'
+		});
+
+		const roomOnlyInvoice = decideResourceMapping({
+			roomId: 'room-b',
+			eventDate: '2024-07-01',
+			resourceKind: 'invoice',
+			tenancyCandidates: candidates
+		});
+		assert.equal(roomOnlyInvoice.action, 'unresolved');
+	});
+
+	it('rollback dry-run skips writes and manual edits block rollback eligibility', async () => {
+		const mapping = {
+			table: 'Invoice' as const,
+			id: 'inv-1',
+			managedTenantId: 'mt-1',
+			tenancyId: 'ten-1',
+			previousManagedTenantId: null,
+			previousTenancyId: null
+		};
+		const checkpoint = sampleCheckpoint({
+			dryRun: false,
+			created: {
+				managedTenantIds: [],
+				tenancyIds: [],
+				resourceMappings: [mapping],
+				roomCompatibilitySnapshots: [
+					{
+						roomId: 'room-a',
+						previousCurrentManagedTenantId: null,
+						writtenCurrentManagedTenantId: 'mt-1'
+					}
+				]
+			}
+		});
+
+		const dryReport = await rollbackBackfillRun(null as never, checkpoint, false);
+		assert.equal(dryReport.scanned, 2);
+		assert.equal(dryReport.skipped, 2);
+		assert.equal(dryReport.errors, 0);
+
+		assert.equal(
+			canRollbackResourceMapping(mapping, { managedTenantId: 'mt-edited', tenancyId: 'ten-1' }),
+			false
+		);
+		assert.equal(
+			canRollbackRoomCompatibility(checkpoint.created.roomCompatibilitySnapshots[0]!, 'mt-edited'),
+			false
+		);
 	});
 });
