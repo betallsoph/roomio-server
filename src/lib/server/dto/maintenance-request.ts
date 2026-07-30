@@ -7,7 +7,6 @@ export type MaintenanceRequestUserDto = {
 
 export type MaintenanceRequestDto = {
 	id: string;
-	tenantId: string;
 	roomNumber: string;
 	buildingName: string;
 	category: string;
@@ -38,7 +37,7 @@ function toMaintenanceRequestUserDto(
 
 export function toMaintenanceRequestDto(row: {
 	id: string;
-	tenantId: string;
+	tenantId?: string;
 	roomNumber: string;
 	buildingName: string;
 	category: string;
@@ -67,7 +66,6 @@ export function toMaintenanceRequestDto(row: {
 }): MaintenanceRequestDto {
 	return {
 		id: row.id,
-		tenantId: row.tenantId,
 		roomNumber: row.roomNumber,
 		buildingName: row.buildingName,
 		category: row.category,

@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, isNotNull, isNull, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, type SQL } from 'drizzle-orm';
 import type { db as AppDb } from '$lib/server/db';
-import { maintenanceRequests, properties, rooms } from '$lib/server/db/schema';
+import { maintenanceRequests } from '$lib/server/db/schema';
 import type {
 	LandlordActor,
 	StaffActor,
@@ -9,10 +9,14 @@ import type {
 } from '$lib/server/authorization/actor';
 import { forbiddenError } from '$lib/server/authorization/errors';
 import { staffHasPermission } from '$lib/server/authorization/staff-scope';
-import { requireActiveTenancyForTenant } from './active-tenancy.js';
+import {
+	listClaimedTenancyScopesForTenant,
+	requireActiveTenancyForTenant
+} from './active-tenancy.js';
 import { assertStaffAssigneeForProperty } from './assignee.js';
 import {
 	isOperationsError,
+	operationsConflict,
 	operationsForbidden,
 	operationsNotFound,
 	operationsValidation
@@ -65,14 +69,6 @@ function assignedPropertyIds(actor: StaffActor): string[] {
 	return actor.propertyIds.length > 0 ? actor.propertyIds : ['__none__'];
 }
 
-function legacyLandlordTenantIdsSubquery(database: OperationsDb, landlordId: string) {
-	return database
-		.select({ id: rooms.tenantId })
-		.from(rooms)
-		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(properties.landlordId, landlordId), isNotNull(rooms.tenantId)));
-}
-
 async function landlordOwnsRequestRow(
 	database: OperationsDb,
 	actor: LandlordActor,
@@ -81,24 +77,7 @@ async function landlordOwnsRequestRow(
 	const row = await database.query.maintenanceRequests.findFirst({
 		where: eq(maintenanceRequests.id, requestId)
 	});
-	if (!row) {
-		throw operationsNotFound();
-	}
-	if (row.landlordId) {
-		if (row.landlordId !== actor.landlordId) {
-			throw operationsNotFound();
-		}
-		return row;
-	}
-
-	const legacy = await database
-		.select({ id: maintenanceRequests.id })
-		.from(maintenanceRequests)
-		.innerJoin(rooms, eq(maintenanceRequests.tenantId, rooms.tenantId))
-		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(and(eq(maintenanceRequests.id, requestId), eq(properties.landlordId, actor.landlordId)))
-		.limit(1);
-	if (!legacy[0]) {
+	if (!row?.landlordId || row.landlordId !== actor.landlordId) {
 		throw operationsNotFound();
 	}
 	return row;
@@ -121,33 +100,25 @@ async function staffCanAccessRequestRow(
 	}
 
 	const propertyIds = assignedPropertyIds(actor);
-	if (row.landlordId && row.landlordId !== actor.landlordId) {
+	if (!row.landlordId || row.landlordId !== actor.landlordId) {
 		throw operationsNotFound();
 	}
-	if (row.propertyId) {
-		if (!propertyIds.includes(row.propertyId)) {
-			throw operationsNotFound();
-		}
-		return row;
-	}
-
-	const legacy = await database
-		.select({ id: maintenanceRequests.id })
-		.from(maintenanceRequests)
-		.innerJoin(rooms, eq(maintenanceRequests.tenantId, rooms.tenantId))
-		.innerJoin(properties, eq(rooms.propertyId, properties.id))
-		.where(
-			and(
-				eq(maintenanceRequests.id, requestId),
-				inArray(rooms.propertyId, propertyIds),
-				eq(properties.landlordId, actor.landlordId)
-			)
-		)
-		.limit(1);
-	if (!legacy[0]) {
+	if (!row.propertyId || !propertyIds.includes(row.propertyId)) {
 		throw operationsNotFound();
 	}
 	return row;
+}
+
+async function tenantTenancyScopeWhere(database: OperationsDb, actor: TenantActor): Promise<SQL> {
+	const scopes = await listClaimedTenancyScopesForTenant(database, actor);
+	const tenancyIds = scopes.map((scope) => scope.tenancyId);
+	if (tenancyIds.length === 0) {
+		throw operationsForbidden('Bạn không có lần thuê được phép truy cập');
+	}
+	return and(
+		isNotNull(maintenanceRequests.tenancyId),
+		inArray(maintenanceRequests.tenancyId, tenancyIds)
+	)!;
 }
 
 export async function listMaintenanceRequestsForActor(
@@ -157,55 +128,18 @@ export async function listMaintenanceRequestsForActor(
 	const conditions: SQL[] = [];
 
 	if (actor.role === 'LANDLORD') {
-		conditions.push(
-			or(
-				eq(maintenanceRequests.landlordId, actor.landlordId),
-				and(
-					isNull(maintenanceRequests.landlordId),
-					inArray(
-						maintenanceRequests.tenantId,
-						legacyLandlordTenantIdsSubquery(database, actor.landlordId)
-					)
-				)
-			)!
-		);
+		conditions.push(eq(maintenanceRequests.landlordId, actor.landlordId));
 	} else if (actor.role === 'STAFF') {
 		if (!staffHasPermission(actor, 'MANAGE_REQUESTS')) {
 			throw forbiddenError();
 		}
 		const propertyIds = assignedPropertyIds(actor);
 		conditions.push(
-			or(
-				and(
-					eq(maintenanceRequests.landlordId, actor.landlordId),
-					inArray(maintenanceRequests.propertyId, propertyIds)
-				),
-				and(
-					isNull(maintenanceRequests.propertyId),
-					inArray(
-						maintenanceRequests.tenantId,
-						database
-							.select({ id: rooms.tenantId })
-							.from(rooms)
-							.where(inArray(rooms.propertyId, propertyIds))
-					)
-				)
-			)!
+			eq(maintenanceRequests.landlordId, actor.landlordId),
+			inArray(maintenanceRequests.propertyId, propertyIds)
 		);
 	} else {
-		const tenancy = await requireActiveTenancyForTenant(database, actor);
-		conditions.push(
-			or(
-				and(
-					eq(maintenanceRequests.tenancyId, tenancy.tenancyId),
-					eq(maintenanceRequests.managedTenantId, tenancy.managedTenantId)
-				),
-				and(
-					isNull(maintenanceRequests.tenancyId),
-					eq(maintenanceRequests.tenantId, actor.tenantProfileId)
-				)
-			)!
-		);
+		conditions.push(await tenantTenancyScopeWhere(database, actor));
 	}
 
 	return database.query.maintenanceRequests.findMany({
@@ -261,6 +195,7 @@ export type CreateMaintenanceRequestInput = {
 	description: string;
 	imageUrl?: string | null;
 	priority?: string | null;
+	tenancyId?: string | null;
 };
 
 export async function createMaintenanceRequestForActor(
@@ -268,13 +203,15 @@ export async function createMaintenanceRequestForActor(
 	actor: UserActor,
 	input: CreateMaintenanceRequestInput
 ) {
-	const { category, title, description, imageUrl, priority } = input;
+	const { category, title, description, imageUrl, priority, tenancyId } = input;
 	if (!category || !title || !description) {
 		throw operationsValidation('Missing required maintenance request fields');
 	}
 
 	if (actor.role === 'TENANT') {
-		const tenancy = await requireActiveTenancyForTenant(database, actor);
+		const tenancy = await requireActiveTenancyForTenant(database, actor, {
+			tenancyId: tenancyId ?? undefined
+		});
 		const tenantProfileId = tenancy.tenantProfileId ?? actor.tenantProfileId;
 		if (!tenantProfileId) {
 			throw operationsForbidden('Bạn không có hồ sơ người thuê để gửi yêu cầu');
@@ -334,13 +271,13 @@ export async function updateMaintenanceRequestForActor(
 			? await landlordOwnsRequestRow(database, actor, input.id)
 			: await staffCanAccessRequestRow(database, actor, input.id);
 
-	if (actor.role === 'STAFF') {
-		if (existing.assignedToId !== actor.staffId) {
-			throw operationsForbidden('Bạn chỉ được cập nhật sự cố được giao cho mình');
-		}
+	if (actor.role === 'STAFF' && existing.assignedToId !== actor.staffId) {
+		throw operationsForbidden('Bạn chỉ được cập nhật sự cố được giao cho mình');
 	}
 
 	const updateData: Record<string, unknown> = {};
+	const expectedStatus = existing.status;
+
 	if (input.status !== undefined) {
 		if (actor.role === 'STAFF') {
 			assertStaffStatusTransition(existing.status, input.status);
@@ -368,13 +305,32 @@ export async function updateMaintenanceRequestForActor(
 		throw operationsValidation('No fields to update');
 	}
 
-	return (
-		await database
-			.update(maintenanceRequests)
-			.set(updateData)
-			.where(eq(maintenanceRequests.id, input.id))
-			.returning()
-	)[0];
+	const whereConditions = [eq(maintenanceRequests.id, input.id)];
+
+	if (actor.role === 'STAFF') {
+		whereConditions.push(eq(maintenanceRequests.assignedToId, actor.staffId));
+		if (existing.propertyId) {
+			whereConditions.push(eq(maintenanceRequests.propertyId, existing.propertyId));
+		}
+		whereConditions.push(eq(maintenanceRequests.status, expectedStatus));
+	} else if (existing.landlordId) {
+		whereConditions.push(eq(maintenanceRequests.landlordId, existing.landlordId));
+	}
+
+	const updated = await database
+		.update(maintenanceRequests)
+		.set(updateData)
+		.where(and(...whereConditions))
+		.returning();
+
+	if (!updated[0]) {
+		if (actor.role === 'STAFF' && input.status !== undefined) {
+			throw operationsConflict('Trạng thái sự cố đã thay đổi hoặc không còn được giao cho bạn');
+		}
+		throw operationsNotFound();
+	}
+
+	return updated[0];
 }
 
 export async function deleteMaintenanceRequestForActor(

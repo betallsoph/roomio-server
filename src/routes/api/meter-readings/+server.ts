@@ -10,7 +10,8 @@ import {
 import {
 	authorizationErrorToResponse,
 	isAuthorizationError,
-	unauthenticatedError
+	unauthenticatedError,
+	wrongRoleError
 } from '$lib/server/authorization/errors';
 import { operationalActorDenyReason } from '$lib/server/authorization/policies';
 import { ScopedResourceNotFoundError } from '$lib/server/authorization/scoped-queries';
@@ -42,6 +43,13 @@ function requireOperationalActor(actor: App.Locals['actor']) {
 	return { ok: true as const, actor };
 }
 
+function operationalWrongRoleResponse(actor: App.Locals['actor']) {
+	if (actor?.kind === 'USER') {
+		return authorizationErrorToResponse(wrongRoleError('Không có quyền thực hiện thao tác này'));
+	}
+	return authorizationErrorToResponse(unauthenticatedError());
+}
+
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
 		const guard = requireOperationalActor(locals.actor);
@@ -67,7 +75,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			return json(rows.map(toMeterReadingListItemDto));
 		}
 
-		return authorizationErrorToResponse(unauthenticatedError());
+		return operationalWrongRoleResponse(actor);
 	} catch (error) {
 		return mapOperationalError(error);
 	}
@@ -90,7 +98,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json(toMeterReadingDto(await submitMeterReadingForActor(db, landlord.value, body)));
 		}
 
-		return authorizationErrorToResponse(unauthenticatedError());
+		return operationalWrongRoleResponse(actor);
 	} catch (error) {
 		return mapOperationalError(error);
 	}
@@ -125,7 +133,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			);
 		}
 
-		return authorizationErrorToResponse(unauthenticatedError());
+		return operationalWrongRoleResponse(actor);
 	} catch (error) {
 		return mapOperationalError(error);
 	}

@@ -467,11 +467,14 @@ export const meterReadings = pgTable(
 		status: text('status').notNull().default('approved'), // 'pending' | 'approved' | 'rejected'
 		submittedBy: text('submittedBy').notNull().default('LANDLORD'), // 'LANDLORD' | 'TENANT'
 		isAnomalous: boolean('isAnomalous').notNull().default(false), // Lệch quá ngưỡng so với trung bình 3 tháng
-		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		// AUTH-004 snapshot (nullable): quyền lịch sử đọc từ tenancyId/managedTenantId.
 		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
-			onDelete: 'set null'
+			onDelete: 'restrict'
 		}),
-		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'restrict' }),
+		// AUTH-013 snapshot (nullable, additive): scope ownership without legacy room joins.
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'restrict' }),
+		propertyId: text('propertyId').references(() => properties.id, { onDelete: 'restrict' })
 	},
 	(t) => ({
 		roomIdx: index('MeterReading_roomId_idx').on(t.roomId),
@@ -479,7 +482,9 @@ export const meterReadings = pgTable(
 			t.roomId,
 			t.serviceId,
 			t.month
-		)
+		),
+		landlordIdx: index('MeterReading_landlordId_idx').on(t.landlordId),
+		propertyIdx: index('MeterReading_propertyId_idx').on(t.propertyId)
 	})
 );
 
@@ -562,15 +567,15 @@ export const maintenanceRequests = pgTable(
 		updatedAt: datetime('updatedAt').notNull().$defaultFn(now).$onUpdateFn(now),
 		response: text('response'),
 		assignedToId: text('assignedToId').references(() => staffProfiles.id, { onDelete: 'set null' }),
-		// AUTH-004 snapshot (nullable, chưa đổi read path): quyền lịch sử sẽ đọc từ đây.
+		// AUTH-004 snapshot (nullable): quyền lịch sử đọc từ tenancyId/managedTenantId.
 		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
-			onDelete: 'set null'
+			onDelete: 'restrict'
 		}),
-		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' }),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'restrict' }),
 		// AUTH-013 snapshot (nullable, additive): scope ownership without legacy room joins.
-		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'set null' }),
-		propertyId: text('propertyId').references(() => properties.id, { onDelete: 'set null' }),
-		roomId: text('roomId').references(() => rooms.id, { onDelete: 'set null' })
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'restrict' }),
+		propertyId: text('propertyId').references(() => properties.id, { onDelete: 'restrict' }),
+		roomId: text('roomId').references(() => rooms.id, { onDelete: 'restrict' })
 	},
 	(t) => ({
 		tenantIdx: index('MaintenanceRequest_tenantId_idx').on(t.tenantId),

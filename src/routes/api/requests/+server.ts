@@ -10,7 +10,8 @@ import {
 import {
 	authorizationErrorToResponse,
 	isAuthorizationError,
-	unauthenticatedError
+	unauthenticatedError,
+	wrongRoleError
 } from '$lib/server/authorization/errors';
 import { operationalActorDenyReason } from '$lib/server/authorization/policies';
 import { ScopedResourceNotFoundError } from '$lib/server/authorization/scoped-queries';
@@ -34,6 +35,13 @@ function mapOperationalError(error: unknown) {
 		return json({ error: error.message }, { status: error.status });
 	}
 	return json({ error: errorMessage(error) }, { status: 500 });
+}
+
+function operationalWrongRoleResponse(actor: App.Locals['actor']) {
+	if (actor?.kind === 'USER') {
+		return authorizationErrorToResponse(wrongRoleError('Không có quyền thực hiện thao tác này'));
+	}
+	return authorizationErrorToResponse(unauthenticatedError());
 }
 
 function requireOperationalActor(actor: App.Locals['actor']) {
@@ -64,7 +72,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 			return json(rows.map(toMaintenanceRequestDto));
 		}
 
-		return authorizationErrorToResponse(unauthenticatedError());
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
 		return mapOperationalError(error);
 	}
@@ -77,7 +85,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const tenant = requireTenantActor(guard.actor);
 		if (!tenant.ok) {
-			return authorizationErrorToResponse(unauthenticatedError());
+			return operationalWrongRoleResponse(guard.actor);
 		}
 
 		const body = await request.json();
@@ -107,7 +115,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			);
 		}
 
-		return authorizationErrorToResponse(unauthenticatedError());
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
 		return mapOperationalError(error);
 	}
@@ -125,7 +133,7 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 
 		const landlord = requireLandlordActor(guard.actor);
 		if (!landlord.ok) {
-			return authorizationErrorToResponse(unauthenticatedError());
+			return operationalWrongRoleResponse(guard.actor);
 		}
 
 		await deleteMaintenanceRequestForActor(db, landlord.value, id);

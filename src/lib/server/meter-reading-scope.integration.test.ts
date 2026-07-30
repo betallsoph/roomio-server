@@ -350,7 +350,7 @@ if (!RUN) {
 			body: JSON.stringify({ id: 'a13-mr-a-cur', action: 'approve' })
 		});
 		const putRes = await call(PUT, { request: putReq, locals: { actor: tenantActor } });
-		assert.equal(putRes.status, 401);
+		assert.equal(putRes.status, 403);
 		const postReq = new Request('http://localhost/api/meter-readings', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },

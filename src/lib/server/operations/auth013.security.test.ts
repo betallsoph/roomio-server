@@ -6,6 +6,7 @@ import {
 	maintenanceRequests,
 	managedTenants,
 	meterReadings,
+	roomServiceConfigs,
 	staffPermissions,
 	staffProfiles,
 	staffPropertyAssignments,
@@ -149,6 +150,12 @@ async function seedAuth013Extensions(
 		assignedByUserId: ids.landlordA.userId
 	});
 
+	await db.insert(roomServiceConfigs).values({
+		roomId: ids.roomA1R1.roomId,
+		serviceId: ids.serviceA.serviceId,
+		quantity: 1
+	});
+
 	return {
 		managedTenantANow,
 		managedTenantAOld,
@@ -196,7 +203,7 @@ if (skipReason) {
 			const ext = await seedAuth013Extensions(handle, fixture);
 			const ids = fixture.ids;
 
-			const { GET: getMeterReadings } =
+			const { GET: getMeterReadings, PUT: putMeter } =
 				await import('../../../routes/api/meter-readings/+server.js');
 			const {
 				GET: getRequests,
@@ -327,8 +334,75 @@ if (skipReason) {
 				assert.equal(body.roomId, ids.roomA1R1.roomId);
 			});
 
-			await t.test('OCR parse response strips raw debug text', async () => {
+			await t.test(
+				'old tenant cannot read current-room meter history without snapshot tenancy',
+				async () => {
+					const result = await meterGet(tenantAOld);
+					assert.equal(result.status, 200);
+					const readingIds = (result.body as Array<{ id: string }>).map((row) => row.id);
+					assert.ok(!readingIds.includes(ids.meterReadingANow.meterReadingId));
+					assert.ok(readingIds.includes(ids.meterReadingAOld.meterReadingId));
+				}
+			);
+
+			await t.test('tenant wrong role on meter PUT returns 403', async () => {
 				const result = await readJson(
+					await callHandler(putMeter, {
+						request: new Request('http://localhost/api/meter-readings', {
+							method: 'PUT',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({ id: ids.meterReadingANow.meterReadingId, action: 'approve' })
+						}),
+						locals: { actor: tenantANow }
+					})
+				);
+				assert.equal(result.status, 403);
+			});
+
+			await t.test('staff wrong role on meter POST returns 403', async () => {
+				const { POST: postMeter } = await import('../../../routes/api/meter-readings/+server.js');
+				const result = await readJson(
+					await callHandler(postMeter, {
+						request: new Request('http://localhost/api/meter-readings', {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								roomId: ids.roomA1R1.roomId,
+								serviceId: ids.serviceA.serviceId,
+								month: '2026-08',
+								currValue: 200
+							})
+						}),
+						locals: { actor: staffRequests }
+					})
+				);
+				assert.equal(result.status, 403);
+			});
+
+			await t.test('staff status race returns 409 when expected status changed', async () => {
+				await handle.db
+					.update(maintenanceRequests)
+					.set({ status: 'in_progress', assignedToId: ext.staffARequestsId })
+					.where(eq(maintenanceRequests.id, ids.maintenanceANow.maintenanceRequestId));
+
+				const result = await readJson(
+					await callHandler(putRequests, {
+						request: new Request('http://localhost/api/requests', {
+							method: 'PUT',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								id: ids.maintenanceANow.maintenanceRequestId,
+								status: 'in_progress'
+							})
+						}),
+						locals: { actor: staffRequests }
+					})
+				);
+				assert.equal(result.status, 409);
+			});
+
+			await t.test('OCR parse requires roomId and serviceId before provider', async () => {
+				const missing = await readJson(
 					await callHandler(parseMeter, {
 						request: new Request('http://localhost/api/meter-readings/parse', {
 							method: 'POST',
@@ -340,7 +414,23 @@ if (skipReason) {
 						locals: { actor: tenantANow }
 					})
 				);
-				assert.ok([200, 400, 503].includes(result.status));
+				assert.equal(missing.status, 400);
+
+				const result = await readJson(
+					await callHandler(parseMeter, {
+						request: new Request('http://localhost/api/meter-readings/parse', {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								roomId: ids.roomA1R1.roomId,
+								serviceId: ids.serviceA.serviceId,
+								photoUrl: 'https://assets.example.com/uploads/meters/x.jpg'
+							})
+						}),
+						locals: { actor: tenantANow }
+					})
+				);
+				assert.ok([200, 400, 422, 503].includes(result.status));
 				if (result.status === 200) {
 					expectNoForbiddenKeys(result.body);
 					assert.equal('rawText' in (result.body as object), false);

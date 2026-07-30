@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, type SQL } from 'drizzle-orm';
 import type { db as AppDb } from '$lib/server/db';
 import {
 	meterReadings,
@@ -20,7 +20,10 @@ import {
 } from '$lib/server/authorization/scoped-queries';
 import { forbiddenError } from '$lib/server/authorization/errors';
 import { staffHasPermission } from '$lib/server/authorization/staff-scope';
-import { requireActiveTenancyForTenant } from './active-tenancy.js';
+import {
+	listClaimedTenancyScopesForTenant,
+	resolveTenancyForTenantMutation
+} from './active-tenancy.js';
 import {
 	isOperationsError,
 	operationsConflict,
@@ -72,6 +75,15 @@ function staffMeterScopeWhere(actor: StaffActor): SQL {
 	)!;
 }
 
+async function tenantTenancyScopeWhere(database: OperationsDb, actor: TenantActor): Promise<SQL> {
+	const scopes = await listClaimedTenancyScopesForTenant(database, actor);
+	const tenancyIds = scopes.map((scope) => scope.tenancyId);
+	if (tenancyIds.length === 0) {
+		throw operationsForbidden('Bạn không có lần thuê được phép truy cập');
+	}
+	return and(isNotNull(meterReadings.tenancyId), inArray(meterReadings.tenancyId, tenancyIds))!;
+}
+
 export async function listMeterReadingsForActor(
 	database: OperationsDb,
 	actor: LandlordActor | StaffActor | TenantActor,
@@ -84,16 +96,7 @@ export async function listMeterReadingsForActor(
 	} else if (actor.role === 'STAFF') {
 		conditions.push(staffMeterScopeWhere(actor));
 	} else {
-		const tenancy = await requireActiveTenancyForTenant(database, actor);
-		conditions.push(
-			or(
-				and(
-					eq(meterReadings.tenancyId, tenancy.tenancyId),
-					eq(meterReadings.managedTenantId, tenancy.managedTenantId)
-				),
-				and(isNull(meterReadings.tenancyId), eq(meterReadings.roomId, tenancy.roomId))
-			)!
-		);
+		conditions.push(await tenantTenancyScopeWhere(database, actor));
 	}
 
 	if (filters.status) {
@@ -139,13 +142,22 @@ export type SubmitMeterReadingInput = {
 	currValue: unknown;
 	photoUrl?: string | null;
 	ocrParsedValue?: unknown;
+	tenancyId?: string | null;
 };
 
-async function loadMeteredServiceForRoom(
+export type MeterServiceConfig = {
+	name: string;
+	type: string;
+	isActive: boolean;
+	landlordId: string;
+	propertyId: string;
+};
+
+export async function loadMeteredServiceForRoom(
 	database: OperationsDb,
 	roomId: string,
 	serviceId: string
-) {
+): Promise<MeterServiceConfig | null> {
 	const rows = await database
 		.select({
 			name: services.name,
@@ -162,39 +174,25 @@ async function loadMeteredServiceForRoom(
 	return rows[0] ?? null;
 }
 
-export async function submitMeterReadingForActor(
+export async function authorizeMeterServiceForActor(
 	database: OperationsDb,
-	actor: UserActor,
-	input: SubmitMeterReadingInput
-) {
-	const { roomId, serviceId, month, currValue, photoUrl, ocrParsedValue } = input;
-
-	if (!roomId || !serviceId || !month || currValue === undefined || currValue === '') {
-		throw operationsValidation('Thiếu thông tin chỉ số');
-	}
-
-	let tenancyScope: Awaited<ReturnType<typeof requireActiveTenancyForTenant>> | null = null;
+	actor: LandlordActor | TenantActor,
+	roomId: string,
+	serviceId: string,
+	tenancyId?: string | null
+): Promise<MeterServiceConfig> {
+	let tenancyLandlordId: string | null = null;
+	let tenancyPropertyId: string | null = null;
+	let tenancyRoomId: string | null = null;
 
 	if (actor.role === 'TENANT') {
-		if (typeof photoUrl !== 'string' || !photoUrl.trim()) {
-			throw operationsValidation('Khách thuê cần chụp ảnh đồng hồ trước khi gửi');
-		}
-		tenancyScope = await requireActiveTenancyForTenant(database, actor);
-		if (roomId !== tenancyScope.roomId) {
-			throw operationsForbidden('Bạn không thuê phòng này');
-		}
-	} else if (actor.role === 'LANDLORD') {
-		const owned = await database
-			.select({ id: rooms.id })
-			.from(rooms)
-			.innerJoin(properties, eq(rooms.propertyId, properties.id))
-			.where(and(eq(rooms.id, roomId), eq(properties.landlordId, actor.landlordId)))
-			.limit(1);
-		if (!owned[0]) {
-			throw new ScopedResourceNotFoundError();
-		}
-	} else {
-		throw forbiddenError();
+		const tenancy = await resolveTenancyForTenantMutation(database, actor, {
+			roomId,
+			tenancyId: tenancyId ?? undefined
+		});
+		tenancyLandlordId = tenancy.landlordId;
+		tenancyPropertyId = tenancy.propertyId;
+		tenancyRoomId = tenancy.roomId;
 	}
 
 	const serviceConfig = await loadMeteredServiceForRoom(database, roomId, serviceId);
@@ -206,8 +204,67 @@ export async function submitMeterReadingForActor(
 			`${serviceConfig.name} đang tính khoán hàng tháng, không cần gửi chỉ số đồng hồ`
 		);
 	}
-	if (actor.role === 'LANDLORD' && serviceConfig.landlordId !== actor.landlordId) {
-		throw new ScopedResourceNotFoundError();
+
+	if (actor.role === 'LANDLORD') {
+		const owned = await database
+			.select({ id: rooms.id })
+			.from(rooms)
+			.innerJoin(properties, eq(rooms.propertyId, properties.id))
+			.where(and(eq(rooms.id, roomId), eq(properties.landlordId, actor.landlordId)))
+			.limit(1);
+		if (!owned[0]) {
+			throw new ScopedResourceNotFoundError();
+		}
+		if (serviceConfig.landlordId !== actor.landlordId) {
+			throw new ScopedResourceNotFoundError();
+		}
+	} else {
+		if (tenancyRoomId !== roomId) {
+			throw operationsForbidden('Bạn không thuê phòng này');
+		}
+		if (serviceConfig.landlordId !== tenancyLandlordId) {
+			throw operationsForbidden('Dịch vụ không thuộc chủ trọ của lần thuê');
+		}
+		if (serviceConfig.propertyId !== tenancyPropertyId) {
+			throw operationsForbidden('Dịch vụ không áp dụng cho tài sản của lần thuê');
+		}
+	}
+
+	return serviceConfig;
+}
+
+export async function submitMeterReadingForActor(
+	database: OperationsDb,
+	actor: UserActor,
+	input: SubmitMeterReadingInput
+) {
+	const { roomId, serviceId, month, currValue, photoUrl, ocrParsedValue, tenancyId } = input;
+
+	if (!roomId || !serviceId || !month || currValue === undefined || currValue === '') {
+		throw operationsValidation('Thiếu thông tin chỉ số');
+	}
+
+	let tenancyScope: Awaited<ReturnType<typeof resolveTenancyForTenantMutation>> | null = null;
+	let landlordId: string;
+	let propertyId: string;
+
+	if (actor.role === 'TENANT') {
+		if (typeof photoUrl !== 'string' || !photoUrl.trim()) {
+			throw operationsValidation('Khách thuê cần chụp ảnh đồng hồ trước khi gửi');
+		}
+		tenancyScope = await resolveTenancyForTenantMutation(database, actor, {
+			roomId,
+			tenancyId: tenancyId ?? undefined
+		});
+		landlordId = tenancyScope.landlordId;
+		propertyId = tenancyScope.propertyId;
+		await authorizeMeterServiceForActor(database, actor, roomId, serviceId, tenancyId);
+	} else if (actor.role === 'LANDLORD') {
+		const serviceConfig = await authorizeMeterServiceForActor(database, actor, roomId, serviceId);
+		landlordId = actor.landlordId;
+		propertyId = serviceConfig.propertyId;
+	} else {
+		throw forbiddenError();
 	}
 
 	const history = await database
@@ -275,7 +332,9 @@ export async function submitMeterReadingForActor(
 		submittedBy: actor.role === 'TENANT' ? 'TENANT' : 'LANDLORD',
 		isAnomalous,
 		managedTenantId: tenancyScope?.managedTenantId ?? null,
-		tenancyId: tenancyScope?.tenancyId ?? null
+		tenancyId: tenancyScope?.tenancyId ?? null,
+		landlordId,
+		propertyId
 	};
 
 	if (existing) {

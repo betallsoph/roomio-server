@@ -63,7 +63,6 @@ test('toMeterReadingListItemDto keeps list enrichments only', () => {
 test('toMaintenanceRequestDto exposes allowlisted nested user contact only', () => {
 	const dto = toMaintenanceRequestDto({
 		id: 'req-1',
-		tenantId: 'tp-1',
 		roomNumber: '101',
 		buildingName: 'A1',
 		category: 'plumbing',
@@ -93,5 +92,6 @@ test('toMaintenanceRequestDto exposes allowlisted nested user contact only', () 
 		assignedTo: null
 	});
 	expectNoForbiddenKeys(dto);
+	assert.equal('tenantId' in dto, false);
 	assert.equal(dto.tenant?.user?.name, 'Tenant');
 });
