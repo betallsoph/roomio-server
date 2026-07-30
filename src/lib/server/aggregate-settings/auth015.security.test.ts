@@ -17,7 +17,6 @@ import {
 } from '../db/schema.js';
 import { SUPER_ADMIN_FORBIDDEN_KEYS } from '../dto/super-admin.js';
 import {
-	fixtureSession,
 	seedSecurityFixturesFromHandle,
 	type SecurityFixtureMap
 } from '../testing/security-fixtures.js';

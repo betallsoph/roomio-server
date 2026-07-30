@@ -1,7 +1,6 @@
 import { db } from '$lib/server/db';
 import {
 	invoices,
-	landlordProfiles,
 	notificationQueue,
 	paymentTransactions,
 	properties,
