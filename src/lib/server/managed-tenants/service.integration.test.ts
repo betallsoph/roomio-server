@@ -21,6 +21,7 @@ import { createManagedTenant } from './service.js';
 import { issueTenantInvite, acceptTenantInvite } from '../tenant-invites/service.js';
 import { hashInviteToken } from '../tenant-invites/token.js';
 import { isManagedTenantServiceError } from './state.js';
+import { isTenantInviteServiceError } from '../tenant-invites/state.js';
 import {
 	cleanupTenancyFixture,
 	createTenancyTestDb,
@@ -274,6 +275,94 @@ if (skipReason) {
 		});
 		assert.equal(replay.idempotent, true);
 		assert.equal(replay.managedTenantId, managed.id);
+
+		const acceptAudits = await db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(auditEvents)
+			.where(
+				and(
+					eq(auditEvents.landlordId, fixture.landlordA.landlordId),
+					eq(auditEvents.action, 'TENANCY.INVITE_ACCEPTED'),
+					eq(auditEvents.resourceId, managed.id)
+				)
+			);
+		assert.equal(acceptAudits[0]?.count, 1, 'replay must not create a second accept audit');
+	});
+
+	test('issue invite rejects already-claimed managed tenant', async () => {
+		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
+			displayName: 'Already claimed issuance'
+		});
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA3,
+			managedTenantId: managed.id,
+			startDate: '2026-07-05'
+		});
+
+		const tenantUserId = `${fixture.runId}-preclaimed-user`;
+		const tenantProfileId = `${fixture.runId}-preclaimed-profile`;
+		await db.insert(users).values({
+			id: tenantUserId,
+			email: `${tenantUserId}@auth009.test`,
+			phone: tenantUserId,
+			passwordHash: 'not-a-real-hash',
+			name: 'Preclaimed user',
+			role: 'TENANT',
+			isActive: true
+		});
+		await db.insert(tenantProfiles).values({ id: tenantProfileId, userId: tenantUserId });
+		await db
+			.update(managedTenants)
+			.set({ claimedByUserId: tenantUserId, claimVersion: 1 })
+			.where(eq(managedTenants.id, managed.id));
+
+		await assert.rejects(
+			() =>
+				issueTenantInvite(db, fixture.landlordA.actor, {
+					managedTenantId: managed.id,
+					tenancyId: started.tenancy.id
+				}),
+			(error: unknown) =>
+				isTenantInviteServiceError(error) && error.code === 'MANAGED_TENANT_ALREADY_CLAIMED'
+		);
+	});
+
+	test('inactive tenant actor cannot accept invite', async () => {
+		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
+			displayName: 'Inactive actor'
+		});
+		const started = await startTenancy(db, fixture.landlordA.actor, {
+			roomId: fixture.roomA1,
+			managedTenantId: managed.id,
+			startDate: '2026-07-06'
+		});
+		const issued = await issueTenantInvite(db, fixture.landlordA.actor, {
+			managedTenantId: managed.id,
+			tenancyId: started.tenancy.id
+		});
+
+		const tenantUserId = `${fixture.runId}-inactive-user`;
+		const tenantProfileId = `${fixture.runId}-inactive-profile`;
+		await db.insert(users).values({
+			id: tenantUserId,
+			email: `${tenantUserId}@auth009.test`,
+			phone: tenantUserId,
+			passwordHash: 'not-a-real-hash',
+			name: 'Inactive user',
+			role: 'TENANT',
+			isActive: false
+		});
+		await db.insert(tenantProfiles).values({ id: tenantProfileId, userId: tenantUserId });
+
+		await assert.rejects(
+			() =>
+				acceptTenantInvite(db, {
+					token: issued.token,
+					actorUserId: tenantUserId,
+					actorTenantProfileId: tenantProfileId
+				}),
+			(error: unknown) => isTenantInviteServiceError(error) && error.code === 'IDENTITY_REQUIRED'
+		);
 	});
 
 	test('already claimed managed tenant still consumes a pending invite for same actor', async () => {

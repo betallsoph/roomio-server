@@ -156,6 +156,9 @@ export async function issueTenantInvite(
 			actor,
 			rawInput.managedTenantId.trim()
 		);
+		if (managedTenant.claimedByUserId !== null) {
+			throw inviteError('MANAGED_TENANT_ALREADY_CLAIMED');
+		}
 		await loadActiveTenancyForInvite(tx, actor, {
 			managedTenantId: managedTenant.id,
 			tenancyId: rawInput.tenancyId.trim()
@@ -258,6 +261,10 @@ function assertInviteAcceptable(invite: LockedInvite, now: Date): void {
 	if (!invite.managedTenantId || !invite.tenancyId) throw inviteError('INVITE_NOT_FOUND');
 }
 
+function claimVersionAfterAccept(expectedClaimVersion: number | null): number {
+	return (expectedClaimVersion ?? 0) + 1;
+}
+
 async function loadActorTenantProfile(
 	tx: TenantInviteTx,
 	actorUserId: string,
@@ -277,6 +284,34 @@ async function loadActorTenantProfile(
 	const profile = rows[0];
 	if (!profile || profile.userId !== actorUserId) throw inviteError('IDENTITY_REQUIRED');
 	return profile;
+}
+
+async function assertActiveTenantActor(
+	tx: TenantInviteTx,
+	actorUserId: string,
+	actorTenantProfileId: string
+) {
+	const profile = await loadActorTenantProfile(tx, actorUserId, actorTenantProfileId);
+	const userRows = await tx
+		.select({ isActive: users.isActive, role: users.role })
+		.from(users)
+		.where(eq(users.id, actorUserId))
+		.limit(1);
+	const user = userRows[0];
+	if (!user?.isActive || user.role !== 'TENANT') {
+		throw inviteError('IDENTITY_REQUIRED');
+	}
+	return profile;
+}
+
+function assertAcceptLandlordBinding(
+	invite: LockedInvite,
+	managedTenant: { landlordId: string },
+	tenancy: { landlordId: string }
+): void {
+	if (invite.landlordId !== managedTenant.landlordId || invite.landlordId !== tenancy.landlordId) {
+		throw inviteError('TENANCY_SCOPE_MISMATCH');
+	}
 }
 
 async function countTenanciesContractsInvoices(
@@ -305,12 +340,14 @@ async function countTenanciesContractsInvoices(
 type ReloadedAcceptState = {
 	managedTenant: {
 		id: string;
+		landlordId: string;
 		claimedByUserId: string | null;
 		claimVersion: number;
 		status: string;
 	};
 	tenancy: {
 		id: string;
+		landlordId: string;
 		status: string;
 		managedTenantId: string | null;
 	};
@@ -347,6 +384,7 @@ async function reloadAcceptState(
 	const managedTenantRows = await tx
 		.select({
 			id: managedTenants.id,
+			landlordId: managedTenants.landlordId,
 			claimedByUserId: managedTenants.claimedByUserId,
 			claimVersion: managedTenants.claimVersion,
 			status: managedTenants.status
@@ -361,6 +399,7 @@ async function reloadAcceptState(
 	const tenancyRows = await tx
 		.select({
 			id: tenancies.id,
+			landlordId: tenancies.landlordId,
 			status: tenancies.status,
 			managedTenantId: tenancies.managedTenantId
 		})
@@ -393,7 +432,7 @@ async function tryIdempotentAcceptReplay(
 		return null;
 	}
 
-	await loadActorTenantProfile(tx, actorUserId, actorTenantProfileId);
+	await assertActiveTenantActor(tx, actorUserId, actorTenantProfileId);
 
 	const reloaded = await reloadAcceptState(tx, invite.id, invite.managedTenantId, invite.tenancyId);
 	if (!reloaded) throw inviteError('INVITE_CONFLICT');
@@ -401,9 +440,13 @@ async function tryIdempotentAcceptReplay(
 	if (reloaded.managedTenant.claimedByUserId !== actorUserId) {
 		throw inviteError('MANAGED_TENANT_ALREADY_CLAIMED');
 	}
-	if (reloaded.invite.expectedClaimVersion !== reloaded.managedTenant.claimVersion) {
+	if (
+		reloaded.managedTenant.claimVersion !==
+		claimVersionAfterAccept(reloaded.invite.expectedClaimVersion)
+	) {
 		throw inviteError('INVITE_STALE_CLAIM_VERSION');
 	}
+	assertAcceptLandlordBinding(reloaded.invite, reloaded.managedTenant, reloaded.tenancy);
 	if (reloaded.invite.expiresAt <= now) throw inviteError('INVITE_EXPIRED');
 
 	return {
@@ -448,15 +491,23 @@ async function ensureTelegramIdentityInTx(
 	const linked = await tx
 		.select({
 			profileId: tenantProfiles.id,
-			userId: tenantProfiles.userId,
-			isActive: users.isActive
+			userId: tenantProfiles.userId
 		})
 		.from(tenantProfiles)
 		.innerJoin(users, eq(tenantProfiles.userId, users.id))
 		.where(eq(tenantProfiles.telegramUserId, telegramUserId))
 		.limit(1);
 
-	if (linked[0]?.isActive) {
+	if (linked[0]) {
+		const userRows = await tx
+			.select({ isActive: users.isActive, role: users.role })
+			.from(users)
+			.where(eq(users.id, linked[0].userId))
+			.limit(1);
+		const user = userRows[0];
+		if (!user?.isActive || user.role !== 'TENANT') {
+			throw inviteError('IDENTITY_REQUIRED');
+		}
 		return { userId: linked[0].userId, tenantProfileId: linked[0].profileId };
 	}
 
@@ -464,23 +515,22 @@ async function ensureTelegramIdentityInTx(
 	const profileId = `tg-profile-${telegramUserId}`;
 
 	const existingUser = await tx
-		.select({ id: users.id, isActive: users.isActive })
+		.select({ id: users.id, isActive: users.isActive, role: users.role })
 		.from(users)
 		.where(eq(users.id, userId))
 		.limit(1);
 
-	if (!existingUser[0]) {
+	if (existingUser[0]) {
+		if (!existingUser[0].isActive || existingUser[0].role !== 'TENANT') {
+			throw inviteError('IDENTITY_REQUIRED');
+		}
+	} else {
 		await tx.insert(users).values({
 			id: userId,
 			name: displayName,
 			role: 'TENANT',
 			isActive: true
 		});
-	} else if (!existingUser[0].isActive) {
-		await tx
-			.update(users)
-			.set({ isActive: true, name: displayName, updatedAt: new Date() })
-			.where(eq(users.id, userId));
 	}
 
 	const existingProfile = await tx
@@ -539,7 +589,7 @@ async function performManagedTenantClaim(
 		}
 	}
 
-	const profile = await loadActorTenantProfile(tx, actorUserId, actorTenantProfileId);
+	const profile = await assertActiveTenantActor(tx, actorUserId, actorTenantProfileId);
 
 	if (telegramUserId) {
 		if (profile.telegramUserId && profile.telegramUserId !== telegramUserId) {
@@ -656,6 +706,7 @@ export async function acceptTenantInvite(
 		const managedTenantRows = await tx
 			.select({
 				id: managedTenants.id,
+				landlordId: managedTenants.landlordId,
 				claimedByUserId: managedTenants.claimedByUserId,
 				claimVersion: managedTenants.claimVersion,
 				status: managedTenants.status
@@ -673,6 +724,7 @@ export async function acceptTenantInvite(
 		const tenancyRows = await tx
 			.select({
 				id: tenancies.id,
+				landlordId: tenancies.landlordId,
 				status: tenancies.status,
 				managedTenantId: tenancies.managedTenantId
 			})
@@ -686,6 +738,9 @@ export async function acceptTenantInvite(
 			throw inviteError('TENANCY_SCOPE_MISMATCH');
 		}
 		if (tenancy.status !== 'ACTIVE') throw inviteError('TENANCY_NOT_ACTIVE');
+		assertAcceptLandlordBinding(invite, managedTenant, tenancy);
+
+		await assertActiveTenantActor(tx, actorUserId, actorTenantProfileId);
 
 		const tenancyBefore = await countTenanciesContractsInvoices(tx, invite.tenancyId!);
 
@@ -741,14 +796,18 @@ export async function claimTenantInviteViaTelegram(
 			.select({
 				profileId: tenantProfiles.id,
 				userId: tenantProfiles.userId,
-				isActive: users.isActive
+				isActive: users.isActive,
+				role: users.role
 			})
 			.from(tenantProfiles)
 			.innerJoin(users, eq(tenantProfiles.userId, users.id))
 			.where(eq(tenantProfiles.telegramUserId, telegramUserId))
 			.limit(1);
 
-		if (linked[0]?.isActive) {
+		if (linked[0]) {
+			if (!linked[0].isActive || linked[0].role !== 'TENANT') {
+				throw inviteError('IDENTITY_REQUIRED');
+			}
 			const replay = await tryIdempotentAcceptReplay(
 				tx,
 				invite,
@@ -770,6 +829,7 @@ export async function claimTenantInviteViaTelegram(
 		const managedTenantRows = await tx
 			.select({
 				id: managedTenants.id,
+				landlordId: managedTenants.landlordId,
 				claimedByUserId: managedTenants.claimedByUserId,
 				claimVersion: managedTenants.claimVersion,
 				status: managedTenants.status
@@ -787,6 +847,7 @@ export async function claimTenantInviteViaTelegram(
 		const tenancyRows = await tx
 			.select({
 				id: tenancies.id,
+				landlordId: tenancies.landlordId,
 				status: tenancies.status,
 				managedTenantId: tenancies.managedTenantId
 			})
@@ -800,6 +861,7 @@ export async function claimTenantInviteViaTelegram(
 			throw inviteError('TENANCY_SCOPE_MISMATCH');
 		}
 		if (tenancy.status !== 'ACTIVE') throw inviteError('TENANCY_NOT_ACTIVE');
+		assertAcceptLandlordBinding(invite, managedTenant, tenancy);
 
 		const tenancyBefore = await countTenanciesContractsInvoices(tx, invite.tenancyId!);
 

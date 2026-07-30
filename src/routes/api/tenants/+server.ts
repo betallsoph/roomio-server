@@ -2,9 +2,23 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { tenantProfiles, rooms, properties, services, meterReadings } from '$lib/server/db/schema';
-import { and, eq, inArray, isNotNull, like } from 'drizzle-orm';
-import { forbidden, landlordOwnsTenant } from '$lib/server/authz';
+import {
+	users,
+	tenantProfiles,
+	rooms,
+	properties,
+	services,
+	meterReadings,
+	contracts
+} from '$lib/server/db/schema';
+import { and, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
+import { hashPassword } from '$lib/server/password';
+import {
+	forbidden,
+	landlordOwnsRoom,
+	landlordOwnsTenant,
+	requireLandlord
+} from '$lib/server/authz';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import { requireLandlordActor, type LandlordActor } from '$lib/server/authorization/actor';
 import {
@@ -12,7 +26,7 @@ import {
 	unauthenticatedError
 } from '$lib/server/authorization/errors';
 import { isTenancyDualWriteEnabled } from '$lib/server/env';
-import { startTenancy } from '$lib/server/tenancies/service';
+import { hasActiveTenancyForRoom, startTenancy } from '$lib/server/tenancies/service';
 import { createManagedTenant } from '$lib/server/managed-tenants/service';
 import { isManagedTenantServiceError } from '$lib/server/managed-tenants/state';
 import {
@@ -23,6 +37,7 @@ import {
 	type TenancyDto
 } from '$lib/server/tenancies/state';
 import { TENANT_DETAIL_WITH, toTenantSummaryDto } from '$lib/server/dto/tenants';
+import type { SessionData } from '$lib/server/session';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -220,45 +235,233 @@ async function recordInitialMeterReadings(
 	}
 }
 
+async function legacyCheckIn(
+	body: unknown,
+	locals: { session: SessionData | null; requestId: string }
+) {
+	const auth = requireLandlord(locals.session);
+	if (!auth.ok) return auth.response;
+
+	const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+	const email = payload.email;
+	const phone = payload.phone;
+	const password = payload.password;
+	const name = payload.name;
+	const roomId = payload.roomId;
+	const idNumber = payload.idNumber;
+	const moveInDate = payload.moveInDate;
+	const deposit = payload.deposit;
+	const notes = payload.notes;
+	const initialElectricity = payload.initialElectricity;
+	const initialWater = payload.initialWater;
+	const paymentAccountId =
+		typeof payload.paymentAccountId === 'string' ? payload.paymentAccountId : null;
+
+	if (
+		typeof email !== 'string' ||
+		typeof phone !== 'string' ||
+		typeof password !== 'string' ||
+		typeof name !== 'string' ||
+		typeof roomId !== 'string' ||
+		typeof idNumber !== 'string' ||
+		typeof moveInDate !== 'string' ||
+		deposit === undefined
+	) {
+		return json({ error: 'Thiếu thông tin khách thuê bắt buộc' }, { status: 400 });
+	}
+	if (!(await landlordOwnsRoom(auth.value, roomId))) {
+		return forbidden();
+	}
+	if (await hasActiveTenancyForRoom(db, roomId)) {
+		return json(
+			{
+				error: 'Phòng đang có lần thuê hiệu lực',
+				code: 'ROOM_OCCUPIED',
+				requestId: locals.requestId
+			},
+			{ status: 409 }
+		);
+	}
+	const selectedPaymentAccount = await getPaymentAccountForLandlord(
+		auth.value,
+		paymentAccountId || null
+	);
+	if (!selectedPaymentAccount.isActive) {
+		return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
+	}
+
+	const existingUser = await db.query.users.findFirst({
+		where: or(eq(users.email, email), eq(users.phone, phone))
+	});
+
+	const newUserHash = existingUser ? null : await hashPassword(password);
+
+	const tenant = await db.transaction(async (tx) => {
+		const user =
+			existingUser ??
+			(
+				await tx
+					.insert(users)
+					.values({ email, phone, passwordHash: newUserHash!, name, role: 'TENANT' })
+					.returning()
+			)[0];
+
+		let tenantProfile = (
+			await tx.select().from(tenantProfiles).where(eq(tenantProfiles.userId, user.id))
+		)[0];
+
+		if (!tenantProfile) {
+			tenantProfile = (
+				await tx
+					.insert(tenantProfiles)
+					.values({
+						userId: user.id,
+						idNumber,
+						moveInDate,
+						deposit: Number(deposit),
+						notes: typeof notes === 'string' ? notes : null
+					})
+					.returning()
+			)[0];
+		} else {
+			tenantProfile = (
+				await tx
+					.update(tenantProfiles)
+					.set({
+						idNumber,
+						moveInDate,
+						deposit: Number(deposit),
+						notes: typeof notes === 'string' ? notes : null
+					})
+					.where(eq(tenantProfiles.id, tenantProfile.id))
+					.returning()
+			)[0];
+		}
+
+		const room = (
+			await tx
+				.update(rooms)
+				.set({
+					tenantId: tenantProfile.id,
+					status: 'paid',
+					debtAmount: 0,
+					paymentAccountId: selectedPaymentAccount.id
+				})
+				.where(eq(rooms.id, roomId))
+				.returning()
+		)[0];
+
+		const property = (
+			await tx
+				.select({ landlordId: properties.landlordId })
+				.from(properties)
+				.where(eq(properties.id, room.propertyId))
+		)[0];
+
+		const checkInMonth = moveInDate.slice(0, 7);
+		const today = new Date().toISOString().split('T')[0];
+
+		if (property) {
+			const electricityService = (
+				await tx
+					.select()
+					.from(services)
+					.where(and(eq(services.landlordId, property.landlordId), like(services.name, '%Điện%')))
+			)[0];
+			const waterService = (
+				await tx
+					.select()
+					.from(services)
+					.where(and(eq(services.landlordId, property.landlordId), like(services.name, '%Nước%')))
+			)[0];
+
+			if (electricityService && initialElectricity !== undefined) {
+				await tx.insert(meterReadings).values({
+					roomId: room.id,
+					serviceId: electricityService.id,
+					month: checkInMonth,
+					prevValue: Number(initialElectricity),
+					currValue: Number(initialElectricity),
+					recordedAt: today
+				});
+			}
+
+			if (waterService && initialWater !== undefined) {
+				await tx.insert(meterReadings).values({
+					roomId: room.id,
+					serviceId: waterService.id,
+					month: checkInMonth,
+					prevValue: Number(initialWater),
+					currValue: Number(initialWater),
+					recordedAt: today
+				});
+			}
+		}
+
+		const start = new Date(moveInDate);
+		const end = new Date(start.getFullYear() + 1, start.getMonth(), start.getDate());
+		await tx.insert(contracts).values({
+			tenantId: tenantProfile.id,
+			roomId: room.id,
+			startDate: moveInDate,
+			endDate: end.toISOString().split('T')[0],
+			monthlyRent: room.monthlyRent,
+			deposit: Number(deposit),
+			paymentAccountId: selectedPaymentAccount.id,
+			notes: typeof notes === 'string' ? notes : null,
+			status: 'active'
+		});
+
+		return tenantProfile;
+	});
+
+	const fullTenant = await db.query.tenantProfiles.findFirst({
+		where: eq(tenantProfiles.id, tenant.id),
+		with: TENANT_DETAIL_WITH
+	});
+
+	return json(fullTenant ? toTenantSummaryDto(fullTenant) : null);
+}
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		if (!isTenancyDualWriteEnabled()) {
-			return json(
-				{
-					error: 'Luồng quản lý người thuê mới chưa được bật trên môi trường này',
-					code: 'TENANCY_DUAL_WRITE_DISABLED',
-					requestId: locals.requestId
-				},
-				{ status: 503 }
-			);
-		}
-
-		if (!locals.actor) {
-			return authorizationErrorToResponse(unauthenticatedError());
-		}
-		const actorResult = requireLandlordActor(locals.actor);
-		if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
-
 		const body = await request.json().catch(() => ({}));
 		const hasRoomId = typeof body?.roomId === 'string' && body.roomId.trim() !== '';
-		if (hasRoomId) {
+
+		if (!hasRoomId) {
+			if (!locals.actor) {
+				return authorizationErrorToResponse(unauthenticatedError());
+			}
+			const actorResult = requireLandlordActor(locals.actor);
+			if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
+
+			try {
+				const managedTenant = await createManagedTenant(db, actorResult.value, body, {
+					requestId: locals.requestId
+				});
+				return json(managedTenant, { status: 201 });
+			} catch (error) {
+				if (isManagedTenantServiceError(error)) {
+					return json(
+						{ error: error.message, code: error.code, requestId: locals.requestId },
+						{ status: error.status }
+					);
+				}
+				throw error;
+			}
+		}
+
+		if (isTenancyDualWriteEnabled()) {
+			if (!locals.actor) {
+				return authorizationErrorToResponse(unauthenticatedError());
+			}
+			const actorResult = requireLandlordActor(locals.actor);
+			if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
+
 			return await checkInWithTenancyService(body, actorResult.value, locals.requestId);
 		}
 
-		try {
-			const managedTenant = await createManagedTenant(db, actorResult.value, body, {
-				requestId: locals.requestId
-			});
-			return json(managedTenant, { status: 201 });
-		} catch (error) {
-			if (isManagedTenantServiceError(error)) {
-				return json(
-					{ error: error.message, code: error.code, requestId: locals.requestId },
-					{ status: error.status }
-				);
-			}
-			throw error;
-		}
+		return await legacyCheckIn(body, locals);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
