@@ -2,162 +2,131 @@ import { json } from '@sveltejs/kit';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { specialNotes, rooms, properties } from '$lib/server/db/schema';
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
-import { forbidden, landlordOwnsTenant } from '$lib/server/authz';
+import { requireLandlordActor, requireTenantActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	isAuthorizationError,
+	unauthenticatedError,
+	wrongRoleError
+} from '$lib/server/authorization/errors';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
+import { isCommunicationsError } from '$lib/server/communications/errors';
+import {
+	createSpecialNoteForActor,
+	listSpecialNotesForLandlord,
+	listSpecialNotesForTenant,
+	markSpecialNoteReadForActor
+} from '$lib/server/communications/notifications';
 
-export const GET: RequestHandler = async ({ url, locals }) => {
+function mapCommunicationsError(error: unknown) {
+	if (isCommunicationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
+}
+
+function operationalWrongRoleResponse(actor: App.Locals['actor']) {
+	if (actor?.kind === 'USER') {
+		return authorizationErrorToResponse(wrongRoleError('Không có quyền thực hiện thao tác này'));
+	}
+	return authorizationErrorToResponse(unauthenticatedError());
+}
+
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const landlordId = url.searchParams.get('landlordId');
-		const tenantId = url.searchParams.get('tenantId');
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
-		const conditions = [];
-
-		if (locals.session?.role === 'TENANT') {
-			if (!locals.session.tenantProfileId) return forbidden();
-			if (tenantId && tenantId !== locals.session.tenantProfileId) return forbidden();
-			conditions.push(eq(specialNotes.tenantId, locals.session.tenantProfileId));
-		} else if (locals.session?.role === 'LANDLORD') {
-			if (!locals.session.landlordProfileId) return forbidden();
-			if (landlordId && landlordId !== locals.session.landlordProfileId) return forbidden();
-			conditions.push(
-				inArray(
-					specialNotes.tenantId,
-					db
-						.select({ id: rooms.tenantId })
-						.from(rooms)
-						.innerJoin(properties, eq(rooms.propertyId, properties.id))
-						.where(
-							and(
-								eq(properties.landlordId, locals.session.landlordProfileId),
-								isNotNull(rooms.tenantId)
-							)
-						)
-				)
-			);
-		} else if (landlordId) {
-			conditions.push(
-				inArray(
-					specialNotes.tenantId,
-					db
-						.select({ id: rooms.tenantId })
-						.from(rooms)
-						.innerJoin(properties, eq(rooms.propertyId, properties.id))
-						.where(and(eq(properties.landlordId, landlordId), isNotNull(rooms.tenantId)))
-				)
-			);
-		} else if (tenantId) {
-			conditions.push(eq(specialNotes.tenantId, tenantId));
+		const tenant = requireTenantActor(guard.actor);
+		if (tenant.ok) {
+			return json(await listSpecialNotesForTenant(db, tenant.value));
 		}
 
-		if (conditions.length === 0) {
-			return json({ error: 'Missing landlordId or tenantId' }, { status: 400 });
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			return json(await listSpecialNotesForLandlord(db, landlord.value));
 		}
 
-		const notes = await db.query.specialNotes.findMany({
-			where: and(...conditions),
-			with: {
-				tenant: {
-					with: {
-						user: {
-							columns: { name: true, phone: true }
-						},
-						rooms: {
-							columns: { roomNumber: true }
-						}
-					}
-				}
-			},
-			orderBy: desc(specialNotes.createdAt)
-		});
-
-		return json(notes);
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const body = await request.json();
-		const { tenantId, content, sender } = body;
-		const effectiveTenantId =
-			locals.session?.role === 'TENANT' ? locals.session.tenantProfileId : tenantId;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
-		if (!effectiveTenantId || !content) {
+		const body = await request.json();
+		const content = typeof body.content === 'string' ? body.content : '';
+		if (!content) {
 			return json({ error: 'Missing tenant ID or content' }, { status: 400 });
 		}
-		if (
-			locals.session?.role === 'TENANT' &&
-			tenantId &&
-			tenantId !== locals.session.tenantProfileId
-		) {
-			return forbidden();
-		}
-		if (
-			locals.session?.role === 'LANDLORD' &&
-			!(await landlordOwnsTenant(locals.session.landlordProfileId!, effectiveTenantId))
-		) {
-			return forbidden();
-		}
-		if (locals.session?.role !== 'TENANT' && locals.session?.role !== 'LANDLORD') {
-			return forbidden();
+
+		const tenant = requireTenantActor(guard.actor);
+		if (tenant.ok) {
+			const created = await createSpecialNoteForActor(db, tenant.value, {
+				tenancyId: body.tenancyId,
+				content
+			});
+			return json(created);
 		}
 
-		const created = await db
-			.insert(specialNotes)
-			.values({
-				tenantId: effectiveTenantId,
-				content,
-				sender:
-					locals.session?.role === 'LANDLORD' && sender === 'LANDLORD' ? 'LANDLORD' : 'TENANT',
-				isRead: false
-			})
-			.returning();
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			const created = await createSpecialNoteForActor(db, landlord.value, {
+				managedTenantId: body.managedTenantId ?? body.tenantId,
+				tenancyId: body.tenancyId,
+				content
+			});
+			return json(created);
+		}
 
-		return json(created[0]);
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
-		const body = await request.json();
-		const { id, isRead } = body;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
+		const body = await request.json();
+		const id = typeof body.id === 'string' ? body.id : '';
 		if (!id) {
 			return json({ error: 'Missing notification/note ID' }, { status: 400 });
 		}
 
-		const note = await db.query.specialNotes.findFirst({
-			where: eq(specialNotes.id, id),
-			columns: { tenantId: true }
-		});
-		if (!note) {
-			return json({ error: 'Không tìm thấy lời nhắn' }, { status: 404 });
-		}
-		if (locals.session?.role === 'TENANT' && note.tenantId !== locals.session.tenantProfileId) {
-			return forbidden();
-		}
-		if (
-			locals.session?.role === 'LANDLORD' &&
-			!(await landlordOwnsTenant(locals.session.landlordProfileId!, note.tenantId))
-		) {
-			return forbidden();
-		}
-		if (locals.session?.role !== 'TENANT' && locals.session?.role !== 'LANDLORD') {
-			return forbidden();
+		const tenant = requireTenantActor(guard.actor);
+		if (tenant.ok) {
+			const updated = await markSpecialNoteReadForActor(
+				db,
+				tenant.value,
+				id,
+				body.isRead !== undefined ? body.isRead : true
+			);
+			return json(updated);
 		}
 
-		const updated = await db
-			.update(specialNotes)
-			.set({ isRead: isRead !== undefined ? isRead : true })
-			.where(eq(specialNotes.id, id))
-			.returning();
+		const landlord = requireLandlordActor(guard.actor);
+		if (landlord.ok) {
+			const updated = await markSpecialNoteReadForActor(
+				db,
+				landlord.value,
+				id,
+				body.isRead !== undefined ? body.isRead : true
+			);
+			return json(updated);
+		}
 
-		return json(updated[0]);
+		return operationalWrongRoleResponse(guard.actor);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapCommunicationsError(error);
 	}
 };

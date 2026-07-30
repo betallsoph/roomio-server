@@ -243,15 +243,11 @@ test('tenant denied for unclaimed managed tenant and landlord-only actions', () 
 	assert.equal(createProperty.reason, 'DEFAULT_DENY');
 });
 
-test('tenant asset / conversation / file surfaces default deny until resolvers land', () => {
+test('tenant asset / file surfaces default deny until resolvers land', () => {
 	for (const action of ['list', 'detail', 'create', 'update'] as const) {
 		const asset = authorizeActor(tenant, 'asset', action, baseContext());
 		assert.equal(asset.ok, false);
 		if (!asset.ok) assert.equal(asset.reason, 'DEFAULT_DENY');
-
-		const conversation = authorizeActor(tenant, 'conversation', action, baseContext());
-		assert.equal(conversation.ok, false);
-		if (!conversation.ok) assert.equal(conversation.reason, 'DEFAULT_DENY');
 	}
 
 	for (const visibility of ['LANDLORD_ONLY', 'TENANT_CAN_VIEW', undefined] as const) {
@@ -266,12 +262,22 @@ test('tenant asset / conversation / file surfaces default deny until resolvers l
 	}
 });
 
-test('landlord conversation and file surfaces default deny until AUTH-014/DATA-002', () => {
-	for (const action of ['list', 'detail', 'create', 'update', 'delete'] as const) {
-		const conversation = authorizeActor(landlordA, 'conversation', action, baseContext());
-		assert.equal(conversation.ok, false);
-		if (!conversation.ok) assert.equal(conversation.reason, 'DEFAULT_DENY');
+test('tenant conversation allowed when managed tenant is claimed', () => {
+	for (const action of ['list', 'detail', 'create'] as const) {
+		const conversation = authorizeActor(tenant, 'conversation', action, baseContext());
+		assert.equal(conversation.ok, true);
+	}
+});
 
+test('landlord conversation allowed within landlord scope', () => {
+	for (const action of ['list', 'detail', 'create'] as const) {
+		const conversation = authorizeActor(landlordA, 'conversation', action, baseContext());
+		assert.equal(conversation.ok, true);
+	}
+});
+
+test('landlord file surfaces default deny until DATA-002', () => {
+	for (const action of ['list', 'detail', 'create', 'update', 'delete'] as const) {
 		const file = authorizeActor(landlordA, 'file', action, baseContext());
 		assert.equal(file.ok, false);
 		if (!file.ok) assert.equal(file.reason, 'DEFAULT_DENY');

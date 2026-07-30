@@ -588,21 +588,27 @@ export const maintenanceRequests = pgTable(
 	})
 );
 
-export const specialNotes = pgTable('SpecialNote', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	tenantId: text('tenantId')
-		.notNull()
-		.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
-	content: text('content').notNull(),
-	sender: text('sender').notNull().default('TENANT'), // 'TENANT' | 'LANDLORD' — chiều gửi của lời nhắn
-	isRead: boolean('isRead').notNull().default(false),
-	createdAt: datetime('createdAt').notNull().$defaultFn(now),
-	// AUTH-004 snapshot (nullable, chưa đổi read path).
-	managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
-		onDelete: 'set null'
-	}),
-	tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
-});
+export const specialNotes = pgTable(
+	'SpecialNote',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		tenantId: text('tenantId')
+			.notNull()
+			.references(() => tenantProfiles.id, { onDelete: 'cascade' }),
+		content: text('content').notNull(),
+		sender: text('sender').notNull().default('TENANT'), // 'TENANT' | 'LANDLORD' — chiều gửi của lời nhắn
+		isRead: boolean('isRead').notNull().default(false),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now),
+		managedTenantId: text('managedTenantId').references(() => managedTenants.id, {
+			onDelete: 'set null'
+		}),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' })
+	},
+	(t) => ({
+		landlordIdx: index('SpecialNote_landlordId_idx').on(t.landlordId)
+	})
+);
 
 export const roomAssets = pgTable('RoomAsset', {
 	id: text('id').primaryKey().$defaultFn(uuid),
@@ -616,20 +622,48 @@ export const roomAssets = pgTable('RoomAsset', {
 	notes: text('notes')
 });
 
-export const announcements = pgTable('Announcement', {
-	id: text('id').primaryKey().$defaultFn(uuid),
-	senderId: text('senderId').notNull(), // Người gửi (Super Admin hoặc Landlord)
-	title: text('title').notNull(),
-	content: text('content').notNull(),
-	isImportant: boolean('isImportant').notNull().default(false), // Ghim lên đầu
-	targetType: text('targetType').notNull(), // "ALL" | "PROPERTY" | "BLOCK" | "ROOM" | "TENANT"
-	targetId: text('targetId'), // ID đối tượng nhận tương ứng
-	createdAt: datetime('createdAt').notNull().$defaultFn(now)
-});
+export const announcements = pgTable(
+	'Announcement',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId').references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		senderId: text('senderId').notNull(), // Người gửi (Super Admin hoặc Landlord)
+		title: text('title').notNull(),
+		content: text('content').notNull(),
+		isImportant: boolean('isImportant').notNull().default(false), // Ghim lên đầu
+		targetType: text('targetType').notNull(), // "ALL" | "PROPERTY" | "BLOCK" | "ROOM" | "TENANT"
+		targetId: text('targetId'), // ID đối tượng nhận tương ứng
+		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		landlordIdx: index('Announcement_landlordId_idx').on(t.landlordId)
+	})
+);
+
+export const conversations = pgTable(
+	'Conversation',
+	{
+		id: text('id').primaryKey().$defaultFn(uuid),
+		landlordId: text('landlordId')
+			.notNull()
+			.references(() => landlordProfiles.id, { onDelete: 'cascade' }),
+		managedTenantId: text('managedTenantId')
+			.notNull()
+			.references(() => managedTenants.id, { onDelete: 'restrict' }),
+		tenancyId: text('tenancyId').references(() => tenancies.id, { onDelete: 'set null' }),
+		legacyConversationId: text('legacyConversationId'),
+		createdAt: datetime('createdAt').notNull().$defaultFn(now)
+	},
+	(t) => ({
+		landlordIdx: index('Conversation_landlordId_idx').on(t.landlordId),
+		managedTenantIdx: index('Conversation_managedTenantId_idx').on(t.managedTenantId),
+		legacyUnique: uniqueIndex('Conversation_legacyConversationId_key').on(t.legacyConversationId)
+	})
+);
 
 export const messages = pgTable('Message', {
 	id: text('id').primaryKey().$defaultFn(uuid),
-	conversationId: text('conversationId').notNull(), // Định dạng `${landlordProfileId}_${tenantProfileId}`
+	conversationId: text('conversationId').notNull(), // Conversation.id hoặc legacy `${landlordId}_${tenantProfileId}`
 	senderId: text('senderId').notNull(), // User.id của người gửi
 	content: text('content').notNull(),
 	createdAt: datetime('createdAt').notNull().$defaultFn(now)
@@ -897,7 +931,10 @@ export const landlordProfilesRelations = relations(landlordProfiles, ({ one, man
 	paymentTransactions: many(paymentTransactions),
 	paymentAccounts: many(paymentAccounts),
 	subscriptionChangeRequests: many(subscriptionChangeRequests),
-	auditEvents: many(auditEvents)
+	auditEvents: many(auditEvents),
+	announcements: many(announcements),
+	conversations: many(conversations),
+	specialNotes: many(specialNotes)
 }));
 
 export const paymentAccountsRelations = relations(paymentAccounts, ({ one, many }) => ({
@@ -1039,7 +1076,30 @@ export const maintenanceRequestsRelations = relations(maintenanceRequests, ({ on
 }));
 
 export const specialNotesRelations = relations(specialNotes, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [specialNotes.landlordId],
+		references: [landlordProfiles.id]
+	}),
 	tenant: one(tenantProfiles, { fields: [specialNotes.tenantId], references: [tenantProfiles.id] })
+}));
+
+export const announcementsRelations = relations(announcements, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [announcements.landlordId],
+		references: [landlordProfiles.id]
+	})
+}));
+
+export const conversationsRelations = relations(conversations, ({ one }) => ({
+	landlord: one(landlordProfiles, {
+		fields: [conversations.landlordId],
+		references: [landlordProfiles.id]
+	}),
+	managedTenant: one(managedTenants, {
+		fields: [conversations.managedTenantId],
+		references: [managedTenants.id]
+	}),
+	tenancy: one(tenancies, { fields: [conversations.tenancyId], references: [tenancies.id] })
 }));
 
 export const roomAssetsRelations = relations(roomAssets, ({ one }) => ({
