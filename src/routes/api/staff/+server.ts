@@ -14,6 +14,11 @@ import {
 	staffRouteErrorResponse
 } from '$lib/server/staff/landlord-request';
 import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import { requireStaffActor } from '$lib/server/authorization/actor';
+import {
 	assertStaffOwnedByLandlord,
 	StaffResourceNotFoundError
 } from '$lib/server/staff/assignments';
@@ -28,9 +33,30 @@ const STAFF_USER_COLUMNS = {
 	isActive: true
 } as const;
 
-// Danh sách nhân viên của landlord trong ActorContext (không tin query landlordId)
+// Danh sách nhân viên của landlord; staff chỉ xem own permission summary.
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
+		if (!locals.actor) {
+			return authorizationErrorToResponse(unauthenticatedError());
+		}
+
+		const staffGuard = requireStaffActor(locals.actor);
+		if (staffGuard.ok) {
+			const actor = staffGuard.value;
+			const self = await db.query.staffProfiles.findFirst({
+				where: eq(staffProfiles.id, actor.staffId),
+				with: { user: { columns: STAFF_USER_COLUMNS } }
+			});
+			if (!self) {
+				return json({ error: 'Không tìm thấy nhân viên' }, { status: 404 });
+			}
+			const { propertyIds, permissions } = await listStaffAssignmentsPermissions(
+				actor.staffId,
+				actor.landlordId
+			);
+			return json({ ...self, propertyIds, permissions });
+		}
+
 		const guard = resolveLandlordActorFromRequest({ actor: locals.actor });
 		if (!guard.ok) {
 			return guard.response;
