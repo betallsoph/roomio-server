@@ -68,6 +68,14 @@ if (skipReason) {
 		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [`tg-profile-%`]);
 	}
 
+	/** Prior tests leave ACTIVE tenancies on shared fixture rooms; end before reusing a room. */
+	async function endActiveTenanciesOnRoom(roomId: string): Promise<void> {
+		await db
+			.update(tenancies)
+			.set({ status: 'ENDED', endDate: '2026-07-01' })
+			.where(and(eq(tenancies.roomId, roomId), eq(tenancies.status, 'ACTIVE')));
+	}
+
 	async function countUsersLike(prefix: string): Promise<number> {
 		const rows = await db
 			.select({ count: sql<number>`count(*)::int` })
@@ -293,6 +301,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Already claimed issuance'
 		});
+		await endActiveTenanciesOnRoom(fixture.roomA3);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA3,
 			managedTenantId: managed.id,
@@ -331,6 +340,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Inactive actor'
 		});
+		await endActiveTenanciesOnRoom(fixture.roomA1);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA1,
 			managedTenantId: managed.id,
@@ -369,6 +379,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Already claimed'
 		});
+		await endActiveTenanciesOnRoom(fixture.roomA2);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA2,
 			managedTenantId: managed.id,
@@ -391,6 +402,7 @@ if (skipReason) {
 			isActive: true
 		});
 		await db.insert(tenantProfiles).values({ id: tenantProfileId, userId: tenantUserId });
+		// Simulate external claim after invite issuance: invite snapshot stays at N, row is N+1.
 		await db
 			.update(managedTenants)
 			.set({ claimedByUserId: tenantUserId, claimVersion: 1 })
