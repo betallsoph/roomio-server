@@ -365,7 +365,7 @@ if (skipReason) {
 		);
 	});
 
-	test('already claimed managed tenant still consumes a pending invite for same actor', async () => {
+	test('stale pending invite is rejected when managed tenant claim version advanced', async () => {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Already claimed'
 		});
@@ -396,19 +396,23 @@ if (skipReason) {
 			.set({ claimedByUserId: tenantUserId, claimVersion: 1 })
 			.where(eq(managedTenants.id, managed.id));
 
-		const accepted = await acceptTenantInvite(db, {
-			token: issued.token,
-			actorUserId: tenantUserId,
-			actorTenantProfileId: tenantProfileId
-		});
-		assert.equal(accepted.idempotent, true);
+		await assert.rejects(
+			() =>
+				acceptTenantInvite(db, {
+					token: issued.token,
+					actorUserId: tenantUserId,
+					actorTenantProfileId: tenantProfileId
+				}),
+			(error: unknown) =>
+				isTenantInviteServiceError(error) && error.code === 'INVITE_STALE_CLAIM_VERSION'
+		);
 
 		const inviteRow = await db
 			.select({ status: tenantInvites.status, usedAt: tenantInvites.usedAt })
 			.from(tenantInvites)
 			.where(eq(tenantInvites.id, issued.inviteId));
-		assert.equal(inviteRow[0]?.status, 'ACCEPTED');
-		assert.ok(inviteRow[0]?.usedAt);
+		assert.equal(inviteRow[0]?.status, 'PENDING');
+		assert.equal(inviteRow[0]?.usedAt, null);
 	});
 
 	test('foreign landlord cannot issue invite for managed tenant B', async () => {
