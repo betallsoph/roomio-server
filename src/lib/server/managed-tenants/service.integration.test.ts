@@ -11,6 +11,7 @@ import {
 	managedTenants,
 	tenantInvites,
 	tenantProfiles,
+	rooms,
 	tenancies,
 	users
 } from '../db/schema.js';
@@ -31,7 +32,7 @@ import {
 	type TenancyFixture,
 	type TenancyTestDb
 } from '../tenancies/test-fixtures.js';
-import { startTenancy } from '../tenancies/service.js';
+import { startTenancy, endTenancy } from '../tenancies/service.js';
 
 const skipReason = tenancyIntegrationSkipReason();
 
@@ -68,12 +69,24 @@ if (skipReason) {
 		await pool.query(`DELETE FROM "TenantProfile" WHERE id LIKE $1`, [`tg-profile-%`]);
 	}
 
-	/** Prior tests leave ACTIVE tenancies on shared fixture rooms; end before reusing a room. */
-	async function endActiveTenanciesOnRoom(roomId: string): Promise<void> {
-		await db
-			.update(tenancies)
-			.set({ status: 'ENDED', endDate: '2026-07-01' })
+	/** Prior tests leave ACTIVE tenancies + room cache on shared fixture rooms. */
+	async function releaseRoomForNewTenancy(roomId: string): Promise<void> {
+		const active = await db
+			.select({ id: tenancies.id, startDate: tenancies.startDate })
+			.from(tenancies)
 			.where(and(eq(tenancies.roomId, roomId), eq(tenancies.status, 'ACTIVE')));
+
+		for (const row of active) {
+			await endTenancy(db, fixture.landlordA.actor, {
+				tenancyId: row.id,
+				endDate: row.startDate
+			});
+		}
+
+		await db
+			.update(rooms)
+			.set({ tenantId: null, currentManagedTenantId: null })
+			.where(eq(rooms.id, roomId));
 	}
 
 	async function countUsersLike(prefix: string): Promise<number> {
@@ -301,7 +314,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Already claimed issuance'
 		});
-		await endActiveTenanciesOnRoom(fixture.roomA3);
+		await releaseRoomForNewTenancy(fixture.roomA3);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA3,
 			managedTenantId: managed.id,
@@ -340,7 +353,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Inactive actor'
 		});
-		await endActiveTenanciesOnRoom(fixture.roomA1);
+		await releaseRoomForNewTenancy(fixture.roomA1);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA1,
 			managedTenantId: managed.id,
@@ -379,7 +392,7 @@ if (skipReason) {
 		const managed = await createManagedTenant(db, fixture.landlordA.actor, {
 			displayName: 'Already claimed'
 		});
-		await endActiveTenanciesOnRoom(fixture.roomA2);
+		await releaseRoomForNewTenancy(fixture.roomA2);
 		const started = await startTenancy(db, fixture.landlordA.actor, {
 			roomId: fixture.roomA2,
 			managedTenantId: managed.id,
