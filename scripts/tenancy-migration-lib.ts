@@ -57,19 +57,42 @@ export type ResourceMappingRecord = {
 	id: string;
 	managedTenantId: string | null;
 	tenancyId: string | null;
+	previousManagedTenantId: string | null;
+	previousTenancyId: string | null;
+};
+
+export type RoomCompatibilitySnapshot = {
+	roomId: string;
+	previousCurrentManagedTenantId: string | null;
+	writtenCurrentManagedTenantId: string;
+};
+
+export type BackfillInputScope = {
+	landlordId: string | null;
+	limit: number;
+	batchSize: number;
+};
+
+export type DryRunVirtualPlan = {
+	managedTenantByLegacyKey: Record<string, string>;
+	tenancies: TenancyCandidate[];
 };
 
 export type BackfillCheckpoint = {
+	schemaVersion: number;
 	runId: string;
 	startedAt: string;
 	landlordId: string | null;
 	dryRun: boolean;
+	inputScope: BackfillInputScope;
 	cursor: { phase: BackfillPhase; lastId: string | null };
 	stats: BackfillReport;
+	dryRunVirtual?: DryRunVirtualPlan;
 	created: {
 		managedTenantIds: string[];
 		tenancyIds: string[];
 		resourceMappings: ResourceMappingRecord[];
+		roomCompatibilitySnapshots: RoomCompatibilitySnapshot[];
 	};
 };
 
@@ -104,8 +127,121 @@ export type ProfilerAggregate = {
 };
 
 export const BACKFILL_SOURCE_PREFIX = 'AUTH007';
+export const CHECKPOINT_SCHEMA_VERSION = 1;
 export const DEFAULT_BATCH_SIZE = 100;
 export const DEFAULT_CHECKPOINT_DIR = '.checkpoints/tenancy-backfill';
+
+export function managedTenantLegacyKey(landlordId: string, legacyTenantProfileId: string): string {
+	return `${landlordId}:${legacyTenantProfileId}`;
+}
+
+export function buildInputScope(opts: BackfillCliOptions): BackfillInputScope {
+	return {
+		landlordId: opts.landlordId ?? null,
+		limit: opts.limit,
+		batchSize: opts.batchSize
+	};
+}
+
+export function validateCheckpointResumeContext(
+	checkpoint: BackfillCheckpoint,
+	opts: BackfillCliOptions
+): void {
+	if (checkpoint.schemaVersion !== CHECKPOINT_SCHEMA_VERSION) {
+		throw new Error(
+			`Checkpoint schemaVersion mismatch: expected ${CHECKPOINT_SCHEMA_VERSION}, got ${checkpoint.schemaVersion}`
+		);
+	}
+	const expectedDryRun = !opts.commit;
+	if (checkpoint.dryRun !== expectedDryRun) {
+		throw new Error(
+			`Checkpoint mode mismatch: checkpoint dryRun=${checkpoint.dryRun} but current mode is ${expectedDryRun ? 'dry-run' : 'commit'}`
+		);
+	}
+	const expectedLandlord = opts.landlordId ?? null;
+	if (checkpoint.landlordId !== expectedLandlord) {
+		throw new Error(
+			`Checkpoint landlordId mismatch: checkpoint=${checkpoint.landlordId ?? 'null'} current=${expectedLandlord ?? 'null'}`
+		);
+	}
+	const currentScope = buildInputScope(opts);
+	if (
+		checkpoint.inputScope.landlordId !== currentScope.landlordId ||
+		checkpoint.inputScope.limit !== currentScope.limit ||
+		checkpoint.inputScope.batchSize !== currentScope.batchSize
+	) {
+		throw new Error('Checkpoint input scope mismatch (landlordId/limit/batchSize)');
+	}
+}
+
+export function ensureDryRunVirtual(checkpoint: BackfillCheckpoint): DryRunVirtualPlan {
+	if (!checkpoint.dryRunVirtual) {
+		checkpoint.dryRunVirtual = { managedTenantByLegacyKey: {}, tenancies: [] };
+	}
+	return checkpoint.dryRunVirtual;
+}
+
+export function resolveTenancyCandidates(
+	dbCandidates: TenancyCandidate[],
+	checkpoint: BackfillCheckpoint
+): TenancyCandidate[] {
+	if (!checkpoint.dryRun) return dbCandidates;
+	const virtual = ensureDryRunVirtual(checkpoint);
+	const byId = new Map<string, TenancyCandidate>();
+	for (const row of dbCandidates) byId.set(row.id, row);
+	for (const row of virtual.tenancies) byId.set(row.id, row);
+	return [...byId.values()];
+}
+
+export function canRollbackResourceMapping(
+	mapping: ResourceMappingRecord,
+	current: { managedTenantId: string | null; tenancyId: string | null }
+): boolean {
+	return (
+		current.managedTenantId === mapping.managedTenantId && current.tenancyId === mapping.tenancyId
+	);
+}
+
+export function canRollbackRoomCompatibility(
+	snapshot: RoomCompatibilitySnapshot,
+	currentCurrentManagedTenantId: string | null
+): boolean {
+	return currentCurrentManagedTenantId === snapshot.writtenCurrentManagedTenantId;
+}
+
+function ensureManagedTenantRecorded(checkpoint: BackfillCheckpoint, id: string): void {
+	if (!checkpoint.created.managedTenantIds.includes(id)) {
+		checkpoint.created.managedTenantIds.push(id);
+	}
+}
+
+function ensureTenancyRecorded(checkpoint: BackfillCheckpoint, id: string): void {
+	if (!checkpoint.created.tenancyIds.includes(id)) {
+		checkpoint.created.tenancyIds.push(id);
+	}
+}
+
+function ensureResourceMappingRecorded(
+	checkpoint: BackfillCheckpoint,
+	mapping: ResourceMappingRecord
+): void {
+	if (
+		!checkpoint.created.resourceMappings.some(
+			(m) => m.table === mapping.table && m.id === mapping.id
+		)
+	) {
+		checkpoint.created.resourceMappings.push(mapping);
+	}
+}
+
+function ensureRoomSnapshotRecorded(
+	checkpoint: BackfillCheckpoint,
+	snapshot: RoomCompatibilitySnapshot
+): void {
+	if (!checkpoint.created.roomCompatibilitySnapshots.some((s) => s.roomId === snapshot.roomId)) {
+		checkpoint.created.roomCompatibilitySnapshots.push(snapshot);
+	}
+}
 
 export function mergeReport(base: BackfillReport, delta: Partial<BackfillReport>): BackfillReport {
 	return {
@@ -380,23 +516,31 @@ export async function saveCheckpoint(
 	checkpointDir: string,
 	checkpoint: BackfillCheckpoint
 ): Promise<void> {
-	await fs.mkdir(checkpointDir, { recursive: true });
-	await fs.writeFile(
-		checkpointPath(checkpointDir, checkpoint.runId),
-		JSON.stringify(checkpoint, null, 2),
-		'utf8'
-	);
+	await fs.mkdir(checkpointDir, { recursive: true, mode: 0o700 });
+	const filePath = checkpointPath(checkpointDir, checkpoint.runId);
+	const tmpPath = `${filePath}.tmp.${process.pid}`;
+	const payload = JSON.stringify(checkpoint, null, 2);
+	await fs.writeFile(tmpPath, payload, { encoding: 'utf8', mode: 0o600 });
+	await fs.rename(tmpPath, filePath);
+	await fs.chmod(filePath, 0o600);
 }
 
 export function newCheckpoint(opts: BackfillCliOptions, runId: string): BackfillCheckpoint {
 	return {
+		schemaVersion: CHECKPOINT_SCHEMA_VERSION,
 		runId,
 		startedAt: new Date().toISOString(),
 		landlordId: opts.landlordId ?? null,
 		dryRun: !opts.commit,
+		inputScope: buildInputScope(opts),
 		cursor: { phase: 'managed_tenants', lastId: null },
 		stats: { ...EMPTY_REPORT },
-		created: { managedTenantIds: [], tenancyIds: [], resourceMappings: [] }
+		created: {
+			managedTenantIds: [],
+			tenancyIds: [],
+			resourceMappings: [],
+			roomCompatibilitySnapshots: []
+		}
 	};
 }
 
@@ -486,9 +630,26 @@ export async function runManagedTenantBatch(
 		delta.scanned += 1;
 		const cursorKey = `${row.landlordId}:${row.legacyTenantProfileId}`;
 		checkpoint.cursor.lastId = cursorKey;
+		const legacyKey = managedTenantLegacyKey(row.landlordId, row.legacyTenantProfileId);
+
+		if (checkpoint.dryRun) {
+			const virtual = ensureDryRunVirtual(checkpoint);
+			if (virtual.managedTenantByLegacyKey[legacyKey]) {
+				delta.skipped += 1;
+				continue;
+			}
+			const managedTenantId = crypto.randomUUID();
+			virtual.managedTenantByLegacyKey[legacyKey] = managedTenantId;
+			delta.managedTenantsCreated += 1;
+			ensureManagedTenantRecorded(checkpoint, managedTenantId);
+			continue;
+		}
 
 		const existing = await db
-			.select({ id: managedTenants.id, claimedByUserId: managedTenants.claimedByUserId })
+			.select({
+				id: managedTenants.id,
+				backfillSource: managedTenants.backfillSource
+			})
 			.from(managedTenants)
 			.where(
 				and(
@@ -499,6 +660,9 @@ export async function runManagedTenantBatch(
 			.limit(1);
 
 		if (existing.length > 0) {
+			if (belongsToBackfillRun(existing[0]!.backfillSource, checkpoint.runId)) {
+				ensureManagedTenantRecorded(checkpoint, existing[0]!.id);
+			}
 			delta.skipped += 1;
 			continue;
 		}
@@ -507,30 +671,31 @@ export async function runManagedTenantBatch(
 		const backfillSource = buildBackfillSource(checkpoint.runId, 'LEGACY_TENANT_PROFILE');
 		const { claimedByUserId, claimVersion } = backfillManagedTenantClaimFields();
 
-		if (!opts.commit) {
-			delta.managedTenantsCreated += 1;
-			checkpoint.created.managedTenantIds.push(managedTenantId);
-			continue;
-		}
-
 		try {
-			await db.insert(managedTenants).values({
-				id: managedTenantId,
-				landlordId: row.landlordId,
-				displayName: row.displayName,
-				emailSnapshot: row.email,
-				phoneSnapshot: row.phone,
-				claimedByUserId,
-				claimVersion,
-				status: 'ACTIVE',
-				legacyTenantProfileId: row.legacyTenantProfileId,
-				backfillSource,
-				needsReview: false,
-				createdByActorType: 'SYSTEM',
-				createdByUserId: null
-			});
-			delta.managedTenantsCreated += 1;
-			checkpoint.created.managedTenantIds.push(managedTenantId);
+			const inserted = await db
+				.insert(managedTenants)
+				.values({
+					id: managedTenantId,
+					landlordId: row.landlordId,
+					displayName: row.displayName,
+					emailSnapshot: row.email,
+					phoneSnapshot: row.phone,
+					claimedByUserId,
+					claimVersion,
+					status: 'ACTIVE',
+					legacyTenantProfileId: row.legacyTenantProfileId,
+					backfillSource,
+					needsReview: false,
+					createdByActorType: 'SYSTEM',
+					createdByUserId: null
+				})
+				.returning({ id: managedTenants.id });
+			if (inserted.length === 1) {
+				delta.managedTenantsCreated += 1;
+				ensureManagedTenantRecorded(checkpoint, inserted[0]!.id);
+			} else {
+				delta.errors += 1;
+			}
 		} catch {
 			delta.errors += 1;
 		}
@@ -597,6 +762,14 @@ export async function runContractTenancyBatch(
 		delta.scanned += 1;
 		checkpoint.cursor.lastId = row.contractId;
 		if (row.existingTenancyId) {
+			const existingTenancy = await db
+				.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
+				.from(tenancies)
+				.where(eq(tenancies.id, row.existingTenancyId))
+				.limit(1);
+			if (belongsToBackfillRun(existingTenancy[0]?.backfillSource, checkpoint.runId)) {
+				ensureTenancyRecorded(checkpoint, row.existingTenancyId);
+			}
 			delta.skipped += 1;
 			continue;
 		}
@@ -605,17 +778,26 @@ export async function runContractTenancyBatch(
 			continue;
 		}
 
-		const managed = await db
-			.select({ id: managedTenants.id })
-			.from(managedTenants)
-			.where(
-				and(
-					eq(managedTenants.landlordId, row.landlordId),
-					eq(managedTenants.legacyTenantProfileId, row.tenantId)
+		let managedTenantId: string | null = null;
+		if (checkpoint.dryRun) {
+			const virtual = ensureDryRunVirtual(checkpoint);
+			managedTenantId =
+				virtual.managedTenantByLegacyKey[managedTenantLegacyKey(row.landlordId, row.tenantId)] ??
+				null;
+		} else {
+			const managed = await db
+				.select({ id: managedTenants.id })
+				.from(managedTenants)
+				.where(
+					and(
+						eq(managedTenants.landlordId, row.landlordId),
+						eq(managedTenants.legacyTenantProfileId, row.tenantId)
+					)
 				)
-			)
-			.limit(1);
-		if (managed.length === 0) {
+				.limit(1);
+			managedTenantId = managed[0]?.id ?? null;
+		}
+		if (!managedTenantId) {
 			delta.unresolved += 1;
 			continue;
 		}
@@ -625,45 +807,69 @@ export async function runContractTenancyBatch(
 			row.status === 'active' && row.endDate >= new Date().toISOString().slice(0, 10);
 		const backfillSource = buildBackfillSource(checkpoint.runId, 'CONTRACT');
 
-		if (!opts.commit) {
+		if (checkpoint.dryRun) {
+			const virtual = ensureDryRunVirtual(checkpoint);
+			virtual.tenancies.push({
+				id: tenancyId,
+				managedTenantId,
+				roomId: row.roomId,
+				startDate: row.startDate,
+				endDate: isActive ? null : row.endDate,
+				status: isActive ? 'ACTIVE' : 'ENDED',
+				backfillSource
+			});
 			delta.tenanciesMapped += 1;
-			checkpoint.created.tenancyIds.push(tenancyId);
+			ensureTenancyRecorded(checkpoint, tenancyId);
 			continue;
 		}
 
 		try {
-			await db.transaction(async (tx) => {
-				await tx.insert(tenancies).values({
-					id: tenancyId,
-					landlordId: row.landlordId,
-					propertyId: row.propertyId,
-					roomId: row.roomId,
-					managedTenantId: managed[0]!.id,
-					status: isActive ? 'ACTIVE' : 'ENDED',
-					startDate: row.startDate,
-					plannedEndDate: row.endDate,
-					endDate: isActive ? null : row.endDate,
-					depositRequired: 0,
-					backfillSource,
-					needsReview: false,
-					createdByActorType: 'SYSTEM',
-					createdByUserId: null
-				});
-				await tx
+			const txResult = await db.transaction(async (tx) => {
+				const inserted = await tx
+					.insert(tenancies)
+					.values({
+						id: tenancyId,
+						landlordId: row.landlordId,
+						propertyId: row.propertyId,
+						roomId: row.roomId,
+						managedTenantId,
+						status: isActive ? 'ACTIVE' : 'ENDED',
+						startDate: row.startDate,
+						plannedEndDate: row.endDate,
+						endDate: isActive ? null : row.endDate,
+						depositRequired: 0,
+						backfillSource,
+						needsReview: false,
+						createdByActorType: 'SYSTEM',
+						createdByUserId: null
+					})
+					.returning({ id: tenancies.id });
+				if (inserted.length !== 1) return null;
+
+				const updated = await tx
 					.update(contracts)
 					.set({
-						managedTenantId: managed[0]!.id,
+						managedTenantId,
 						tenancyId
 					})
-					.where(and(eq(contracts.id, row.contractId), isNull(contracts.tenancyId)));
+					.where(and(eq(contracts.id, row.contractId), isNull(contracts.tenancyId)))
+					.returning({ id: contracts.id });
+				if (updated.length !== 1) return null;
+				return { ok: true as const };
 			});
+			if (!txResult) {
+				delta.errors += 1;
+				continue;
+			}
 			delta.tenanciesMapped += 1;
-			checkpoint.created.tenancyIds.push(tenancyId);
-			checkpoint.created.resourceMappings.push({
+			ensureTenancyRecorded(checkpoint, tenancyId);
+			ensureResourceMappingRecorded(checkpoint, {
 				table: 'Contract',
 				id: row.contractId,
-				managedTenantId: managed[0]!.id,
-				tenancyId
+				managedTenantId,
+				tenancyId,
+				previousManagedTenantId: null,
+				previousTenancyId: null
 			});
 		} catch {
 			delta.errors += 1;
@@ -749,26 +955,38 @@ export async function runCurrentRoomTenancyBatch(
 		}
 
 		const activeTenancy = await db
-			.select({ id: tenancies.id })
+			.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
 			.from(tenancies)
 			.where(and(eq(tenancies.roomId, row.roomId), eq(tenancies.status, 'ACTIVE')))
 			.limit(1);
 		if (activeTenancy.length > 0) {
+			if (belongsToBackfillRun(activeTenancy[0]!.backfillSource, checkpoint.runId)) {
+				ensureTenancyRecorded(checkpoint, activeTenancy[0]!.id);
+			}
 			delta.skipped += 1;
 			continue;
 		}
 
-		const managed = await db
-			.select({ id: managedTenants.id })
-			.from(managedTenants)
-			.where(
-				and(
-					eq(managedTenants.landlordId, row.landlordId),
-					eq(managedTenants.legacyTenantProfileId, row.tenantId)
+		let managedTenantId: string | null = null;
+		if (checkpoint.dryRun) {
+			const virtual = ensureDryRunVirtual(checkpoint);
+			managedTenantId =
+				virtual.managedTenantByLegacyKey[managedTenantLegacyKey(row.landlordId, row.tenantId)] ??
+				null;
+		} else {
+			const managed = await db
+				.select({ id: managedTenants.id })
+				.from(managedTenants)
+				.where(
+					and(
+						eq(managedTenants.landlordId, row.landlordId),
+						eq(managedTenants.legacyTenantProfileId, row.tenantId)
+					)
 				)
-			)
-			.limit(1);
-		if (managed.length === 0) {
+				.limit(1);
+			managedTenantId = managed[0]?.id ?? null;
+		}
+		if (!managedTenantId) {
 			delta.unresolved += 1;
 			continue;
 		}
@@ -781,35 +999,69 @@ export async function runCurrentRoomTenancyBatch(
 		const tenancyId = crypto.randomUUID();
 		const backfillSource = buildBackfillSource(checkpoint.runId, 'CURRENT_ROOM');
 
-		if (!opts.commit) {
+		if (checkpoint.dryRun) {
+			const virtual = ensureDryRunVirtual(checkpoint);
+			virtual.tenancies.push({
+				id: tenancyId,
+				managedTenantId,
+				roomId: row.roomId,
+				startDate: row.moveInDate,
+				endDate: null,
+				status: 'ACTIVE',
+				backfillSource
+			});
 			delta.tenanciesMapped += 1;
-			checkpoint.created.tenancyIds.push(tenancyId);
+			ensureTenancyRecorded(checkpoint, tenancyId);
 			continue;
 		}
 
+		const roomBefore = await db
+			.select({ currentManagedTenantId: rooms.currentManagedTenantId })
+			.from(rooms)
+			.where(eq(rooms.id, row.roomId))
+			.limit(1);
+		const previousCurrentManagedTenantId = roomBefore[0]?.currentManagedTenantId ?? null;
+
 		try {
-			await db.transaction(async (tx) => {
-				await tx.insert(tenancies).values({
-					id: tenancyId,
-					landlordId: row.landlordId,
-					propertyId: row.propertyId,
-					roomId: row.roomId,
-					managedTenantId: managed[0]!.id,
-					status: 'ACTIVE',
-					startDate: row.moveInDate!,
-					depositRequired: 0,
-					backfillSource,
-					needsReview: true,
-					createdByActorType: 'SYSTEM',
-					createdByUserId: null
-				});
-				await tx
+			const txResult = await db.transaction(async (tx) => {
+				const inserted = await tx
+					.insert(tenancies)
+					.values({
+						id: tenancyId,
+						landlordId: row.landlordId,
+						propertyId: row.propertyId,
+						roomId: row.roomId,
+						managedTenantId,
+						status: 'ACTIVE',
+						startDate: row.moveInDate!,
+						depositRequired: 0,
+						backfillSource,
+						needsReview: true,
+						createdByActorType: 'SYSTEM',
+						createdByUserId: null
+					})
+					.returning({ id: tenancies.id });
+				if (inserted.length !== 1) return null;
+
+				const updated = await tx
 					.update(rooms)
-					.set({ currentManagedTenantId: managed[0]!.id })
-					.where(eq(rooms.id, row.roomId));
+					.set({ currentManagedTenantId: managedTenantId })
+					.where(eq(rooms.id, row.roomId))
+					.returning({ id: rooms.id });
+				if (updated.length !== 1) return null;
+				return { ok: true as const };
 			});
+			if (!txResult) {
+				delta.errors += 1;
+				continue;
+			}
 			delta.tenanciesMapped += 1;
-			checkpoint.created.tenancyIds.push(tenancyId);
+			ensureTenancyRecorded(checkpoint, tenancyId);
+			ensureRoomSnapshotRecorded(checkpoint, {
+				roomId: row.roomId,
+				previousCurrentManagedTenantId,
+				writtenCurrentManagedTenantId: managedTenantId
+			});
 		} catch {
 			delta.errors += 1;
 		}
@@ -912,25 +1164,55 @@ export async function runResourceMappingBatch(
 			continue;
 		}
 
-		if (!opts.commit) {
+		if (checkpoint.dryRun) {
 			delta.tenanciesMapped += 1;
 			continue;
 		}
 
 		try {
-			await db
+			const updated = await db
 				.update(invoices)
 				.set({
 					managedTenantId: decision.managedTenantId,
 					tenancyId: decision.tenancyId
 				})
-				.where(and(eq(invoices.id, row.id), isNull(invoices.tenancyId)));
+				.where(and(eq(invoices.id, row.id), isNull(invoices.tenancyId)))
+				.returning({ id: invoices.id });
+			if (updated.length !== 1) {
+				const current = await db
+					.select({
+						managedTenantId: invoices.managedTenantId,
+						tenancyId: invoices.tenancyId
+					})
+					.from(invoices)
+					.where(eq(invoices.id, row.id))
+					.limit(1);
+				if (
+					current[0]?.managedTenantId === decision.managedTenantId &&
+					current[0]?.tenancyId === decision.tenancyId
+				) {
+					delta.skipped += 1;
+					ensureResourceMappingRecorded(checkpoint, {
+						table: 'Invoice',
+						id: row.id,
+						managedTenantId: decision.managedTenantId,
+						tenancyId: decision.tenancyId,
+						previousManagedTenantId: row.managedTenantId,
+						previousTenancyId: row.tenancyId
+					});
+				} else {
+					delta.errors += 1;
+				}
+				continue;
+			}
 			delta.tenanciesMapped += 1;
-			checkpoint.created.resourceMappings.push({
+			ensureResourceMappingRecorded(checkpoint, {
 				table: 'Invoice',
 				id: row.id,
 				managedTenantId: decision.managedTenantId,
-				tenancyId: decision.tenancyId
+				tenancyId: decision.tenancyId,
+				previousManagedTenantId: row.managedTenantId,
+				previousTenancyId: row.tenancyId
 			});
 		} catch {
 			delta.errors += 1;
@@ -1096,60 +1378,214 @@ export async function runTenancyReconciliation(
 	if (landlordId) await validateLandlordId(db, landlordId);
 
 	const findings: ReconcileFinding[] = [];
+	const landlordFilter = landlordId ? eq(properties.landlordId, landlordId) : undefined;
+	const tenancyLandlordFilter = landlordId ? eq(tenancies.landlordId, landlordId) : undefined;
 
-	const activeDuplicates = await db
-		.select({ roomId: tenancies.roomId, count: sql<number>`count(*)::int` })
+	const duplicateActiveRooms = await db
+		.select({ roomId: tenancies.roomId })
 		.from(tenancies)
-		.where(
-			and(
-				eq(tenancies.status, 'ACTIVE'),
-				landlordId ? eq(tenancies.landlordId, landlordId) : undefined
-			)
-		)
+		.where(and(eq(tenancies.status, 'ACTIVE'), tenancyLandlordFilter))
 		.groupBy(tenancies.roomId)
 		.having(sql`count(*) > 1`);
 
 	findings.push({
 		code: 'DUPLICATE_ACTIVE_TENANCY_PER_ROOM',
-		count: activeDuplicates.length,
-		sampleIds: activeDuplicates.map((r) => r.roomId).slice(0, 20)
+		count: duplicateActiveRooms.length,
+		sampleIds: duplicateActiveRooms.map((r) => r.roomId).slice(0, 20)
 	});
 
-	const orphanScope = await db
-		.select({ id: invoices.id })
-		.from(invoices)
-		.where(
-			and(
-				or(isNotNull(invoices.managedTenantId), isNotNull(invoices.tenancyId)),
-				isNull(invoices.tenancyId)
-			)
-		)
-		.limit(50);
-
+	const overlappingRooms = await loadOverlappingContractRooms(db, landlordId);
 	findings.push({
-		code: 'PARTIAL_SCOPE_SNAPSHOT',
-		count: orphanScope.length,
-		sampleIds: orphanScope.map((r) => r.id)
+		code: 'OVERLAPPING_CONTRACT_WINDOWS',
+		count: overlappingRooms.size,
+		sampleIds: [...overlappingRooms].slice(0, 20)
 	});
 
-	const outsideRange = await db
-		.select({ invoiceId: invoices.id })
-		.from(invoices)
-		.innerJoin(tenancies, eq(invoices.tenancyId, tenancies.id))
-		.where(
-			and(
-				sql`(${invoices.month} || '-01')::date < ${tenancies.startDate}
-          OR (${invoices.month} || '-01')::date > COALESCE(${tenancies.endDate}, '9999-12-31'::date)`,
-				landlordId ? eq(tenancies.landlordId, landlordId) : undefined
-			)
-		)
-		.limit(50);
+	const resourceTables = [
+		{
+			code: 'UNSCOPED_INVOICES',
+			partialCode: 'PARTIAL_SCOPE_INVOICE',
+			orphanCode: 'ORPHAN_SCOPE_INVOICE',
+			outsideCode: 'INVOICE_OUTSIDE_TENANCY_RANGE',
+			table: invoices,
+			idCol: invoices.id,
+			roomJoin: true,
+			dateExpr: sql`(${invoices.month} || '-01')::date`
+		},
+		{
+			code: 'UNSCOPED_CONTRACTS',
+			partialCode: 'PARTIAL_SCOPE_CONTRACT',
+			orphanCode: 'ORPHAN_SCOPE_CONTRACT',
+			outsideCode: 'CONTRACT_OUTSIDE_TENANCY_RANGE',
+			table: contracts,
+			idCol: contracts.id,
+			roomJoin: true,
+			dateExpr: sql`${contracts.startDate}::date`
+		},
+		{
+			code: 'UNSCOPED_METER_READINGS',
+			partialCode: 'PARTIAL_SCOPE_METER_READING',
+			orphanCode: 'ORPHAN_SCOPE_METER_READING',
+			outsideCode: 'METER_READING_OUTSIDE_TENANCY_RANGE',
+			table: meterReadings,
+			idCol: meterReadings.id,
+			roomJoin: true,
+			dateExpr: sql`(${meterReadings.month} || '-01')::date`
+		},
+		{
+			code: 'UNSCOPED_MAINTENANCE_REQUESTS',
+			partialCode: 'PARTIAL_SCOPE_MAINTENANCE_REQUEST',
+			orphanCode: 'ORPHAN_SCOPE_MAINTENANCE_REQUEST',
+			outsideCode: null,
+			table: maintenanceRequests,
+			idCol: maintenanceRequests.id,
+			roomJoin: false,
+			dateExpr: null
+		}
+	] as const;
 
-	findings.push({
-		code: 'RESOURCE_OUTSIDE_TENANCY_RANGE',
-		count: outsideRange.length,
-		sampleIds: outsideRange.map((r) => r.invoiceId)
-	});
+	for (const resource of resourceTables) {
+		const unscopedWhere = and(
+			isNull(resource.table.managedTenantId),
+			isNull(resource.table.tenancyId),
+			resource.roomJoin && landlordFilter ? eq(properties.landlordId, landlordId!) : undefined
+		);
+
+		const unscopedCountQuery = resource.roomJoin
+			? db
+					.select({ count: sql<number>`count(*)::int` })
+					.from(resource.table)
+					.innerJoin(rooms, eq(resource.table.roomId, rooms.id))
+					.innerJoin(properties, eq(rooms.propertyId, properties.id))
+					.where(unscopedWhere)
+			: db
+					.select({ count: sql<number>`count(*)::int` })
+					.from(resource.table)
+					.where(and(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)));
+
+		const [unscopedCount] = await unscopedCountQuery;
+		const unscopedSamples = resource.roomJoin
+			? await db
+					.select({ id: resource.idCol })
+					.from(resource.table)
+					.innerJoin(rooms, eq(resource.table.roomId, rooms.id))
+					.innerJoin(properties, eq(rooms.propertyId, properties.id))
+					.where(unscopedWhere)
+					.limit(20)
+			: await db
+					.select({ id: resource.idCol })
+					.from(resource.table)
+					.where(and(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)))
+					.limit(20);
+
+		findings.push({
+			code: resource.code,
+			count: unscopedCount?.count ?? 0,
+			sampleIds: unscopedSamples.map((r) => r.id)
+		});
+
+		const partialWhere = and(
+			or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
+			or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)),
+			resource.roomJoin && landlordFilter ? eq(properties.landlordId, landlordId!) : undefined
+		);
+
+		const [partialCount] = resource.roomJoin
+			? await db
+					.select({ count: sql<number>`count(*)::int` })
+					.from(resource.table)
+					.innerJoin(rooms, eq(resource.table.roomId, rooms.id))
+					.innerJoin(properties, eq(rooms.propertyId, properties.id))
+					.where(partialWhere)
+			: await db
+					.select({ count: sql<number>`count(*)::int` })
+					.from(resource.table)
+					.where(
+						and(
+							or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
+							or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId))
+						)
+					);
+
+		const partialSamples = resource.roomJoin
+			? await db
+					.select({ id: resource.idCol })
+					.from(resource.table)
+					.innerJoin(rooms, eq(resource.table.roomId, rooms.id))
+					.innerJoin(properties, eq(rooms.propertyId, properties.id))
+					.where(partialWhere)
+					.limit(20)
+			: await db
+					.select({ id: resource.idCol })
+					.from(resource.table)
+					.where(
+						and(
+							or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
+							or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId))
+						)
+					)
+					.limit(20);
+
+		findings.push({
+			code: resource.partialCode,
+			count: partialCount?.count ?? 0,
+			sampleIds: partialSamples.map((r) => r.id)
+		});
+
+		const orphanWhere = and(
+			isNotNull(resource.table.managedTenantId),
+			isNotNull(resource.table.tenancyId),
+			sql`${resource.table.managedTenantId} <> ${tenancies.managedTenantId}`,
+			tenancyLandlordFilter
+		);
+
+		const [orphanCount] = await db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(resource.table)
+			.innerJoin(tenancies, eq(resource.table.tenancyId, tenancies.id))
+			.where(orphanWhere);
+
+		const orphanSamples = await db
+			.select({ id: resource.idCol })
+			.from(resource.table)
+			.innerJoin(tenancies, eq(resource.table.tenancyId, tenancies.id))
+			.where(orphanWhere)
+			.limit(20);
+
+		findings.push({
+			code: resource.orphanCode,
+			count: orphanCount?.count ?? 0,
+			sampleIds: orphanSamples.map((r) => r.id)
+		});
+
+		if (resource.dateExpr && resource.outsideCode) {
+			const outsideWhere = and(
+				isNotNull(resource.table.tenancyId),
+				sql`${resource.dateExpr} < ${tenancies.startDate}
+          OR ${resource.dateExpr} > COALESCE(${tenancies.endDate}, '9999-12-31'::date)`,
+				tenancyLandlordFilter
+			);
+
+			const [outsideCount] = await db
+				.select({ count: sql<number>`count(*)::int` })
+				.from(resource.table)
+				.innerJoin(tenancies, eq(resource.table.tenancyId, tenancies.id))
+				.where(outsideWhere);
+
+			const outsideSamples = await db
+				.select({ id: resource.idCol })
+				.from(resource.table)
+				.innerJoin(tenancies, eq(resource.table.tenancyId, tenancies.id))
+				.where(outsideWhere)
+				.limit(20);
+
+			findings.push({
+				code: resource.outsideCode,
+				count: outsideCount?.count ?? 0,
+				sampleIds: outsideSamples.map((r) => r.id)
+			});
+		}
+	}
 
 	return findings;
 }
@@ -1169,28 +1605,119 @@ export async function rollbackBackfillRun(
 			continue;
 		}
 		try {
+			let current: { managedTenantId: string | null; tenancyId: string | null } | undefined;
+			if (mapping.table === 'Invoice') {
+				current = (
+					await db
+						.select({
+							managedTenantId: invoices.managedTenantId,
+							tenancyId: invoices.tenancyId
+						})
+						.from(invoices)
+						.where(eq(invoices.id, mapping.id))
+						.limit(1)
+				)[0];
+			} else if (mapping.table === 'Contract') {
+				current = (
+					await db
+						.select({
+							managedTenantId: contracts.managedTenantId,
+							tenancyId: contracts.tenancyId
+						})
+						.from(contracts)
+						.where(eq(contracts.id, mapping.id))
+						.limit(1)
+				)[0];
+			} else if (mapping.table === 'MeterReading') {
+				current = (
+					await db
+						.select({
+							managedTenantId: meterReadings.managedTenantId,
+							tenancyId: meterReadings.tenancyId
+						})
+						.from(meterReadings)
+						.where(eq(meterReadings.id, mapping.id))
+						.limit(1)
+				)[0];
+			} else {
+				current = (
+					await db
+						.select({
+							managedTenantId: maintenanceRequests.managedTenantId,
+							tenancyId: maintenanceRequests.tenancyId
+						})
+						.from(maintenanceRequests)
+						.where(eq(maintenanceRequests.id, mapping.id))
+						.limit(1)
+				)[0];
+			}
+			if (!current || !canRollbackResourceMapping(mapping, current)) {
+				delta.skipped += 1;
+				continue;
+			}
+
 			if (mapping.table === 'Invoice') {
 				await db
 					.update(invoices)
-					.set({ managedTenantId: null, tenancyId: null })
+					.set({
+						managedTenantId: mapping.previousManagedTenantId,
+						tenancyId: mapping.previousTenancyId
+					})
 					.where(eq(invoices.id, mapping.id));
 			} else if (mapping.table === 'Contract') {
 				await db
 					.update(contracts)
-					.set({ managedTenantId: null, tenancyId: null })
+					.set({
+						managedTenantId: mapping.previousManagedTenantId,
+						tenancyId: mapping.previousTenancyId
+					})
 					.where(eq(contracts.id, mapping.id));
 			} else if (mapping.table === 'MeterReading') {
 				await db
 					.update(meterReadings)
-					.set({ managedTenantId: null, tenancyId: null })
+					.set({
+						managedTenantId: mapping.previousManagedTenantId,
+						tenancyId: mapping.previousTenancyId
+					})
 					.where(eq(meterReadings.id, mapping.id));
 			} else {
 				await db
 					.update(maintenanceRequests)
-					.set({ managedTenantId: null, tenancyId: null })
+					.set({
+						managedTenantId: mapping.previousManagedTenantId,
+						tenancyId: mapping.previousTenancyId
+					})
 					.where(eq(maintenanceRequests.id, mapping.id));
 			}
 			delta.tenanciesMapped += 1;
+		} catch {
+			delta.errors += 1;
+		}
+	}
+
+	for (const snapshot of [...checkpoint.created.roomCompatibilitySnapshots].reverse()) {
+		delta.scanned += 1;
+		if (!commit) {
+			delta.skipped += 1;
+			continue;
+		}
+		try {
+			const room = (
+				await db
+					.select({ currentManagedTenantId: rooms.currentManagedTenantId })
+					.from(rooms)
+					.where(eq(rooms.id, snapshot.roomId))
+					.limit(1)
+			)[0];
+			if (!room || !canRollbackRoomCompatibility(snapshot, room.currentManagedTenantId)) {
+				delta.skipped += 1;
+				continue;
+			}
+			await db
+				.update(rooms)
+				.set({ currentManagedTenantId: snapshot.previousCurrentManagedTenantId })
+				.where(eq(rooms.id, snapshot.roomId));
+			delta.skipped += 1;
 		} catch {
 			delta.errors += 1;
 		}
@@ -1260,8 +1787,14 @@ export async function runBackfillTenancies(
 	}
 
 	const runId = opts.resumeRunId ?? crypto.randomUUID();
-	const checkpoint =
-		(await loadCheckpoint(opts.checkpointDir, runId)) ?? newCheckpoint(opts, runId);
+	const loaded = opts.resumeRunId ? await loadCheckpoint(opts.checkpointDir, runId) : null;
+	if (opts.resumeRunId && !loaded) {
+		throw new Error(`Checkpoint not found for run ${opts.resumeRunId}`);
+	}
+	const checkpoint = loaded ?? newCheckpoint(opts, runId);
+	if (loaded) {
+		validateCheckpointResumeContext(checkpoint, opts);
+	}
 
 	const overlappingRooms = await loadOverlappingContractRooms(db, opts.landlordId);
 	let tenancyCandidates: TenancyCandidate[] = [];
@@ -1278,7 +1811,8 @@ export async function runBackfillTenancies(
 		const phase = phases[phaseIdx]!;
 		checkpoint.cursor.phase = phase;
 		if (shouldReloadTenancyCandidatesAtPhaseStart(phase)) {
-			tenancyCandidates = await loadTenancyCandidates(db, opts.landlordId);
+			const dbCandidates = await loadTenancyCandidates(db, opts.landlordId);
+			tenancyCandidates = resolveTenancyCandidates(dbCandidates, checkpoint);
 		}
 		let batchDone = false;
 		while (!batchDone && processed < opts.limit) {

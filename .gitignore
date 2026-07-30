@@ -13,6 +13,7 @@ vite.config.ts.timestamp-*
 # runtime data
 pgdata/
 /uploads/
+.checkpoints/
 *.db
 *.db-journal
 *.db-wal

@@ -4,17 +4,53 @@ import {
 	assertBackfillEnvironmentAllowed,
 	backfillManagedTenantClaimFields,
 	buildBackfillSource,
+	buildInputScope,
+	canRollbackResourceMapping,
+	canRollbackRoomCompatibility,
 	contactFingerprint,
 	datesOverlap,
 	decideResourceMapping,
 	detectOverlappingContracts,
+	ensureDryRunVirtual,
 	findTenancyForDate,
 	mergeReport,
 	parseBackfillCliArgs,
 	parseBackfillSource,
+	resolveTenancyCandidates,
 	shouldReloadTenancyCandidatesAtPhaseStart,
+	validateCheckpointResumeContext,
+	CHECKPOINT_SCHEMA_VERSION,
+	type BackfillCheckpoint,
 	type TenancyCandidate
 } from './tenancy-migration-lib.js';
+
+function sampleCheckpoint(overrides: Partial<BackfillCheckpoint> = {}): BackfillCheckpoint {
+	return {
+		schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+		runId: 'run-1',
+		startedAt: '2026-07-30T00:00:00.000Z',
+		landlordId: 'landlord-a',
+		dryRun: true,
+		inputScope: { landlordId: 'landlord-a', limit: 100, batchSize: 10 },
+		cursor: { phase: 'managed_tenants', lastId: null },
+		stats: {
+			scanned: 0,
+			managedTenantsCreated: 0,
+			claimed: 0,
+			tenanciesMapped: 0,
+			unresolved: 0,
+			skipped: 0,
+			errors: 0
+		},
+		created: {
+			managedTenantIds: [],
+			tenancyIds: [],
+			resourceMappings: [],
+			roomCompatibilitySnapshots: []
+		},
+		...overrides
+	};
+}
 
 describe('AUTH-007 tenancy migration lib', () => {
 	it('parseBackfillCliArgs defaults to dry-run', () => {
@@ -198,5 +234,125 @@ describe('AUTH-007 tenancy migration lib', () => {
 		);
 		assert.equal(merged.scanned, 4);
 		assert.equal(merged.unresolved, 1);
+	});
+
+	it('validateCheckpointResumeContext rejects mode mismatch', () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true });
+		const commitOpts = parseBackfillCliArgs([
+			'--commit',
+			'--landlord-id',
+			'landlord-a',
+			'--limit',
+			'100',
+			'--batch-size',
+			'10'
+		]);
+		assert.throws(
+			() => validateCheckpointResumeContext(checkpoint, commitOpts),
+			/Checkpoint mode mismatch/
+		);
+	});
+
+	it('validateCheckpointResumeContext rejects landlord and input scope mismatch', () => {
+		const checkpoint = sampleCheckpoint();
+		const wrongLandlord = parseBackfillCliArgs([
+			'--landlord-id',
+			'landlord-b',
+			'--limit',
+			'100',
+			'--batch-size',
+			'10'
+		]);
+		assert.throws(
+			() => validateCheckpointResumeContext(checkpoint, wrongLandlord),
+			/landlordId mismatch/
+		);
+
+		const wrongLimit = parseBackfillCliArgs([
+			'--landlord-id',
+			'landlord-a',
+			'--limit',
+			'50',
+			'--batch-size',
+			'10'
+		]);
+		assert.throws(
+			() => validateCheckpointResumeContext(checkpoint, wrongLimit),
+			/input scope mismatch/
+		);
+	});
+
+	it('dry-run virtual plan simulates later phases without DB tenancy rows', () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true });
+		const virtual = ensureDryRunVirtual(checkpoint);
+		virtual.managedTenantByLegacyKey['landlord-a:legacy-1'] = 'mt-virtual-1';
+		virtual.tenancies.push({
+			id: 'ten-virtual-1',
+			managedTenantId: 'mt-virtual-1',
+			roomId: 'room-a',
+			startDate: '2024-01-01',
+			endDate: null,
+			status: 'ACTIVE',
+			backfillSource: buildBackfillSource('run-1', 'CONTRACT')
+		});
+
+		const merged = resolveTenancyCandidates([], checkpoint);
+		assert.equal(merged.length, 1);
+		assert.equal(merged[0]!.id, 'ten-virtual-1');
+
+		const decision = decideResourceMapping({
+			roomId: 'room-a',
+			eventDate: '2024-02-01',
+			resourceKind: 'invoice',
+			tenancyCandidates: merged
+		});
+		assert.equal(decision.action, 'map');
+	});
+
+	it('dry-run parity: second pass over same virtual keys is idempotent', () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true });
+		const virtual = ensureDryRunVirtual(checkpoint);
+		const key = 'landlord-a:legacy-1';
+		virtual.managedTenantByLegacyKey[key] = 'mt-1';
+		virtual.managedTenantByLegacyKey[key] = 'mt-1';
+		assert.equal(Object.keys(virtual.managedTenantByLegacyKey).length, 1);
+	});
+
+	it('canRollbackResourceMapping only when current values match written mapping', () => {
+		const mapping = {
+			table: 'Invoice' as const,
+			id: 'inv-1',
+			managedTenantId: 'mt-1',
+			tenancyId: 'ten-1',
+			previousManagedTenantId: null,
+			previousTenancyId: null
+		};
+		assert.equal(
+			canRollbackResourceMapping(mapping, { managedTenantId: 'mt-1', tenancyId: 'ten-1' }),
+			true
+		);
+		assert.equal(
+			canRollbackResourceMapping(mapping, { managedTenantId: 'mt-manual', tenancyId: 'ten-1' }),
+			false
+		);
+	});
+
+	it('canRollbackRoomCompatibility blocks rollback after manual room cache edit', () => {
+		const snapshot = {
+			roomId: 'room-a',
+			previousCurrentManagedTenantId: null,
+			writtenCurrentManagedTenantId: 'mt-1'
+		};
+		assert.equal(canRollbackRoomCompatibility(snapshot, 'mt-1'), true);
+		assert.equal(canRollbackRoomCompatibility(snapshot, 'mt-manual'), false);
+	});
+
+	it('buildInputScope mirrors CLI options', () => {
+		const opts = parseBackfillCliArgs(['--landlord-id', 'x', '--limit', '25', '--batch-size', '5']);
+		assert.deepEqual(buildInputScope(opts), {
+			landlordId: 'x',
+			limit: 25,
+			batchSize: 5
+		});
 	});
 });

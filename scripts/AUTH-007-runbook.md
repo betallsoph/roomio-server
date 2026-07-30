@@ -39,7 +39,11 @@ npm run tenancy:reconcile
 npm run tenancy:reconcile -- --landlord-id <uuid>
 ```
 
-Checkpoints are stored under `.checkpoints/tenancy-backfill/` by default (`--checkpoint-dir` to override).
+Checkpoints are stored under `.checkpoints/tenancy-backfill/` by default (`--checkpoint-dir` to override). The directory is gitignored; files are written atomically with mode `0600` and directory mode `0700`.
+
+Each checkpoint binds `schemaVersion`, dry-run/commit mode, `landlordId`, input scope (`limit`/`batchSize`), and cursor phase. Resuming with mismatched CLI flags is rejected.
+
+Dry-run maintains a virtual plan (`dryRunVirtual`) so later phases simulate against planned tenancies instead of querying uncommitted DB rows.
 
 ## Report fields
 
@@ -53,4 +57,4 @@ The `map_resources` phase currently maps **invoices** only. Meter readings and m
 
 ## Rollback
 
-Rollback uses the checkpoint file for the run. It only clears mappings and deletes ManagedTenant/Tenancy rows created by that run (`backfillSource` prefix `AUTH007:<runId>:`). Rows touched manually after backfill are not deleted.
+Rollback uses the checkpoint file for the run. It restores previous scope snapshots only when the current row still matches values written by that run; manual edits are left intact. Room `currentManagedTenantId` compatibility cache is snapshotted before write and restored only when unchanged since the run.
