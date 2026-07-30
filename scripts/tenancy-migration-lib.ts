@@ -243,6 +243,72 @@ function ensureRoomSnapshotRecorded(
 	}
 }
 
+async function recognizeAppliedContractMapping(
+	db: TenancyMigrationDb,
+	checkpoint: BackfillCheckpoint,
+	contractId: string
+): Promise<boolean> {
+	const rows = await db
+		.select({
+			managedTenantId: contracts.managedTenantId,
+			tenancyId: contracts.tenancyId,
+			backfillSource: tenancies.backfillSource
+		})
+		.from(contracts)
+		.leftJoin(tenancies, eq(contracts.tenancyId, tenancies.id))
+		.where(eq(contracts.id, contractId))
+		.limit(1);
+	const row = rows[0];
+	if (!row?.tenancyId || !belongsToBackfillRun(row.backfillSource, checkpoint.runId)) {
+		return false;
+	}
+	ensureTenancyRecorded(checkpoint, row.tenancyId);
+	ensureResourceMappingRecorded(checkpoint, {
+		table: 'Contract',
+		id: contractId,
+		managedTenantId: row.managedTenantId,
+		tenancyId: row.tenancyId,
+		previousManagedTenantId: null,
+		previousTenancyId: null
+	});
+	return true;
+}
+
+async function recognizeAppliedCurrentRoomTenancy(
+	db: TenancyMigrationDb,
+	checkpoint: BackfillCheckpoint,
+	roomId: string,
+	expectedManagedTenantId: string
+): Promise<boolean> {
+	const activeTenancy = await db
+		.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
+		.from(tenancies)
+		.where(and(eq(tenancies.roomId, roomId), eq(tenancies.status, 'ACTIVE')))
+		.limit(1);
+	if (
+		activeTenancy.length === 0 ||
+		!belongsToBackfillRun(activeTenancy[0]!.backfillSource, checkpoint.runId)
+	) {
+		return false;
+	}
+	ensureTenancyRecorded(checkpoint, activeTenancy[0]!.id);
+	const room = (
+		await db
+			.select({ currentManagedTenantId: rooms.currentManagedTenantId })
+			.from(rooms)
+			.where(eq(rooms.id, roomId))
+			.limit(1)
+	)[0];
+	if (room?.currentManagedTenantId === expectedManagedTenantId) {
+		ensureRoomSnapshotRecorded(checkpoint, {
+			roomId,
+			previousCurrentManagedTenantId: null,
+			writtenCurrentManagedTenantId: expectedManagedTenantId
+		});
+	}
+	return true;
+}
+
 export function mergeReport(base: BackfillReport, delta: Partial<BackfillReport>): BackfillReport {
 	return {
 		scanned: base.scanned + (delta.scanned ?? 0),
@@ -697,7 +763,28 @@ export async function runManagedTenantBatch(
 				delta.errors += 1;
 			}
 		} catch {
-			delta.errors += 1;
+			const existing = await db
+				.select({
+					id: managedTenants.id,
+					backfillSource: managedTenants.backfillSource
+				})
+				.from(managedTenants)
+				.where(
+					and(
+						eq(managedTenants.landlordId, row.landlordId),
+						eq(managedTenants.legacyTenantProfileId, row.legacyTenantProfileId)
+					)
+				)
+				.limit(1);
+			if (
+				existing.length > 0 &&
+				belongsToBackfillRun(existing[0]!.backfillSource, checkpoint.runId)
+			) {
+				ensureManagedTenantRecorded(checkpoint, existing[0]!.id);
+				delta.skipped += 1;
+			} else {
+				delta.errors += 1;
+			}
 		}
 	}
 
@@ -762,13 +849,11 @@ export async function runContractTenancyBatch(
 		delta.scanned += 1;
 		checkpoint.cursor.lastId = row.contractId;
 		if (row.existingTenancyId) {
-			const existingTenancy = await db
-				.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
-				.from(tenancies)
-				.where(eq(tenancies.id, row.existingTenancyId))
-				.limit(1);
-			if (belongsToBackfillRun(existingTenancy[0]?.backfillSource, checkpoint.runId)) {
-				ensureTenancyRecorded(checkpoint, row.existingTenancyId);
+			if (
+				await recognizeAppliedContractMapping(db, checkpoint, row.contractId)
+			) {
+				delta.skipped += 1;
+				continue;
 			}
 			delta.skipped += 1;
 			continue;
@@ -858,7 +943,11 @@ export async function runContractTenancyBatch(
 				return { ok: true as const };
 			});
 			if (!txResult) {
-				delta.errors += 1;
+				if (await recognizeAppliedContractMapping(db, checkpoint, row.contractId)) {
+					delta.skipped += 1;
+				} else {
+					delta.errors += 1;
+				}
 				continue;
 			}
 			delta.tenanciesMapped += 1;
@@ -954,19 +1043,6 @@ export async function runCurrentRoomTenancyBatch(
 			continue;
 		}
 
-		const activeTenancy = await db
-			.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
-			.from(tenancies)
-			.where(and(eq(tenancies.roomId, row.roomId), eq(tenancies.status, 'ACTIVE')))
-			.limit(1);
-		if (activeTenancy.length > 0) {
-			if (belongsToBackfillRun(activeTenancy[0]!.backfillSource, checkpoint.runId)) {
-				ensureTenancyRecorded(checkpoint, activeTenancy[0]!.id);
-			}
-			delta.skipped += 1;
-			continue;
-		}
-
 		let managedTenantId: string | null = null;
 		if (checkpoint.dryRun) {
 			const virtual = ensureDryRunVirtual(checkpoint);
@@ -986,6 +1062,32 @@ export async function runCurrentRoomTenancyBatch(
 				.limit(1);
 			managedTenantId = managed[0]?.id ?? null;
 		}
+
+		const activeTenancy = await db
+			.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
+			.from(tenancies)
+			.where(and(eq(tenancies.roomId, row.roomId), eq(tenancies.status, 'ACTIVE')))
+			.limit(1);
+		if (activeTenancy.length > 0) {
+			if (
+				managedTenantId &&
+				(await recognizeAppliedCurrentRoomTenancy(
+					db,
+					checkpoint,
+					row.roomId,
+					managedTenantId
+				))
+			) {
+				delta.skipped += 1;
+				continue;
+			}
+			if (belongsToBackfillRun(activeTenancy[0]!.backfillSource, checkpoint.runId)) {
+				ensureTenancyRecorded(checkpoint, activeTenancy[0]!.id);
+			}
+			delta.skipped += 1;
+			continue;
+		}
+
 		if (!managedTenantId) {
 			delta.unresolved += 1;
 			continue;
@@ -1052,7 +1154,18 @@ export async function runCurrentRoomTenancyBatch(
 				return { ok: true as const };
 			});
 			if (!txResult) {
-				delta.errors += 1;
+				if (
+					await recognizeAppliedCurrentRoomTenancy(
+						db,
+						checkpoint,
+						row.roomId,
+						managedTenantId
+					)
+				) {
+					delta.skipped += 1;
+				} else {
+					delta.errors += 1;
+				}
 				continue;
 			}
 			delta.tenanciesMapped += 1;
@@ -1370,6 +1483,26 @@ export type ReconcileFinding = {
 	count: number;
 	sampleIds: string[];
 };
+
+/** Stable finding codes emitted by `runTenancyReconciliation` (for tests and runbook). */
+export function expectedReconcileFindingCodes(): string[] {
+	const codes = ['DUPLICATE_ACTIVE_TENANCY_PER_ROOM', 'OVERLAPPING_CONTRACT_WINDOWS'];
+	const resourceCodes = [
+		['UNSCOPED_INVOICES', 'PARTIAL_SCOPE_INVOICE', 'ORPHAN_SCOPE_INVOICE', 'INVOICE_OUTSIDE_TENANCY_RANGE'],
+		['UNSCOPED_CONTRACTS', 'PARTIAL_SCOPE_CONTRACT', 'ORPHAN_SCOPE_CONTRACT', 'CONTRACT_OUTSIDE_TENANCY_RANGE'],
+		[
+			'UNSCOPED_METER_READINGS',
+			'PARTIAL_SCOPE_METER_READING',
+			'ORPHAN_SCOPE_METER_READING',
+			'METER_READING_OUTSIDE_TENANCY_RANGE'
+		],
+		['UNSCOPED_MAINTENANCE_REQUESTS', 'PARTIAL_SCOPE_MAINTENANCE_REQUEST', 'ORPHAN_SCOPE_MAINTENANCE_REQUEST']
+	] as const;
+	for (const group of resourceCodes) {
+		codes.push(...group);
+	}
+	return codes;
+}
 
 export async function runTenancyReconciliation(
 	db: TenancyMigrationDb,
