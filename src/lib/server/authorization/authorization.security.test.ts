@@ -13,7 +13,6 @@ import {
 	getSecurityIntegrationSkipReason,
 	withSecurityDb
 } from '../testing/test-db.js';
-import { createDrizzleActorDb, getUserActor } from './load-user-actor.js';
 import { expectNoForbiddenKeys } from './security-assertions.js';
 
 const skipReason = getSecurityIntegrationSkipReason();
