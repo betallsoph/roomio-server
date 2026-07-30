@@ -9,29 +9,13 @@ import {
 	isTransitionalEnvSuperAdminSession
 } from '$lib/server/authorization/load-user-actor';
 import { isSessionExemptPublicRoute } from '$lib/server/authorization/machine-routes';
+import { isStaffRouteAllowed } from '$lib/server/authorization/staff-allowlist';
 import { UnauthorizedError } from '$lib/server/authorization/errors';
 import type { ActorContext } from '$lib/server/authorization/actor';
 
 registerProcessLifecycle();
 
 const GENERIC_SERVER_ERROR_MESSAGE = 'Đã xảy ra lỗi. Vui lòng thử lại sau.';
-
-// Nhân viên (STAFF) — lớp chặn ngoài tạm thời theo URL (AUTH-005 giữ nguyên).
-// Quyền thật (assignment + capability) sống trong DB/ActorContext; migrate endpoint → AUTH-008.
-const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
-	{ prefix: '/api/requests', methods: ['GET', 'PUT'] }, // xem & cập nhật sự cố được giao
-	{ prefix: '/api/meter-readings', methods: ['GET', 'PUT'] }, // chốt/duyệt số điện nước
-	{ prefix: '/api/rooms', methods: ['GET'] }, // xem phòng (chỉ đọc)
-	{ prefix: '/api/properties', methods: ['GET'] }, // xem cơ sở (chỉ đọc)
-	{ prefix: '/api/services', methods: ['GET'] }, // xem dịch vụ (chỉ đọc)
-	{ prefix: '/api/tenants', methods: ['GET'] }, // xem khách thuê (chỉ đọc)
-	{ prefix: '/api/upload', methods: ['POST'] }, // đính ảnh khi xử lý sự cố/chốt số
-	{ prefix: '/api/uploads/presign', methods: ['POST'] } // xin pre-signed URL để upload thẳng R2
-];
-
-function pathnameMatchesStaffAllowlistPrefix(pathname: string, prefix: string): boolean {
-	return pathname === prefix || pathname.startsWith(`${prefix}/`);
-}
 
 function beginRequest(event: Parameters<Handle>[0]['event']) {
 	const requestId = resolveRequestId(event.request.headers.get('x-request-id'));
@@ -214,12 +198,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 
 		if (actor.role === 'STAFF') {
-			const allowed = STAFF_ALLOWLIST.some(
-				(rule) =>
-					pathnameMatchesStaffAllowlistPrefix(pathname, rule.prefix) &&
-					rule.methods.includes(event.request.method)
-			);
-			if (!allowed) {
+			if (!isStaffRouteAllowed(event.request.method, pathname)) {
 				return finish(
 					json({ error: 'Nhân viên không có quyền thực hiện thao tác này' }, { status: 403 })
 				);

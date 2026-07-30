@@ -5,8 +5,8 @@ import { STAFF_PERMISSIONS, type StaffActor, type StaffPermission } from './acto
 
 /**
  * AUTH-005 — assignment/capability primitives.
- * Room/meter/request SQL scoping for endpoints is AUTH-008; keep STAFF_ALLOWLIST as a
- * temporary outer gate until those routes migrate.
+ * Room/meter/request SQL scoping for endpoints is AUTH-008; staff-allowlist.ts holds the
+ * temporary outer URL gate until those routes migrate.
  */
 
 type StaffScopeDb = Pick<typeof AppDb, 'query'>;
