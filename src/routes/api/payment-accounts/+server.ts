@@ -2,36 +2,40 @@ import { json } from '@sveltejs/kit';
 import { and, eq } from 'drizzle-orm';
 import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
-import type { SessionData } from '$lib/server/session';
 import { db } from '$lib/server/db';
 import { paymentAccounts } from '$lib/server/db/schema';
+import { requireLandlordActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	isAuthorizationError,
+	wrongRoleError
+} from '$lib/server/authorization/errors';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
+import { findPaymentAccountForLandlord } from '$lib/server/authorization/scoped-queries';
+import { toPaymentAccountDto } from '$lib/server/dto/payment-account';
+import { mapFinanceScopeError } from '$lib/server/operations/finance-scope';
+import { isOperationsError } from '$lib/server/operations/errors';
 import {
 	ensureDefaultPaymentAccount,
 	getPaymentAccountForLandlord,
 	listPaymentAccounts,
-	publicPaymentAccount,
 	setDefaultPaymentAccount
 } from '$lib/server/payment-accounts';
 import { encryptSecret } from '$lib/server/secrets';
 import { confirmPayOSWebhook, getPayosWebhookUrl } from '$lib/server/payos';
 
-function resolveTargetLandlordId(
-	session: SessionData | null,
-	bodyLandlordId?: string | null
-): { ok: true; id: string } | { ok: false; response: Response } {
-	if (session?.role === 'LANDLORD' && session.landlordProfileId) {
-		return { ok: true, id: session.landlordProfileId };
+function mapHandlerError(error: unknown) {
+	const mapped = mapFinanceScopeError(error);
+	if (mapped) {
+		return json({ error: mapped.message }, { status: mapped.status });
 	}
-	if (session?.role === 'SUPER_ADMIN') {
-		if (!bodyLandlordId) {
-			return { ok: false, response: json({ error: 'Thiếu landlordId' }, { status: 400 }) };
-		}
-		return { ok: true, id: bodyLandlordId };
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
 	}
-	return {
-		ok: false,
-		response: json({ error: 'Không có quyền quản lý tài khoản nhận tiền' }, { status: 403 })
-	};
+	if (isOperationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
 }
 
 function cleanString(value: unknown) {
@@ -62,24 +66,39 @@ async function confirmWebhookIfPayOS(input: {
 	}
 }
 
-export const GET: RequestHandler = async ({ url, locals }) => {
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const target = resolveTargetLandlordId(locals.session, url.searchParams.get('landlordId'));
-		if (!target.ok) return target.response;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
-		const accounts = await listPaymentAccounts(target.id);
-		return json({ accounts: accounts.map(publicPaymentAccount) });
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) {
+			return authorizationErrorToResponse(
+				wrongRoleError('Không có quyền quản lý tài khoản nhận tiền')
+			);
+		}
+
+		const accounts = await listPaymentAccounts(landlord.value.landlordId);
+		return json({ accounts: accounts.map(toPaymentAccountDto) });
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const body = await request.json();
-		const target = resolveTargetLandlordId(locals.session, body.landlordId);
-		if (!target.ok) return target.response;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) {
+			return authorizationErrorToResponse(
+				wrongRoleError('Không có quyền quản lý tài khoản nhận tiền')
+			);
+		}
+
+		const body = await request.json();
+		const landlordId = landlord.value.landlordId;
 		const provider = cleanProvider(body.provider);
 		const name = cleanString(body.name);
 		const bankName = cleanString(body.bankName);
@@ -110,19 +129,19 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			const existing = await tx
 				.select({ id: paymentAccounts.id })
 				.from(paymentAccounts)
-				.where(and(eq(paymentAccounts.landlordId, target.id), eq(paymentAccounts.isActive, true)));
+				.where(and(eq(paymentAccounts.landlordId, landlordId), eq(paymentAccounts.isActive, true)));
 			const shouldDefault = isDefault || existing.length === 0;
 			if (shouldDefault) {
 				await tx
 					.update(paymentAccounts)
 					.set({ isDefault: false })
-					.where(eq(paymentAccounts.landlordId, target.id));
+					.where(eq(paymentAccounts.landlordId, landlordId));
 			}
 
 			const created = await tx
 				.insert(paymentAccounts)
 				.values({
-					landlordId: target.id,
+					landlordId,
 					name,
 					provider,
 					isDefault: shouldDefault,
@@ -144,7 +163,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		return json(
 			{
-				account: publicPaymentAccount(account),
+				account: toPaymentAccountDto(account),
 				webhookRegistered: webhook.webhookRegistered,
 				webhookUrl: getPayosWebhookUrl(),
 				warning: webhook.warning
@@ -152,24 +171,34 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			{ status: 201 }
 		);
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
-		const body = await request.json();
-		const target = resolveTargetLandlordId(locals.session, body.landlordId);
-		if (!target.ok) return target.response;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
 
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) {
+			return authorizationErrorToResponse(
+				wrongRoleError('Không có quyền quản lý tài khoản nhận tiền')
+			);
+		}
+
+		const body = await request.json();
+		const landlordId = landlord.value.landlordId;
 		const id = cleanString(body.id);
 		if (!id) return json({ error: 'Thiếu tài khoản nhận tiền' }, { status: 400 });
-		const current = await getPaymentAccountForLandlord(target.id, id);
+
+		await findPaymentAccountForLandlord(db, landlord.value, id);
+		const current = await getPaymentAccountForLandlord(landlordId, id);
 
 		if (body.isDefault === true) {
-			const account = await setDefaultPaymentAccount(target.id, id);
+			const account = await setDefaultPaymentAccount(landlordId, id);
 			return json({
-				account: publicPaymentAccount(account),
+				account: toPaymentAccountDto(account),
 				webhookRegistered: false,
 				warning: null
 			});
@@ -223,29 +252,40 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const updated = await db
 			.update(paymentAccounts)
 			.set(updateData)
-			.where(eq(paymentAccounts.id, id))
+			.where(and(eq(paymentAccounts.id, id), eq(paymentAccounts.landlordId, landlordId)))
 			.returning();
 
 		return json({
-			account: publicPaymentAccount(updated[0]),
+			account: toPaymentAccountDto(updated[0]),
 			webhookRegistered: webhook.webhookRegistered,
 			webhookUrl: getPayosWebhookUrl(),
 			warning: webhook.warning
 		});
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const target = resolveTargetLandlordId(locals.session, url.searchParams.get('landlordId'));
-		if (!target.ok) return target.response;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) {
+			return authorizationErrorToResponse(
+				wrongRoleError('Không có quyền quản lý tài khoản nhận tiền')
+			);
+		}
+
+		const landlordId = landlord.value.landlordId;
 		const id = cleanString(url.searchParams.get('id'));
 		if (!id) return json({ error: 'Thiếu tài khoản nhận tiền' }, { status: 400 });
 
-		const account = await getPaymentAccountForLandlord(target.id, id);
-		const activeAccounts = await listPaymentAccounts(target.id);
+		const account = await getPaymentAccountForLandlord(landlordId, id);
+		await findPaymentAccountForLandlord(db, landlord.value, id);
+
+		const activeAccounts = await listPaymentAccounts(landlordId);
 		if (activeAccounts.length <= 1) {
 			return json({ error: 'Cần giữ ít nhất một tài khoản nhận tiền' }, { status: 400 });
 		}
@@ -254,7 +294,7 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 			await tx
 				.update(paymentAccounts)
 				.set({ isActive: false, isDefault: false })
-				.where(eq(paymentAccounts.id, id));
+				.where(and(eq(paymentAccounts.id, id), eq(paymentAccounts.landlordId, landlordId)));
 			if (account.isDefault) {
 				const replacement = activeAccounts.find((item) => item.id !== id);
 				if (replacement) {
@@ -266,9 +306,9 @@ export const DELETE: RequestHandler = async ({ url, locals }) => {
 			}
 		});
 
-		await ensureDefaultPaymentAccount(target.id);
+		await ensureDefaultPaymentAccount(landlordId);
 		return json({ success: true });
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };

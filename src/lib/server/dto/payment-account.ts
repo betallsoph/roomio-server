@@ -45,7 +45,10 @@ export type PaymentAccountDto = {
 };
 
 export function toPaymentAccountDto(row: PaymentAccountRowForDto): PaymentAccountDto {
-	const payosConnected = !!(row.payosClientId && row.payosApiKeyEnc && row.payosChecksumKeyEnc);
+	const payosConnected = !!(
+		row.payosClientId &&
+		((row.payosApiKeyEnc && row.payosChecksumKeyEnc) || row.payosConnectedAt)
+	);
 	return {
 		id: row.id,
 		landlordId: row.landlordId,

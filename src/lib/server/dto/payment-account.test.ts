@@ -53,3 +53,28 @@ test('toPaymentAccountDto exposes only public allowlist fields', () => {
 	assert.equal('payosApiKeyEnc' in dto, false);
 	assert.equal('payosChecksumKeyEnc' in dto, false);
 });
+
+test('toPaymentAccountDto derives payosConnected from payosConnectedAt when secrets omitted', () => {
+	const createdAt = new Date('2026-07-28T10:00:00.000Z');
+	const dto = toPaymentAccountDto({
+		id: 'acc-safe',
+		landlordId: 'landlord-1',
+		name: 'Safe projection',
+		provider: 'payos',
+		isDefault: true,
+		isActive: true,
+		bankName: 'VCB',
+		bankCode: '970436',
+		accountNumber: '1234567890',
+		accountName: 'NGUYEN VAN A',
+		bankBranch: null,
+		momoNumber: null,
+		payosClientId: 'client-1',
+		payosConnectedAt: createdAt,
+		createdAt,
+		updatedAt: createdAt
+	});
+
+	assert.equal(dto.payosConnected, true);
+	expectNoForbiddenKeys(dto);
+});
