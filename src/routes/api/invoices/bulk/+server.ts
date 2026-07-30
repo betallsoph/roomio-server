@@ -11,15 +11,43 @@ import {
 	rooms
 } from '$lib/server/db/schema';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
-import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
+import { requireLandlordActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	isAuthorizationError
+} from '$lib/server/authorization/errors';
+import { guardOperationalUserActor } from '$lib/server/authorization/policies';
+import {
+	findPropertyForLandlord,
+	ScopedResourceNotFoundError
+} from '$lib/server/authorization/scoped-queries';
 import { toBulkInvoicePrepRoomDto, toInvoiceDto } from '$lib/server/dto/invoice';
+import { isOperationsError } from '$lib/server/operations/errors';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
+import { validateScopedRoomIdsForProperty } from './scoped-rooms';
+
+function mapHandlerError(error: unknown) {
+	if (error instanceof ScopedResourceNotFoundError) {
+		return json({ error: error.message }, { status: 404 });
+	}
+	if (isAuthorizationError(error)) {
+		return authorizationErrorToResponse(error);
+	}
+	if (isOperationsError(error)) {
+		return json({ error: error.message }, { status: error.status });
+	}
+	return json({ error: errorMessage(error) }, { status: 500 });
+}
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
-		const landlordId = auth.value;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) {
+			return authorizationErrorToResponse(landlord.error);
+		}
+		const actor = landlord.value;
 
 		const body = await request.json();
 		const {
@@ -34,14 +62,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			paymentAccountId
 		} = body; // readings: { [roomId]: { [serviceId]: { prevValue, currValue } } }
 
-		if (!landlordId || !propertyId || !month || !dueDate || !readings) {
+		if (!propertyId || !month || !dueDate || !readings) {
 			return json({ error: 'Missing required parameters' }, { status: 400 });
 		}
-		if (!(await landlordOwnsProperty(landlordId, propertyId))) {
-			return forbidden();
+
+		await findPropertyForLandlord(db, actor, propertyId);
+
+		if (Array.isArray(roomIds) && roomIds.length > 0) {
+			await validateScopedRoomIdsForProperty(db, actor, propertyId, roomIds);
 		}
+
 		const defaultPaymentAccount = await getPaymentAccountForLandlord(
-			landlordId,
+			actor.landlordId,
 			paymentAccountId || null
 		);
 		if (!defaultPaymentAccount.isActive) {
@@ -103,7 +135,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				const selectedPaymentAccount = await tx.query.paymentAccounts.findFirst({
 					where: and(
 						eq(paymentAccounts.id, selectedPaymentAccountId),
-						eq(paymentAccounts.landlordId, landlordId)
+						eq(paymentAccounts.landlordId, actor.landlordId)
 					)
 				});
 				if (!selectedPaymentAccount) {
@@ -274,7 +306,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			invoices: createdInvoices.map(toInvoiceDto)
 		});
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };
 
@@ -282,8 +314,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 // kèm chỉ số đã được duyệt (khách gửi + chủ chốt) của tháng để tự điền sẵn
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const guard = guardOperationalUserActor(locals.actor);
+		if (!guard.ok) return guard.response;
+		const landlord = requireLandlordActor(guard.actor);
+		if (!landlord.ok) {
+			return authorizationErrorToResponse(landlord.error);
+		}
+		const actor = landlord.value;
 
 		const propertyId = url.searchParams.get('propertyId');
 		const month = url.searchParams.get('month');
@@ -291,9 +328,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		if (!propertyId || !month) {
 			return json({ error: 'Missing propertyId or month' }, { status: 400 });
 		}
-		if (!(await landlordOwnsProperty(auth.value, propertyId))) {
-			return forbidden();
-		}
+
+		await findPropertyForLandlord(db, actor, propertyId);
 
 		const occupiedRooms = await db.query.rooms.findMany({
 			where: and(eq(rooms.propertyId, propertyId), isNotNull(rooms.tenantId)),
@@ -397,6 +433,6 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			readiness
 		});
 	} catch (error) {
-		return json({ error: errorMessage(error) }, { status: 500 });
+		return mapHandlerError(error);
 	}
 };
