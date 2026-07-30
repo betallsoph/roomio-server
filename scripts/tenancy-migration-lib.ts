@@ -193,6 +193,17 @@ export function resolveTenancyCandidates(
 	return [...byId.values()];
 }
 
+/** Dry-run: ACTIVE tenancy already planned for a room (e.g. from tenancies_contract). */
+export function findVirtualActiveTenancyForRoom(
+	checkpoint: BackfillCheckpoint,
+	roomId: string
+): TenancyCandidate | null {
+	if (!checkpoint.dryRun) return null;
+	const virtual = checkpoint.dryRunVirtual;
+	if (!virtual) return null;
+	return virtual.tenancies.find((t) => t.roomId === roomId && t.status === 'ACTIVE') ?? null;
+}
+
 export function canRollbackResourceMapping(
 	mapping: ResourceMappingRecord,
 	current: { managedTenantId: string | null; tenancyId: string | null }
@@ -1061,24 +1072,37 @@ export async function runCurrentRoomTenancyBatch(
 			managedTenantId = managed[0]?.id ?? null;
 		}
 
-		const activeTenancy = await db
-			.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
-			.from(tenancies)
-			.where(and(eq(tenancies.roomId, row.roomId), eq(tenancies.status, 'ACTIVE')))
-			.limit(1);
-		if (activeTenancy.length > 0) {
-			if (
-				managedTenantId &&
-				(await recognizeAppliedCurrentRoomTenancy(db, checkpoint, row.roomId, managedTenantId))
-			) {
-				delta.skipped += 1;
-				continue;
-			}
-			if (belongsToBackfillRun(activeTenancy[0]!.backfillSource, checkpoint.runId)) {
-				ensureTenancyRecorded(checkpoint, activeTenancy[0]!.id);
+		const activeTenancyFromVirtual = checkpoint.dryRun
+			? findVirtualActiveTenancyForRoom(checkpoint, row.roomId)
+			: null;
+		if (activeTenancyFromVirtual) {
+			if (belongsToBackfillRun(activeTenancyFromVirtual.backfillSource, checkpoint.runId)) {
+				ensureTenancyRecorded(checkpoint, activeTenancyFromVirtual.id);
 			}
 			delta.skipped += 1;
 			continue;
+		}
+
+		if (!checkpoint.dryRun) {
+			const activeTenancy = await db
+				.select({ id: tenancies.id, backfillSource: tenancies.backfillSource })
+				.from(tenancies)
+				.where(and(eq(tenancies.roomId, row.roomId), eq(tenancies.status, 'ACTIVE')))
+				.limit(1);
+			if (activeTenancy.length > 0) {
+				if (
+					managedTenantId &&
+					(await recognizeAppliedCurrentRoomTenancy(db, checkpoint, row.roomId, managedTenantId))
+				) {
+					delta.skipped += 1;
+					continue;
+				}
+				if (belongsToBackfillRun(activeTenancy[0]!.backfillSource, checkpoint.runId)) {
+					ensureTenancyRecorded(checkpoint, activeTenancy[0]!.id);
+				}
+				delta.skipped += 1;
+				continue;
+			}
 		}
 
 		if (!managedTenantId) {
@@ -1543,6 +1567,7 @@ export async function runTenancyReconciliation(
 			table: invoices,
 			idCol: invoices.id,
 			roomJoin: true,
+			tenantJoin: false,
 			dateExpr: sql`(${invoices.month} || '-01')::date`
 		},
 		{
@@ -1553,6 +1578,7 @@ export async function runTenancyReconciliation(
 			table: contracts,
 			idCol: contracts.id,
 			roomJoin: true,
+			tenantJoin: false,
 			dateExpr: sql`${contracts.startDate}::date`
 		},
 		{
@@ -1563,6 +1589,7 @@ export async function runTenancyReconciliation(
 			table: meterReadings,
 			idCol: meterReadings.id,
 			roomJoin: true,
+			tenantJoin: false,
 			dateExpr: sql`(${meterReadings.month} || '-01')::date`
 		},
 		{
@@ -1573,15 +1600,21 @@ export async function runTenancyReconciliation(
 			table: maintenanceRequests,
 			idCol: maintenanceRequests.id,
 			roomJoin: false,
+			tenantJoin: true,
 			dateExpr: null
 		}
 	] as const;
 
 	for (const resource of resourceTables) {
+		const scopedLandlordFilter =
+			(resource.roomJoin || resource.tenantJoin) && landlordFilter
+				? eq(properties.landlordId, landlordId!)
+				: undefined;
+
 		const unscopedWhere = and(
 			isNull(resource.table.managedTenantId),
 			isNull(resource.table.tenancyId),
-			resource.roomJoin && landlordFilter ? eq(properties.landlordId, landlordId!) : undefined
+			scopedLandlordFilter
 		);
 
 		const unscopedCountQuery = resource.roomJoin
@@ -1591,10 +1624,19 @@ export async function runTenancyReconciliation(
 					.innerJoin(rooms, eq(resource.table.roomId, rooms.id))
 					.innerJoin(properties, eq(rooms.propertyId, properties.id))
 					.where(unscopedWhere)
-			: db
-					.select({ count: sql<number>`count(*)::int` })
-					.from(resource.table)
-					.where(and(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)));
+			: resource.tenantJoin
+				? db
+						.select({
+							count: sql<number>`count(distinct ${maintenanceRequests.id})::int`
+						})
+						.from(maintenanceRequests)
+						.innerJoin(rooms, eq(maintenanceRequests.tenantId, rooms.tenantId))
+						.innerJoin(properties, eq(rooms.propertyId, properties.id))
+						.where(unscopedWhere)
+				: db
+						.select({ count: sql<number>`count(*)::int` })
+						.from(resource.table)
+						.where(and(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)));
 
 		const [unscopedCount] = await unscopedCountQuery;
 		const unscopedSamples = resource.roomJoin
@@ -1605,11 +1647,19 @@ export async function runTenancyReconciliation(
 					.innerJoin(properties, eq(rooms.propertyId, properties.id))
 					.where(unscopedWhere)
 					.limit(20)
-			: await db
-					.select({ id: resource.idCol })
-					.from(resource.table)
-					.where(and(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)))
-					.limit(20);
+			: resource.tenantJoin
+				? await db
+						.selectDistinct({ id: maintenanceRequests.id })
+						.from(maintenanceRequests)
+						.innerJoin(rooms, eq(maintenanceRequests.tenantId, rooms.tenantId))
+						.innerJoin(properties, eq(rooms.propertyId, properties.id))
+						.where(unscopedWhere)
+						.limit(20)
+				: await db
+						.select({ id: resource.idCol })
+						.from(resource.table)
+						.where(and(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)))
+						.limit(20);
 
 		findings.push({
 			code: resource.code,
@@ -1620,7 +1670,7 @@ export async function runTenancyReconciliation(
 		const partialWhere = and(
 			or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
 			or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId)),
-			resource.roomJoin && landlordFilter ? eq(properties.landlordId, landlordId!) : undefined
+			scopedLandlordFilter
 		);
 
 		const [partialCount] = resource.roomJoin
@@ -1630,15 +1680,24 @@ export async function runTenancyReconciliation(
 					.innerJoin(rooms, eq(resource.table.roomId, rooms.id))
 					.innerJoin(properties, eq(rooms.propertyId, properties.id))
 					.where(partialWhere)
-			: await db
-					.select({ count: sql<number>`count(*)::int` })
-					.from(resource.table)
-					.where(
-						and(
-							or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
-							or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId))
-						)
-					);
+			: resource.tenantJoin
+				? await db
+						.select({
+							count: sql<number>`count(distinct ${maintenanceRequests.id})::int`
+						})
+						.from(maintenanceRequests)
+						.innerJoin(rooms, eq(maintenanceRequests.tenantId, rooms.tenantId))
+						.innerJoin(properties, eq(rooms.propertyId, properties.id))
+						.where(partialWhere)
+				: await db
+						.select({ count: sql<number>`count(*)::int` })
+						.from(resource.table)
+						.where(
+							and(
+								or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
+								or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId))
+							)
+						);
 
 		const partialSamples = resource.roomJoin
 			? await db
@@ -1648,16 +1707,24 @@ export async function runTenancyReconciliation(
 					.innerJoin(properties, eq(rooms.propertyId, properties.id))
 					.where(partialWhere)
 					.limit(20)
-			: await db
-					.select({ id: resource.idCol })
-					.from(resource.table)
-					.where(
-						and(
-							or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
-							or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId))
+			: resource.tenantJoin
+				? await db
+						.selectDistinct({ id: maintenanceRequests.id })
+						.from(maintenanceRequests)
+						.innerJoin(rooms, eq(maintenanceRequests.tenantId, rooms.tenantId))
+						.innerJoin(properties, eq(rooms.propertyId, properties.id))
+						.where(partialWhere)
+						.limit(20)
+				: await db
+						.select({ id: resource.idCol })
+						.from(resource.table)
+						.where(
+							and(
+								or(isNotNull(resource.table.managedTenantId), isNotNull(resource.table.tenancyId)),
+								or(isNull(resource.table.managedTenantId), isNull(resource.table.tenancyId))
+							)
 						)
-					)
-					.limit(20);
+						.limit(20);
 
 		findings.push({
 			code: resource.partialCode,

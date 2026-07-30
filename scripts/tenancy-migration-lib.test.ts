@@ -19,6 +19,7 @@ import {
 	ensureDryRunVirtual,
 	expectedReconcileFindingCodes,
 	findTenancyForDate,
+	findVirtualActiveTenancyForRoom,
 	loadCheckpoint,
 	mergeReport,
 	newCheckpoint,
@@ -26,12 +27,14 @@ import {
 	parseBackfillSource,
 	resolveTenancyCandidates,
 	rollbackBackfillRun,
+	runCurrentRoomTenancyBatch,
 	saveCheckpoint,
 	shouldReloadTenancyCandidatesAtPhaseStart,
 	validateCheckpointResumeContext,
 	CHECKPOINT_SCHEMA_VERSION,
 	type BackfillCheckpoint,
-	type TenancyCandidate
+	type TenancyCandidate,
+	type TenancyMigrationDb
 } from './tenancy-migration-lib.js';
 
 function sampleCheckpoint(overrides: Partial<BackfillCheckpoint> = {}): BackfillCheckpoint {
@@ -326,6 +329,79 @@ describe('AUTH-007 tenancy migration lib', () => {
 		virtual.managedTenantByLegacyKey[key] = 'mt-1';
 		virtual.managedTenantByLegacyKey[key] = 'mt-1';
 		assert.equal(Object.keys(virtual.managedTenantByLegacyKey).length, 1);
+	});
+
+	it('findVirtualActiveTenancyForRoom returns planned ACTIVE tenancy in dry-run', () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true, runId: 'dry-run' });
+		const virtual = ensureDryRunVirtual(checkpoint);
+		virtual.tenancies.push({
+			id: 'ten-contract-active',
+			managedTenantId: 'mt-1',
+			roomId: 'room-a',
+			startDate: '2024-01-01',
+			endDate: null,
+			status: 'ACTIVE',
+			backfillSource: buildBackfillSource('dry-run', 'CONTRACT')
+		});
+		assert.equal(findVirtualActiveTenancyForRoom(checkpoint, 'room-a')?.id, 'ten-contract-active');
+		assert.equal(findVirtualActiveTenancyForRoom(checkpoint, 'room-b'), null);
+	});
+
+	it('runCurrentRoomTenancyBatch dry-run skips when virtual ACTIVE tenancy already planned', async () => {
+		const checkpoint = sampleCheckpoint({
+			dryRun: true,
+			runId: 'dry-run',
+			cursor: { phase: 'tenancies_current_room', lastId: null }
+		});
+		const virtual = ensureDryRunVirtual(checkpoint);
+		virtual.managedTenantByLegacyKey['landlord-a:legacy-1'] = 'mt-1';
+		virtual.tenancies.push({
+			id: 'ten-contract-active',
+			managedTenantId: 'mt-1',
+			roomId: 'room-a',
+			startDate: '2024-01-01',
+			endDate: null,
+			status: 'ACTIVE',
+			backfillSource: buildBackfillSource('dry-run', 'CONTRACT')
+		});
+
+		const currentRoomRow = {
+			roomId: 'room-a',
+			propertyId: 'prop-a',
+			landlordId: 'landlord-a',
+			tenantId: 'legacy-1',
+			moveInDate: '2024-06-01'
+		};
+		const mockDb = {
+			select: () => ({
+				from: () => ({
+					innerJoin: () => ({
+						innerJoin: () => ({
+							where: () => ({
+								orderBy: () => Promise.resolve([currentRoomRow])
+							})
+						})
+					})
+				})
+			})
+		} as unknown as TenancyMigrationDb;
+
+		const opts = parseBackfillCliArgs([
+			'--landlord-id',
+			'landlord-a',
+			'--limit',
+			'10',
+			'--batch-size',
+			'10'
+		]);
+		const beforeCount = virtual.tenancies.length;
+		const result = await runCurrentRoomTenancyBatch(mockDb, checkpoint, opts);
+
+		assert.equal(result.delta.scanned, 1);
+		assert.equal(result.delta.skipped, 1);
+		assert.equal(result.delta.tenanciesMapped, 0);
+		assert.equal(virtual.tenancies.length, beforeCount);
+		assert.deepEqual(checkpoint.created.tenancyIds, ['ten-contract-active']);
 	});
 
 	it('canRollbackResourceMapping only when current values match written mapping', () => {
