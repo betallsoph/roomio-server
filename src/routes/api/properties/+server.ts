@@ -3,8 +3,7 @@ import { errorMessage } from '$lib/server/api';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { properties, blocks, landlordProfiles, rooms } from '$lib/server/db/schema';
-import { and, asc, eq, sql } from 'drizzle-orm';
-import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
+import { and, eq, sql } from 'drizzle-orm';
 import { pricingGroupForRentalType } from '$lib/server/subscription-pricing';
 import {
 	canonicalRentalType,
@@ -12,6 +11,17 @@ import {
 	normalizeRentalTypeOr,
 	type OperatingModel
 } from '$lib/server/rental-types';
+import { toPropertyDto } from '$lib/server/dto/properties';
+import {
+	findPropertyDetailForActor,
+	listPropertiesForActor,
+	propertyScopeErrorToResponse,
+	requireLandlordMutationActor,
+	requireOperationalActor,
+	deletePropertyScoped,
+	requireScopedProperty,
+	updatePropertyScoped
+} from '$lib/server/property-scope';
 
 const INVALID_OPERATING_MODEL_ERROR = 'Mô hình vận hành không hợp lệ';
 
@@ -53,37 +63,25 @@ async function landlordAllowsRentalType(landlordId: string, rentalType: string) 
 	return enabled.includes(rentalType);
 }
 
-export const GET: RequestHandler = async ({ url, locals }) => {
+export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
-		const landlordId = auth.value;
+		const actorResult = requireOperationalActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
-		// Backward-compatible query param is ignored; session is the source of truth.
-		void url;
-
-		const result = await db.query.properties.findMany({
-			where: eq(properties.landlordId, landlordId),
-			with: {
-				blocks: true,
-				rooms: {
-					columns: { id: true, roomNumber: true, status: true, roomType: true, monthlyRent: true }
-				}
-			},
-			orderBy: asc(properties.name)
-		});
-
-		return json(result);
+		const result = await listPropertiesForActor(db, actorResult.actor);
+		return json(result.map(toPropertyDto));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
-		const landlordId = auth.value;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
 
 		const body = await request.json();
 		const { name, shortName, address, blocks: blockNames } = body;
@@ -93,7 +91,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return json({ error: INVALID_OPERATING_MODEL_ERROR }, { status: 400 });
 		}
 
-		if (!landlordId || !name || !shortName || !address) {
+		if (!name || !shortName || !address) {
 			return json({ error: 'Missing required property fields' }, { status: 400 });
 		}
 		if (!(await landlordAllowsRentalType(landlordId, rentalType))) {
@@ -108,7 +106,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 
 		const property = await db.transaction(async (tx) => {
-			// Create property
 			const prop = (
 				await tx
 					.insert(properties)
@@ -123,7 +120,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					.returning()
 			)[0];
 
-			// Create initial blocks if specified
 			if (blockNames && Array.isArray(blockNames)) {
 				const values = blockNames
 					.map((blockName: string) => blockName.trim())
@@ -138,24 +134,19 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			return prop;
 		});
 
-		const fullProperty = await db.query.properties.findFirst({
-			where: eq(properties.id, property.id),
-			with: {
-				blocks: true,
-				rooms: true
-			}
-		});
-
-		return json(fullProperty);
+		const fullProperty = await findPropertyDetailForActor(db, actorResult.actor, property.id);
+		return json(toPropertyDto(fullProperty));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		const body = await request.json();
 		const { id, name, shortName, address, blocks: blockNames } = body;
@@ -163,22 +154,28 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (!id) {
 			return json({ error: 'Missing property ID' }, { status: 400 });
 		}
-		if (!(await landlordOwnsProperty(auth.value, id))) {
-			return forbidden();
-		}
+
 		const requestedRentalType =
 			body.rentalType !== undefined ? normalizeRentalTypeOr(body.rentalType) : null;
 		const operatingModelResult = resolveOperatingModelForPut(body.operatingModel);
 		if (!operatingModelResult.ok) {
 			return json({ error: INVALID_OPERATING_MODEL_ERROR }, { status: 400 });
 		}
-		if (requestedRentalType && !(await landlordAllowsRentalType(auth.value, requestedRentalType))) {
+		if (
+			requestedRentalType &&
+			!(await landlordAllowsRentalType(actorResult.actor.landlordId, requestedRentalType))
+		) {
 			return json({ error: 'Tài khoản chủ trọ chưa được bật loại hình này' }, { status: 403 });
 		}
 
+		// Scope gate before any scalar or block mutation — blocks-only PUT must not bypass ownership.
+		await requireScopedProperty(db, actorResult.actor, id);
+
 		const updateResult = await db.transaction(async (tx) => {
 			if (requestedRentalType) {
-				await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${auth.value}))`);
+				await tx.execute(
+					sql`select pg_advisory_xact_lock(hashtext(${actorResult.actor.landlordId}))`
+				);
 				const currentProperty = (
 					await tx
 						.select({ rentalType: properties.rentalType })
@@ -198,7 +195,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 								colivingLimit: landlordProfiles.subscribedColivingRoomLimit
 							})
 							.from(landlordProfiles)
-							.where(eq(landlordProfiles.id, auth.value))
+							.where(eq(landlordProfiles.id, actorResult.actor.landlordId))
 					)[0];
 					const targetIsColiving = pricingGroupForRentalType(requestedRentalType) === 'COLIVING';
 					const targetLimit = targetIsColiving ? profile?.colivingLimit : profile?.standardLimit;
@@ -219,7 +216,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 									.leftJoin(rooms, eq(rooms.propertyId, properties.id))
 									.where(
 										and(
-											eq(properties.landlordId, auth.value),
+											eq(properties.landlordId, actorResult.actor.landlordId),
 											targetIsColiving
 												? sql`${properties.rentalType} in ('APARTMENT', 'COLIVING')`
 												: sql`${properties.rentalType} not in ('APARTMENT', 'COLIVING')`
@@ -235,7 +232,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 					}
 				}
 			}
-			// Update property details
+
 			const updateData: Record<string, unknown> = {};
 			if (name !== undefined) updateData.name = name;
 			if (shortName !== undefined) updateData.shortName = shortName;
@@ -246,10 +243,9 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			}
 
 			if (Object.keys(updateData).length > 0) {
-				await tx.update(properties).set(updateData).where(eq(properties.id, id));
+				await updatePropertyScoped(tx, actorResult.actor, id, updateData);
 			}
 
-			// Synchronize blocks (add new ones, keep existing ones)
 			if (blockNames && Array.isArray(blockNames)) {
 				const existingBlocks = await tx.select().from(blocks).where(eq(blocks.propertyId, id));
 				const existingNames = existingBlocks.map((b) => b.name);
@@ -267,38 +263,30 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		});
 		if ('error' in updateResult) return json({ error: updateResult.error }, { status: 403 });
 
-		const fullProperty = await db.query.properties.findFirst({
-			where: eq(properties.id, id),
-			with: {
-				blocks: true,
-				rooms: true
-			}
-		});
-
-		return json(fullProperty);
+		const fullProperty = await findPropertyDetailForActor(db, actorResult.actor, id);
+		return json(toPropertyDto(fullProperty));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		const id = url.searchParams.get('id');
-
 		if (!id) {
 			return json({ error: 'Missing property ID' }, { status: 400 });
 		}
-		if (!(await landlordOwnsProperty(auth.value, id))) {
-			return forbidden();
-		}
 
-		await db.delete(properties).where(eq(properties.id, id));
-
+		await deletePropertyScoped(db, actorResult.actor, id);
 		return json({ success: true });
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };

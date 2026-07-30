@@ -8,16 +8,9 @@ import {
 	services,
 	roomServiceConfigs,
 	meterReadings,
-	roomAssets,
 	landlordProfiles
 } from '$lib/server/db/schema';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import {
-	forbidden,
-	landlordOwnsProperty,
-	landlordOwnsRoom,
-	requireLandlord
-} from '$lib/server/authz';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { normalizeRoomTextKey } from '$lib/server/room-code';
 import { getPaymentAccountForLandlord } from '$lib/server/payment-accounts';
 import { requireLandlordActor } from '$lib/server/authorization/actor';
@@ -34,7 +27,22 @@ import {
 	subscriptionTierLimits,
 	type SubscriptionTier
 } from '$lib/server/subscription-pricing';
-import { ROOM_DETAIL_WITH, toRoomDto } from '$lib/server/dto/rooms';
+import { ROOM_DETAIL_WITH, toRoomDto, toTenantRoomSummaryDto } from '$lib/server/dto/rooms';
+import {
+	assertBlockInScopedProperty,
+	deleteRoomAssetScoped,
+	deleteRoomScoped,
+	listRoomsForActor,
+	propertyScopeErrorToResponse,
+	requireLandlordMutationActor,
+	requireOperationalActor,
+	requireScopedProperty,
+	requireScopedRoom,
+	updateRoomAssetScoped,
+	updateRoomScoped,
+	updateRoomServiceConfigsScoped
+} from '$lib/server/property-scope';
+import { isTenantActor } from '$lib/server/property-scope/actor';
 
 function roomUnitKey(
 	roomNumber: string,
@@ -60,8 +68,6 @@ function normalizeFloor(value: unknown) {
 	return Math.trunc(floorNumber);
 }
 
-// Một MÃ CĂN có thể chứa NHIỀU PHÒNG (cho thuê theo phòng/giường). Vì vậy chỉ coi là TRÙNG khi
-// CÙNG mã căn VÀ CÙNG tên phòng — không chặn việc thêm phòng mới vào căn đã tồn tại.
 async function findDuplicateRoom(
 	propertyId: string,
 	roomNumber: string,
@@ -89,86 +95,30 @@ async function findDuplicateRoom(
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const propertyId = url.searchParams.get('propertyId');
-		const blockId = url.searchParams.get('blockId');
-		const tenantId = url.searchParams.get('tenantId');
-		const status = url.searchParams.get('status');
-		const landlordId = url.searchParams.get('landlordId');
+		const actorResult = requireOperationalActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
-		const conditions = [];
-		if (locals.session?.role === 'LANDLORD') {
-			conditions.push(
-				inArray(
-					rooms.propertyId,
-					db
-						.select({ id: properties.id })
-						.from(properties)
-						.where(eq(properties.landlordId, locals.session.landlordProfileId!))
-				)
-			);
-		}
-		if (locals.session?.role === 'TENANT') {
-			if (!locals.session.tenantProfileId) return forbidden();
-			conditions.push(eq(rooms.tenantId, locals.session.tenantProfileId));
-		}
-		if (locals.session?.role === 'STAFF') {
-			conditions.push(
-				inArray(
-					rooms.propertyId,
-					db
-						.select({ id: properties.id })
-						.from(properties)
-						.where(eq(properties.landlordId, locals.session.staffLandlordId!))
-				)
-			);
-		}
-		if (status) {
-			conditions.push(eq(rooms.status, status));
-		}
-		if (propertyId) {
-			conditions.push(eq(rooms.propertyId, propertyId));
-		}
-		if (blockId && blockId !== 'all') {
-			conditions.push(eq(rooms.blockId, blockId));
-		}
-		if (tenantId) {
-			conditions.push(eq(rooms.tenantId, tenantId));
-		}
-		// Giới hạn theo chủ trọ (dùng cho cổng /staff xem phòng) — chỉ phòng thuộc cơ sở của chủ trọ này
-		if (landlordId) {
-			conditions.push(
-				inArray(
-					rooms.propertyId,
-					db
-						.select({ id: properties.id })
-						.from(properties)
-						.where(eq(properties.landlordId, landlordId))
-				)
-			);
-		}
-
-		const result = await db.query.rooms.findMany({
-			where: conditions.length > 0 ? and(...conditions) : undefined,
-			with: {
-				...ROOM_DETAIL_WITH,
-				meterReadings: {
-					...ROOM_DETAIL_WITH.meterReadings,
-					orderBy: desc(meterReadings.month)
-				}
-			},
-			orderBy: asc(rooms.roomNumber)
+		const result = await listRoomsForActor(db, actorResult.actor, {
+			propertyId: url.searchParams.get('propertyId'),
+			blockId: url.searchParams.get('blockId'),
+			status: url.searchParams.get('status')
 		});
 
+		if (isTenantActor(actorResult.actor)) {
+			return json(result.map(toTenantRoomSummaryDto));
+		}
 		return json(result.map(toRoomDto));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		const body = await request.json();
 		const {
@@ -187,19 +137,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!propertyId || !roomNumber || !roomType || !monthlyRent) {
 			return json({ error: 'Missing required room fields' }, { status: 400 });
 		}
-		if (!(await landlordOwnsProperty(auth.value, propertyId))) {
-			return forbidden();
-		}
 
-		const property = await db.query.properties.findFirst({
-			where: eq(properties.id, propertyId),
-			with: { blocks: true }
-		});
-		if (!property) {
-			return json({ error: 'Property not found' }, { status: 404 });
-		}
+		const property = await requireScopedProperty(db, actorResult.actor, propertyId);
+
 		const selectedPaymentAccount = await getPaymentAccountForLandlord(
-			auth.value,
+			actorResult.actor.landlordId,
 			paymentAccountId || null
 		);
 		if (!selectedPaymentAccount.isActive) {
@@ -216,20 +158,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			if (!nextBlockId || nextFloor === null) {
 				return json({ error: 'Chung cư cần chọn block và nhập tầng' }, { status: 400 });
 			}
-			const block = property.blocks.find((item) => item.id === nextBlockId);
-			if (!block) {
-				return json({ error: 'Block không thuộc tòa nhà đã chọn' }, { status: 400 });
-			}
+			await assertBlockInScopedProperty(db, actorResult.actor, propertyId, nextBlockId);
 			const apartmentUnit = normalizeApartmentUnit(unitNumber || roomCode);
 			if (!apartmentUnit) {
 				return json({ error: 'Chung cư cần nhập số căn' }, { status: 400 });
 			}
 			nextRoomCode = apartmentUnit;
 		} else if (nextBlockId) {
-			const block = property.blocks.find((item) => item.id === nextBlockId);
-			if (!block) {
-				return json({ error: 'Khu/dãy không thuộc tòa nhà đã chọn' }, { status: 400 });
-			}
+			await assertBlockInScopedProperty(db, actorResult.actor, propertyId, nextBlockId);
 		}
 
 		const existing = await findDuplicateRoom(
@@ -249,7 +185,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 
 		const createResult = await db.transaction(async (tx) => {
-			await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${auth.value}))`);
+			await tx.execute(
+				sql`select pg_advisory_xact_lock(hashtext(${actorResult.actor.landlordId}))`
+			);
 			const profile = (
 				await tx
 					.select({
@@ -259,7 +197,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						colivingLimit: landlordProfiles.subscribedColivingRoomLimit
 					})
 					.from(landlordProfiles)
-					.where(eq(landlordProfiles.id, auth.value))
+					.where(eq(landlordProfiles.id, actorResult.actor.landlordId))
 			)[0];
 			const tier = SUBSCRIPTION_TIERS.includes(profile?.subscriptionType as SubscriptionTier)
 				? (profile.subscriptionType as SubscriptionTier)
@@ -272,7 +210,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				.select({ rentalType: properties.rentalType, count: sql<number>`count(${rooms.id})` })
 				.from(properties)
 				.leftJoin(rooms, eq(rooms.propertyId, properties.id))
-				.where(eq(properties.landlordId, auth.value))
+				.where(eq(properties.landlordId, actorResult.actor.landlordId))
 				.groupBy(properties.rentalType);
 			const standardCount = roomCounts
 				.filter((row) => pricingGroupForRentalType(row.rentalType) === 'STANDARD')
@@ -294,7 +232,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				};
 			}
 
-			// Create the room
 			const r = (
 				await tx
 					.insert(rooms)
@@ -314,32 +251,21 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					.returning()
 			)[0];
 
-			// Find landlord's services
-			const propertyOwner = (
-				await tx
-					.select({ landlordId: properties.landlordId })
-					.from(properties)
-					.where(eq(properties.id, propertyId))
-			)[0];
-
-			if (propertyOwner) {
-				const activeServices = await tx
-					.select()
-					.from(services)
-					.where(
-						and(eq(services.landlordId, propertyOwner.landlordId), eq(services.isActive, true))
-					);
-				// Map room to all active services with default rates
-				if (activeServices.length > 0) {
-					await tx.insert(roomServiceConfigs).values(
-						activeServices.map((service) => ({
-							roomId: r.id,
-							serviceId: service.id,
-							customRate: null,
-							quantity: 1
-						}))
-					);
-				}
+			const activeServices = await tx
+				.select()
+				.from(services)
+				.where(
+					and(eq(services.landlordId, actorResult.actor.landlordId), eq(services.isActive, true))
+				);
+			if (activeServices.length > 0) {
+				await tx.insert(roomServiceConfigs).values(
+					activeServices.map((service) => ({
+						roomId: r.id,
+						serviceId: service.id,
+						customRate: null,
+						quantity: 1
+					}))
+				);
 			}
 
 			return { room: r };
@@ -349,22 +275,23 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const fullRoom = await db.query.rooms.findFirst({
 			where: eq(rooms.id, room.id),
-			with: ROOM_DETAIL_WITH
+			with: {
+				...ROOM_DETAIL_WITH,
+				meterReadings: {
+					...ROOM_DETAIL_WITH.meterReadings,
+					orderBy: desc(meterReadings.month)
+				}
+			}
 		});
 
 		return json(fullRoom ? toRoomDto(fullRoom) : null);
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
-/**
- * AUTH-006 — check-out canonical: kết thúc Tenancy, dọn cache tương thích có điều kiện,
- * revoke invite pending và ghi audit trong MỘT transaction.
- *
- * KHÔNG đụng `Room.status` hay `Room.debtAmount`: công nợ do FIN ledger quyết toán
- * (FIN-020/FIN-021) và trạng thái vận hành phòng thuộc FIN-027. Xóa nợ ở đây là mất tiền.
- */
 async function checkoutWithTenancyService(
 	locals: App.Locals,
 	roomId: string,
@@ -397,127 +324,62 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		const body = await request.json();
 		const { id, action, ...data } = body ?? {};
 
-		// AUTH-006 — check-out phải đi qua tenancy service TRƯỚC guard legacy, nếu không
-		// `landlordOwnsRoom` sẽ trả 403 và làm lộ khác biệt giữa "phòng không tồn tại" và
-		// "phòng của chủ khác". Service trả 404 giống nhau cho cả hai.
 		if (action === 'checkout' && isTenancyDualWriteEnabled()) {
 			if (!id) return json({ error: 'Missing room ID' }, { status: 400 });
 			return await checkoutWithTenancyService(locals, String(id), data?.endDate ?? null);
 		}
 
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		if (!id) {
 			return json({ error: 'Missing room ID' }, { status: 400 });
 		}
-		if (!(await landlordOwnsRoom(auth.value, id))) {
-			return forbidden();
-		}
+
+		// Every PUT path assembles a room DTO — scope before mutations and before response fetch.
+		await requireScopedRoom(db, actorResult.actor, String(id));
 
 		if (action === 'updateMeters') {
-			const { serviceId, month, prevValue, currValue, photoUrl } = data;
+			return json({ error: 'Meter updates belong on /api/meter-readings' }, { status: 400 });
+		}
 
-			if (!serviceId || !month || currValue === undefined || prevValue === undefined) {
-				return json({ error: 'Missing meter reading parameters' }, { status: 400 });
-			}
-
-			const existingReading = await db.query.meterReadings.findFirst({
-				where: and(
-					eq(meterReadings.roomId, id),
-					eq(meterReadings.serviceId, serviceId),
-					eq(meterReadings.month, month)
-				)
-			});
-
-			if (existingReading) {
-				const updateData: Record<string, unknown> = {
-					prevValue: Number(prevValue),
-					currValue: Number(currValue),
-					recordedAt: new Date().toISOString().split('T')[0]
-				};
-				if (photoUrl) updateData.photoUrl = photoUrl;
-
-				await db
-					.update(meterReadings)
-					.set(updateData)
-					.where(eq(meterReadings.id, existingReading.id));
-			} else {
-				await db.insert(meterReadings).values({
-					roomId: id,
-					serviceId,
-					month,
-					prevValue: Number(prevValue),
-					currValue: Number(currValue),
-					photoUrl: photoUrl || null,
-					recordedAt: new Date().toISOString().split('T')[0]
-				});
-			}
-		} else if (action === 'updateAsset') {
+		if (action === 'updateAsset') {
 			const { assetId, name, code, status, notes } = data;
-
 			if (!name) {
 				return json({ error: 'Missing asset name' }, { status: 400 });
 			}
-
-			if (assetId) {
-				await db
-					.update(roomAssets)
-					.set({ name, code, status, notes })
-					.where(eq(roomAssets.id, assetId));
-			} else {
-				await db.insert(roomAssets).values({ roomId: id, name, code, status, notes });
-			}
+			await updateRoomAssetScoped(db, actorResult.actor, {
+				roomId: String(id),
+				assetId,
+				name,
+				code,
+				status,
+				notes
+			});
 		} else if (action === 'deleteAsset') {
 			const { assetId } = data;
-			if (assetId) {
-				await db.delete(roomAssets).where(eq(roomAssets.id, assetId));
+			if (!assetId) {
+				return json({ error: 'Missing asset ID' }, { status: 400 });
 			}
+			await deleteRoomAssetScoped(db, actorResult.actor, {
+				roomId: String(id),
+				assetId: String(assetId)
+			});
 		} else if (action === 'updateServiceConfig') {
-			const { configs } = data; // configs: array of { serviceId, customRate, quantity }
+			const { configs } = data;
 			if (configs && Array.isArray(configs)) {
-				for (const config of configs) {
-					await db
-						.update(roomServiceConfigs)
-						.set({
-							customRate:
-								config.customRate === '' || config.customRate === null
-									? null
-									: Number(config.customRate),
-							quantity: Number(config.quantity) || 1
-						})
-						.where(
-							and(
-								eq(roomServiceConfigs.roomId, id),
-								eq(roomServiceConfigs.serviceId, config.serviceId)
-							)
-						);
-				}
+				await updateRoomServiceConfigsScoped(db, actorResult.actor, String(id), configs);
 			}
 		} else if (action === 'checkout') {
-			// Tới đây flag đang TẮT (nhánh bật đã return ở đầu handler).
-			// Chống split-brain khi rollback flag: phòng đã có Tenancy ACTIVE thì vẫn phải
-			// kết thúc bằng canonical service, không được chỉ xóa cache legacy.
 			if (await hasActiveTenancyForRoom(db, id)) {
-				const canonical = await checkoutWithTenancyService(
-					locals,
-					String(id),
-					data?.endDate ?? null
-				);
-				return canonical;
+				return await checkoutWithTenancyService(locals, String(id), data?.endDate ?? null);
 			}
-
-			// Luồng legacy thuần: phòng chưa từng có Tenancy, giữ nguyên hành vi cũ.
-			await db
-				.update(rooms)
-				.set({
-					status: 'empty',
-					tenantId: null,
-					debtAmount: 0
-				})
-				.where(eq(rooms.id, id));
+			await updateRoomScoped(db, actorResult.actor, String(id), {
+				status: 'empty',
+				tenantId: null,
+				debtAmount: 0
+			});
 		} else {
-			// Standard room update
 			const updateData: Record<string, unknown> = {};
 			if (
 				data.roomNumber !== undefined ||
@@ -526,70 +388,58 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				data.blockId !== undefined ||
 				data.floor !== undefined
 			) {
-				const currentRoom = await db.query.rooms.findFirst({
-					where: eq(rooms.id, id),
-					columns: {
-						propertyId: true,
-						roomNumber: true,
-						roomCode: true,
-						blockId: true,
-						floor: true
-					}
-				});
-				if (!currentRoom) {
-					return json({ error: 'Room not found' }, { status: 404 });
-				}
+				const room = await requireScopedRoom(db, actorResult.actor, String(id));
 
 				const property = await db.query.properties.findFirst({
-					where: eq(properties.id, currentRoom.propertyId),
-					with: { blocks: true }
+					where: eq(properties.id, room.propertyId),
+					columns: { rentalType: true }
 				});
 				if (!property) {
 					return json({ error: 'Property not found' }, { status: 404 });
 				}
 
 				const submittedRoomNumber =
-					data.roomNumber !== undefined ? String(data.roomNumber).trim() : currentRoom.roomNumber;
+					data.roomNumber !== undefined ? String(data.roomNumber).trim() : room.roomNumber;
 				let submittedRoomCode =
 					data.roomCode !== undefined
 						? data.roomCode
 							? String(data.roomCode).trim()
 							: null
-						: currentRoom.roomCode;
-				const submittedBlockId =
-					data.blockId !== undefined ? data.blockId || null : currentRoom.blockId;
+						: room.roomCode;
+				const submittedBlockId = data.blockId !== undefined ? data.blockId || null : room.blockId;
 				const submittedFloor =
 					data.floor !== undefined && data.floor !== null && data.floor !== ''
 						? normalizeFloor(data.floor)
-						: currentRoom.floor;
+						: room.floor;
 
 				if (property.rentalType === 'APARTMENT') {
 					if (!submittedBlockId || submittedFloor === null) {
 						return json({ error: 'Chung cư cần chọn block và nhập tầng' }, { status: 400 });
 					}
-					const block = property.blocks.find((item) => item.id === submittedBlockId);
-					if (!block) {
-						return json({ error: 'Block không thuộc tòa nhà đã chọn' }, { status: 400 });
-					}
+					await assertBlockInScopedProperty(
+						db,
+						actorResult.actor,
+						room.propertyId,
+						submittedBlockId
+					);
 					const apartmentUnit = normalizeApartmentUnit(data.unitNumber || submittedRoomCode);
 					if (!apartmentUnit) {
 						return json({ error: 'Chung cư cần nhập số căn' }, { status: 400 });
 					}
 					submittedRoomCode = apartmentUnit;
 				} else if (submittedBlockId) {
-					const block = property.blocks.find((item) => item.id === submittedBlockId);
-					if (!block) {
-						return json({ error: 'Khu/dãy không thuộc tòa nhà đã chọn' }, { status: 400 });
-					}
+					await assertBlockInScopedProperty(
+						db,
+						actorResult.actor,
+						room.propertyId,
+						submittedBlockId
+					);
 				}
 
-				const nextRoomNumber = submittedRoomNumber;
-				const nextRoomCode = submittedRoomCode;
-
 				const duplicate = await findDuplicateRoom(
-					currentRoom.propertyId,
-					nextRoomNumber,
-					nextRoomCode,
+					room.propertyId,
+					submittedRoomNumber,
+					submittedRoomCode,
 					submittedBlockId,
 					submittedFloor,
 					id
@@ -597,20 +447,20 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 				if (duplicate) {
 					return json(
 						{
-							error: `Phòng "${nextRoomNumber}" đã tồn tại trong căn ${nextRoomCode || duplicate.roomCode || duplicate.roomNumber}`
+							error: `Phòng "${submittedRoomNumber}" đã tồn tại trong căn ${submittedRoomCode || duplicate.roomCode || duplicate.roomNumber}`
 						},
 						{ status: 400 }
 					);
 				}
 
-				if (data.roomNumber !== undefined) updateData.roomNumber = nextRoomNumber;
+				if (data.roomNumber !== undefined) updateData.roomNumber = submittedRoomNumber;
 				if (
 					data.roomCode !== undefined ||
 					data.unitNumber !== undefined ||
 					(property.rentalType === 'APARTMENT' &&
 						(data.blockId !== undefined || data.floor !== undefined))
 				) {
-					updateData.roomCode = nextRoomCode;
+					updateData.roomCode = submittedRoomCode;
 				}
 			}
 			if (data.roomType !== undefined) updateData.roomType = data.roomType;
@@ -622,7 +472,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			if (data.blockId !== undefined) updateData.blockId = data.blockId || null;
 			if (data.paymentAccountId !== undefined) {
 				const selectedPaymentAccount = await getPaymentAccountForLandlord(
-					auth.value,
+					actorResult.actor.landlordId,
 					data.paymentAccountId || null
 				);
 				if (!selectedPaymentAccount.isActive) {
@@ -632,7 +482,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			}
 
 			if (Object.keys(updateData).length > 0) {
-				await db.update(rooms).set(updateData).where(eq(rooms.id, id));
+				await updateRoomScoped(db, actorResult.actor, String(id), updateData);
 			}
 		}
 
@@ -649,28 +499,27 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 
 		return json(updatedRoom ? toRoomDto(updatedRoom) : null);
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		const id = url.searchParams.get('id');
-
 		if (!id) {
-			return json({ error: 'Missing room ID' }, { status: 400 });
-		}
-		if (!(await landlordOwnsRoom(auth.value, id))) {
-			return forbidden();
+			return json({ error: 'Missing property ID' }, { status: 400 });
 		}
 
-		await db.delete(rooms).where(eq(rooms.id, id));
-
+		await deleteRoomScoped(db, actorResult.actor, id);
 		return json({ success: true });
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };

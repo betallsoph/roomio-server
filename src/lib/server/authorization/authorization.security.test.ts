@@ -13,6 +13,7 @@ import {
 	getSecurityIntegrationSkipReason,
 	withSecurityDb
 } from '../testing/test-db.js';
+import { createDrizzleActorDb, getUserActor } from './load-user-actor.js';
 import { expectNoForbiddenKeys } from './security-assertions.js';
 
 const skipReason = getSecurityIntegrationSkipReason();
@@ -76,7 +77,8 @@ if (skipReason) {
 
 			async function getRoomList(session: SessionData) {
 				const url = new URL('http://localhost/api/rooms');
-				const res = await callHandler(getRooms, { url, locals: { session } });
+				const actor = await getUserActor(session, createDrizzleActorDb(handle.db));
+				const res = await callHandler(getRooms, { url, locals: { session, actor } });
 				return readJson(res);
 			}
 
