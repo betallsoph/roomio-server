@@ -29,6 +29,10 @@ const STAFF_ALLOWLIST: { prefix: string; methods: string[] }[] = [
 	{ prefix: '/api/uploads/presign', methods: ['POST'] } // xin pre-signed URL để upload thẳng R2
 ];
 
+function pathnameMatchesStaffAllowlistPrefix(pathname: string, prefix: string): boolean {
+	return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
 function beginRequest(event: Parameters<Handle>[0]['event']) {
 	const requestId = resolveRequestId(event.request.headers.get('x-request-id'));
 	event.locals.requestId = requestId;
@@ -211,7 +215,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 		if (actor.role === 'STAFF') {
 			const allowed = STAFF_ALLOWLIST.some(
-				(rule) => pathname.startsWith(rule.prefix) && rule.methods.includes(event.request.method)
+				(rule) =>
+					pathnameMatchesStaffAllowlistPrefix(pathname, rule.prefix) &&
+					rule.methods.includes(event.request.method)
 			);
 			if (!allowed) {
 				return finish(
