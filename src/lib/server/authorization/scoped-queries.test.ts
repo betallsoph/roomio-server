@@ -1,14 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-	contracts,
-	invoices,
-	maintenanceRequests,
-	meterReadings,
-	roomAssets,
-	rooms,
-	services
-} from '$lib/server/db/schema';
+import { contracts, invoices, roomAssets, rooms, services } from '$lib/server/db/schema';
 import type { LandlordActor, StaffActor, SuperAdminActor, TenantActor } from './actor.js';
 import { AuthorizationError } from './errors.js';
 import {

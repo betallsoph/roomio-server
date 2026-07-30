@@ -102,13 +102,20 @@ if (!RUN) {
 		services,
 		meterReadings
 	} = await import('./db/schema.js');
-	const { inArray } = await import('drizzle-orm');
+	const { inArray, eq } = await import('drizzle-orm');
 
 	let landlordActor: LandlordActor;
 	let tenantActor: TenantActor;
 	let staffActor: StaffActor;
 
 	async function cleanup() {
+		await db.delete(meterReadings).where(inArray(meterReadings.landlordId, [LA, LB]));
+		await db.delete(rooms).where(inArray(rooms.id, [RA, RB]));
+		await db.delete(services).where(inArray(services.id, [SA, SB]));
+		await db.delete(staffProfiles).where(eq(staffProfiles.id, SP_A));
+		await db.delete(properties).where(inArray(properties.id, [PA, PB]));
+		await db.delete(tenantProfiles).where(eq(tenantProfiles.id, TC));
+		await db.delete(landlordProfiles).where(inArray(landlordProfiles.id, [LA, LB]));
 		await db.delete(users).where(inArray(users.id, [U_LA, U_LB, U_TC, U_SA]));
 	}
 

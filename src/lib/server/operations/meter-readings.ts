@@ -22,7 +22,10 @@ import {
 } from '$lib/server/authorization/scoped-queries';
 import { forbiddenError } from '$lib/server/authorization/errors';
 import { staffHasPermission } from '$lib/server/authorization/staff-scope';
-import { resolveTenancyForTenantMutation } from './active-tenancy.js';
+import {
+	resolveTenancyForTenantMutation,
+	listClaimedTenancyScopesForTenant
+} from './active-tenancy.js';
 import {
 	isOperationsError,
 	operationsConflict,
@@ -119,6 +122,11 @@ export async function listMeterReadingsForActor(
 		.leftJoin(services, eq(meterReadings.serviceId, services.id));
 
 	if (actor.role === 'TENANT') {
+		const scopes = await listClaimedTenancyScopesForTenant(database, actor);
+		if (scopes.length === 0) {
+			throw operationsForbidden('Bạn không có lần thuê được phép truy cập');
+		}
+
 		return listQuery
 			.innerJoin(
 				tenancies,
