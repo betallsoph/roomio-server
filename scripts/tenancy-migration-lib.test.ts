@@ -20,11 +20,16 @@ import {
 	expectedReconcileFindingCodes,
 	findTenancyForDate,
 	findVirtualActiveTenancyForRoom,
+	isMapResourcePhase,
 	loadCheckpoint,
+	lookupManagedTenantId,
 	mergeReport,
 	newCheckpoint,
+	normalizeBackfillPhase,
+	normalizeCheckpointRecord,
 	parseBackfillCliArgs,
 	parseBackfillSource,
+	reconcilePendingResourceMapping,
 	resolveTenancyCandidates,
 	rollbackBackfillRun,
 	runCurrentRoomTenancyBatch,
@@ -225,8 +230,9 @@ describe('AUTH-007 tenancy migration lib', () => {
 		assert.deepEqual(backfillManagedTenantClaimFields(), backfillManagedTenantClaimFields());
 	});
 
-	it('shouldReloadTenancyCandidatesAtPhaseStart reloads only for map_resources', () => {
-		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('map_resources'), true);
+	it('shouldReloadTenancyCandidatesAtPhaseStart reloads only for map_invoices', () => {
+		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('map_invoices'), true);
+		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('map_contracts'), false);
 		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('managed_tenants'), false);
 		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('tenancies_contract'), false);
 		assert.equal(shouldReloadTenancyCandidatesAtPhaseStart('tenancies_current_room'), false);
@@ -411,7 +417,8 @@ describe('AUTH-007 tenancy migration lib', () => {
 			managedTenantId: 'mt-1',
 			tenancyId: 'ten-1',
 			previousManagedTenantId: null,
-			previousTenancyId: null
+			previousTenancyId: null,
+			applied: true
 		};
 		assert.equal(
 			canRollbackResourceMapping(mapping, { managedTenantId: 'mt-1', tenancyId: 'ten-1' }),
@@ -631,7 +638,8 @@ describe('AUTH-007 dry-run parity and rollback safety', () => {
 			managedTenantId: 'mt-1',
 			tenancyId: 'ten-1',
 			previousManagedTenantId: null,
-			previousTenancyId: null
+			previousTenancyId: null,
+			applied: true
 		};
 		const checkpoint = sampleCheckpoint({
 			dryRun: false,
@@ -662,5 +670,202 @@ describe('AUTH-007 dry-run parity and rollback safety', () => {
 			canRollbackRoomCompatibility(checkpoint.created.roomCompatibilitySnapshots[0]!, 'mt-edited'),
 			false
 		);
+	});
+});
+
+describe('AUTH-007 round-2 review fixes', () => {
+	it('normalizeBackfillPhase migrates legacy map_resources cursor', () => {
+		assert.equal(normalizeBackfillPhase('map_resources'), 'map_invoices');
+		assert.equal(normalizeBackfillPhase('map_contracts'), 'map_contracts');
+	});
+
+	it('normalizeCheckpointRecord defaults legacy mappings to applied', () => {
+		const checkpoint = sampleCheckpoint();
+		checkpoint.created.resourceMappings.push({
+			table: 'Invoice',
+			id: 'inv-legacy',
+			managedTenantId: 'mt-1',
+			tenancyId: 'ten-1',
+			previousManagedTenantId: null,
+			previousTenancyId: null,
+			applied: undefined as unknown as boolean
+		});
+		normalizeCheckpointRecord(checkpoint);
+		assert.equal(checkpoint.created.resourceMappings[0]!.applied, true);
+	});
+
+	it('dry-run reuses existing ManagedTenant from DB before creating virtual candidate', async () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true, runId: 'parity-db' });
+		const existingId = 'mt-existing';
+		let selectCalls = 0;
+		const mockDb = {
+			select: () => ({
+				from: () => ({
+					where: () => ({
+						limit: () => {
+							selectCalls += 1;
+							return Promise.resolve([
+								{ id: existingId, backfillSource: buildBackfillSource('other-run', 'LEGACY') }
+							]);
+						}
+					})
+				})
+			})
+		} as unknown as TenancyMigrationDb;
+
+		const id = await lookupManagedTenantId(mockDb, checkpoint, 'landlord-a', 'legacy-1');
+		assert.equal(id, existingId);
+		assert.equal(
+			ensureDryRunVirtual(checkpoint).managedTenantByLegacyKey['landlord-a:legacy-1'],
+			existingId
+		);
+		assert.ok(selectCalls >= 1);
+	});
+
+	it('isMapResourcePhase covers all resource mapping phases', () => {
+		assert.equal(isMapResourcePhase('map_invoices'), true);
+		assert.equal(isMapResourcePhase('map_meter_readings'), true);
+		assert.equal(isMapResourcePhase('managed_tenants'), false);
+	});
+
+	it('limit hit preserves phase cursor for resume instead of advancing', () => {
+		const checkpoint = sampleCheckpoint({ dryRun: true });
+		checkpoint.cursor = { phase: 'managed_tenants', lastId: 'landlord-a:legacy-5' };
+		const phases = [
+			'managed_tenants',
+			'tenancies_contract',
+			'tenancies_current_room',
+			'map_invoices',
+			'map_contracts',
+			'map_meter_readings',
+			'map_maintenance_requests'
+		] as const;
+		const limitReached = true;
+		const phaseIdx = phases.indexOf(checkpoint.cursor.phase);
+		if (!limitReached) {
+			checkpoint.cursor.lastId = null;
+			checkpoint.cursor.phase = phases[phaseIdx + 1] ?? checkpoint.cursor.phase;
+		}
+		assert.equal(checkpoint.cursor.phase, 'managed_tenants');
+		assert.equal(checkpoint.cursor.lastId, 'landlord-a:legacy-5');
+	});
+
+	it('reconcilePendingResourceMapping detects crash after DB write', async () => {
+		const mapping = {
+			table: 'Invoice' as const,
+			id: 'inv-crash',
+			managedTenantId: 'mt-1',
+			tenancyId: 'ten-1',
+			previousManagedTenantId: null,
+			previousTenancyId: null,
+			applied: false
+		};
+		const mockDb = {
+			select: () => ({
+				from: () => ({
+					where: () => ({
+						limit: () => Promise.resolve([{ managedTenantId: 'mt-1', tenancyId: 'ten-1' }])
+					})
+				})
+			})
+		} as unknown as TenancyMigrationDb;
+		const status = await reconcilePendingResourceMapping(mockDb, sampleCheckpoint(), mapping);
+		assert.equal(status, 'applied');
+		assert.equal(mapping.applied, true);
+	});
+
+	it('reconcilePendingResourceMapping detects crash before DB write', async () => {
+		const mapping = {
+			table: 'Invoice' as const,
+			id: 'inv-pending',
+			managedTenantId: 'mt-1',
+			tenancyId: 'ten-1',
+			previousManagedTenantId: null,
+			previousTenancyId: null,
+			applied: false
+		};
+		const mockDb = {
+			select: () => ({
+				from: () => ({
+					where: () => ({
+						limit: () => Promise.resolve([{ managedTenantId: null, tenancyId: null }])
+					})
+				})
+			})
+		} as unknown as TenancyMigrationDb;
+		const status = await reconcilePendingResourceMapping(mockDb, sampleCheckpoint(), mapping);
+		assert.equal(status, 'pending');
+	});
+
+	it('decideResourceMapping maps meter without contract-backed tenancy requirement', () => {
+		const candidates: TenancyCandidate[] = [
+			{
+				id: 'ten-room',
+				managedTenantId: 'mt-1',
+				roomId: 'room-a',
+				startDate: '2024-01-01',
+				endDate: null,
+				status: 'ACTIVE',
+				backfillSource: buildBackfillSource('run', 'CURRENT_ROOM')
+			}
+		];
+		const decision = decideResourceMapping({
+			roomId: 'room-a',
+			eventDate: '2024-03-01',
+			resourceKind: 'meter',
+			tenancyCandidates: candidates
+		});
+		assert.equal(decision.action, 'map');
+	});
+
+	it('old tenant with only contract-backed tenancy maps invoice', () => {
+		const candidates: TenancyCandidate[] = [
+			{
+				id: 'ten-contract-only',
+				managedTenantId: 'mt-old',
+				roomId: 'room-a',
+				startDate: '2023-01-01',
+				endDate: '2023-12-31',
+				status: 'ENDED',
+				backfillSource: buildBackfillSource('run', 'CONTRACT')
+			}
+		];
+		const decision = decideResourceMapping({
+			roomId: 'room-a',
+			eventDate: '2023-06-01',
+			resourceKind: 'invoice',
+			tenancyCandidates: candidates
+		});
+		assert.deepEqual(decision, {
+			action: 'map',
+			tenancyId: 'ten-contract-only',
+			managedTenantId: 'mt-old'
+		});
+	});
+
+	it('rollback skips unapplied resource mapping intents', async () => {
+		const checkpoint = sampleCheckpoint({
+			dryRun: false,
+			created: {
+				managedTenantIds: [],
+				tenancyIds: [],
+				resourceMappings: [
+					{
+						table: 'Invoice',
+						id: 'inv-intent',
+						managedTenantId: 'mt-1',
+						tenancyId: 'ten-1',
+						previousManagedTenantId: null,
+						previousTenancyId: null,
+						applied: false
+					}
+				],
+				roomCompatibilitySnapshots: []
+			}
+		});
+		const report = await rollbackBackfillRun(null as never, checkpoint, true);
+		assert.equal(report.scanned, 1);
+		assert.equal(report.skipped, 1);
+		assert.equal(report.tenanciesMapped, 0);
 	});
 });
