@@ -4,7 +4,13 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { expenses } from '$lib/server/db/schema';
 import { and, desc, eq, like } from 'drizzle-orm';
-import { forbidden, landlordOwnsProperty, requireLandlord } from '$lib/server/authz';
+import { ScopedResourceNotFoundError } from '$lib/server/authorization/scoped-queries';
+import { toExpenseDto, toExpenseListDto } from '$lib/server/dto/expenses';
+import {
+	propertyScopeErrorToResponse,
+	requireLandlordMutationActor,
+	requireScopedProperty
+} from '$lib/server/property-scope';
 
 async function landlordOwnsExpense(landlordId: string, expenseId: string) {
 	const expense = await db.query.expenses.findFirst({
@@ -16,10 +22,10 @@ async function landlordOwnsExpense(landlordId: string, expenseId: string) {
 
 export const GET: RequestHandler = async ({ url, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
-		const landlordId = auth.value;
-		const month = url.searchParams.get('month'); // YYYY-MM
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
+		const month = url.searchParams.get('month');
 
 		const conditions = [eq(expenses.landlordId, landlordId)];
 		if (month) {
@@ -34,33 +40,38 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 			orderBy: desc(expenses.date)
 		});
 
-		return json(result);
+		return json(toExpenseListDto(result));
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
-		const landlordId = auth.value;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
 
 		const body = await request.json();
 		const { propertyId, category, description, amount, date, notes } = body;
 
-		if (!landlordId || !category || !description || amount === undefined || !date) {
+		if (!category || !description || amount === undefined || !date) {
 			return json({ error: 'Thiếu thông tin chi phí bắt buộc' }, { status: 400 });
 		}
-		if (propertyId && !(await landlordOwnsProperty(landlordId, propertyId))) {
-			return forbidden();
+
+		let resolvedPropertyId: string | null = null;
+		if (propertyId) {
+			await requireScopedProperty(db, actorResult.actor, String(propertyId));
+			resolvedPropertyId = String(propertyId);
 		}
 
 		const created = await db
 			.insert(expenses)
 			.values({
 				landlordId,
-				propertyId: propertyId || null,
+				propertyId: resolvedPropertyId,
 				category,
 				description,
 				amount: Number(amount),
@@ -69,16 +80,26 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			})
 			.returning();
 
-		return json(created[0]);
+		const withProperty = await db.query.expenses.findFirst({
+			where: eq(expenses.id, created[0].id),
+			with: { property: { columns: { name: true, shortName: true } } }
+		});
+		return json(toExpenseDto(withProperty ?? created[0]));
 	} catch (error) {
+		if (error instanceof ScopedResourceNotFoundError) {
+			return json({ error: 'Không tìm thấy dữ liệu' }, { status: 404 });
+		}
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
 
 		const body = await request.json();
 		const { id, propertyId, category, description, amount, date, notes } = body;
@@ -86,15 +107,19 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 		if (!id) {
 			return json({ error: 'Missing expense ID' }, { status: 400 });
 		}
-		if (!(await landlordOwnsExpense(auth.value, id))) {
-			return forbidden();
-		}
-		if (propertyId && !(await landlordOwnsProperty(auth.value, propertyId))) {
-			return forbidden();
+		if (!(await landlordOwnsExpense(landlordId, id))) {
+			return json({ error: 'Không tìm thấy dữ liệu' }, { status: 404 });
 		}
 
 		const updateData: Record<string, unknown> = {};
-		if (propertyId !== undefined) updateData.propertyId = propertyId || null;
+		if (propertyId !== undefined) {
+			if (propertyId) {
+				await requireScopedProperty(db, actorResult.actor, String(propertyId));
+				updateData.propertyId = String(propertyId);
+			} else {
+				updateData.propertyId = null;
+			}
+		}
 		if (category !== undefined) updateData.category = category;
 		if (description !== undefined) updateData.description = description;
 		if (amount !== undefined) updateData.amount = Number(amount);
@@ -105,36 +130,46 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			return json({ error: 'No fields to update' }, { status: 400 });
 		}
 
-		const updated = await db
-			.update(expenses)
-			.set(updateData)
-			.where(eq(expenses.id, id))
-			.returning();
+		await db.update(expenses).set(updateData).where(eq(expenses.id, id));
 
-		return json(updated[0]);
+		const updated = await db.query.expenses.findFirst({
+			where: eq(expenses.id, id),
+			with: { property: { columns: { name: true, shortName: true } } }
+		});
+		if (!updated) {
+			return json({ error: 'Không tìm thấy dữ liệu' }, { status: 404 });
+		}
+
+		return json(toExpenseDto(updated));
 	} catch (error) {
+		if (error instanceof ScopedResourceNotFoundError) {
+			return json({ error: 'Không tìm thấy dữ liệu' }, { status: 404 });
+		}
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
 
 		const id = url.searchParams.get('id');
-
 		if (!id) {
 			return json({ error: 'Missing expense ID' }, { status: 400 });
 		}
-		if (!(await landlordOwnsExpense(auth.value, id))) {
-			return forbidden();
+		if (!(await landlordOwnsExpense(landlordId, id))) {
+			return json({ error: 'Không tìm thấy dữ liệu' }, { status: 404 });
 		}
 
 		await db.delete(expenses).where(eq(expenses.id, id));
-
 		return json({ success: true });
 	} catch (error) {
+		const scoped = propertyScopeErrorToResponse(error);
+		if (scoped) return scoped;
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
 };

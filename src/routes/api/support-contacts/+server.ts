@@ -1,10 +1,23 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { supportContacts } from '$lib/server/db/schema';
 import { errorMessage } from '$lib/server/api';
-import { requireLandlord } from '$lib/server/authz';
+import { requireLandlordActor } from '$lib/server/authorization/actor';
+import { authorizationErrorToResponse } from '$lib/server/authorization/errors';
+import {
+	toSupportContactLandlordDto,
+	toSupportContactLandlordListDto,
+	toSupportContactTenantListDto
+} from '$lib/server/dto/support-contact';
+import {
+	isTenantActor,
+	loadTenantActiveTenancies,
+	requireLandlordMutationActor,
+	requireOperationalActor,
+	tenantLandlordIds
+} from '$lib/server/property-scope';
 
 const CONTACT_CATEGORIES = [
 	'repair',
@@ -36,13 +49,35 @@ function cleanCategory(value: unknown) {
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireOperationalActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+
+		if (isTenantActor(actorResult.actor)) {
+			const active = await loadTenantActiveTenancies(db, actorResult.actor);
+			const landlordIds = tenantLandlordIds(active);
+			const contacts = await db
+				.select()
+				.from(supportContacts)
+				.where(
+					and(inArray(supportContacts.landlordId, landlordIds), eq(supportContacts.isActive, true))
+				)
+				.orderBy(
+					desc(supportContacts.isPinned),
+					asc(supportContacts.category),
+					asc(supportContacts.name)
+				);
+			return json(toSupportContactTenantListDto(contacts));
+		}
+
+		const landlordGuard = requireLandlordActor(actorResult.actor);
+		if (!landlordGuard.ok) {
+			return authorizationErrorToResponse(landlordGuard.error);
+		}
 
 		const contacts = await db
 			.select()
 			.from(supportContacts)
-			.where(eq(supportContacts.landlordId, auth.value))
+			.where(eq(supportContacts.landlordId, landlordGuard.value.landlordId))
 			.orderBy(
 				desc(supportContacts.isPinned),
 				desc(supportContacts.isActive),
@@ -50,7 +85,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 				asc(supportContacts.name)
 			);
 
-		return json(contacts);
+		return json(toSupportContactLandlordListDto(contacts));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -58,8 +93,8 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		const body = await request.json();
 		const name = cleanRequiredText(body.name, 120);
@@ -72,7 +107,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			await db
 				.insert(supportContacts)
 				.values({
-					landlordId: auth.value,
+					landlordId: actorResult.actor.landlordId,
 					category: cleanCategory(body.category),
 					name,
 					phone,
@@ -86,7 +121,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				.returning()
 		)[0];
 
-		return json(created, { status: 201 });
+		return json(toSupportContactLandlordDto(created), { status: 201 });
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -94,20 +129,20 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		const body = await request.json();
 		const id = cleanRequiredText(body.id, 80);
 		if (!id) return json({ error: 'Thiếu mã liên hệ' }, { status: 400 });
 
 		const existing = await db.query.supportContacts.findFirst({
-			where: eq(supportContacts.id, id)
+			where: and(
+				eq(supportContacts.id, id),
+				eq(supportContacts.landlordId, actorResult.actor.landlordId)
+			)
 		});
 		if (!existing) return json({ error: 'Không tìm thấy liên hệ' }, { status: 404 });
-		if (existing.landlordId !== auth.value) {
-			return json({ error: 'Không có quyền sửa liên hệ này' }, { status: 403 });
-		}
 
 		const updateData: Partial<typeof supportContacts.$inferInsert> = {};
 		if (body.category !== undefined) updateData.category = cleanCategory(body.category);
@@ -137,7 +172,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 			await db.update(supportContacts).set(updateData).where(eq(supportContacts.id, id)).returning()
 		)[0];
 
-		return json(updated);
+		return json(toSupportContactLandlordDto(updated));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
@@ -145,19 +180,19 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
 
 		const id = cleanRequiredText(url.searchParams.get('id'), 80);
 		if (!id) return json({ error: 'Thiếu mã liên hệ' }, { status: 400 });
 
 		const existing = await db.query.supportContacts.findFirst({
-			where: eq(supportContacts.id, id)
+			where: and(
+				eq(supportContacts.id, id),
+				eq(supportContacts.landlordId, actorResult.actor.landlordId)
+			)
 		});
 		if (!existing) return json({ error: 'Không tìm thấy liên hệ' }, { status: 404 });
-		if (existing.landlordId !== auth.value) {
-			return json({ error: 'Không có quyền xóa liên hệ này' }, { status: 403 });
-		}
 
 		await db.delete(supportContacts).where(eq(supportContacts.id, id));
 		return json({ success: true });

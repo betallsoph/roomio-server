@@ -2,7 +2,6 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { landlordProfiles, properties, rooms } from '$lib/server/db/schema';
-import { requireLandlord } from '$lib/server/authz';
 import {
 	calculateSubscriptionQuote,
 	pricingGroupForRentalType,
@@ -12,13 +11,16 @@ import {
 import { eq, sql } from 'drizzle-orm';
 import { errorMessage } from '$lib/server/api';
 import { canonicalRentalType } from '$lib/server/rental-types';
+import { requireLandlordMutationActor } from '$lib/server/property-scope';
 
 export const GET: RequestHandler = async ({ locals, url }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		const actorResult = requireLandlordMutationActor(locals.actor);
+		if (!actorResult.ok) return actorResult.response;
+		const landlordId = actorResult.actor.landlordId;
+
 		const landlord = await db.query.landlordProfiles.findFirst({
-			where: eq(landlordProfiles.id, auth.value),
+			where: eq(landlordProfiles.id, landlordId),
 			columns: {
 				subscriptionType: true,
 				subscriptionPeriod: true,
@@ -34,7 +36,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 			.select({ rentalType: properties.rentalType, count: sql<number>`count(${rooms.id})` })
 			.from(properties)
 			.leftJoin(rooms, eq(rooms.propertyId, properties.id))
-			.where(eq(properties.landlordId, auth.value))
+			.where(eq(properties.landlordId, landlordId))
 			.groupBy(properties.rentalType);
 
 		const actualStandardRoomCount = roomCounts

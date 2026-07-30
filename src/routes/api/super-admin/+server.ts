@@ -5,6 +5,8 @@ import { db } from '$lib/server/db';
 import { landlordProfiles, services, users } from '$lib/server/db/schema';
 import { eq, or } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/password';
+import { listSuperAdminLandlordPlatformRows } from '$lib/server/aggregate-scope';
+import { toSuperAdminLandlordListDto } from '$lib/server/dto/super-admin';
 import {
 	requiredEmail,
 	requiredEnum,
@@ -50,163 +52,10 @@ function normalizeRoomLimit(value: unknown): number | undefined {
 	return Math.floor(count);
 }
 
-function normalizeSubscriptionTier(value: unknown): SubscriptionTier {
-	return SUBSCRIPTION_TIERS.includes(value as SubscriptionTier)
-		? (value as SubscriptionTier)
-		: 'FREE';
-}
-
-function normalizeSubscriptionPeriod(value: unknown): SubscriptionPeriod {
-	return SUBSCRIPTION_PERIODS.includes(value as SubscriptionPeriod)
-		? (value as SubscriptionPeriod)
-		: 'MONTHLY';
-}
-
 export const GET: RequestHandler = async () => {
 	try {
-		const landlords = await db.query.landlordProfiles.findMany({
-			with: {
-				user: {
-					columns: {
-						id: true,
-						name: true,
-						email: true,
-						phone: true,
-						isActive: true,
-						createdAt: true
-					}
-				},
-				staffs: {
-					with: { user: { columns: { id: true, isActive: true } } }
-				},
-				services: {
-					columns: { id: true, isActive: true }
-				},
-				notificationQueue: {
-					columns: { id: true, status: true }
-				},
-				subscriptionChangeRequests: {
-					columns: { id: true, status: true }
-				},
-				paymentTransactions: {
-					columns: { id: true, amount: true, status: true, receivedAt: true, provider: true }
-				},
-				properties: {
-					columns: { id: true, name: true, rentalType: true, operatingModel: true },
-					with: {
-						rooms: {
-							columns: { id: true, tenantId: true, status: true, debtAmount: true },
-							with: {
-								invoices: {
-									columns: {
-										id: true,
-										status: true,
-										totalAmount: true,
-										paidAmount: true,
-										dueDate: true,
-										month: true
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		});
-
-		const today = new Date().toISOString().slice(0, 10);
-		const currentMonth = new Date().toISOString().slice(0, 7);
-
-		// Keep the same response shape as before: properties expose a room count instead of the room list,
-		// then add SuperAdmin health metrics for SaaS/support operation.
-		const result = landlords
-			.map((landlord) => {
-				const allRooms = landlord.properties.flatMap((property) => property.rooms);
-				const standardRoomCount = landlord.properties
-					.filter((property) => pricingGroupForRentalType(property.rentalType) === 'STANDARD')
-					.reduce((sum, property) => sum + property.rooms.length, 0);
-				const colivingRoomCount = landlord.properties
-					.filter((property) => pricingGroupForRentalType(property.rentalType) === 'COLIVING')
-					.reduce((sum, property) => sum + property.rooms.length, 0);
-				const subscriptionType = normalizeSubscriptionTier(landlord.subscriptionType);
-				const subscriptionPeriod = normalizeSubscriptionPeriod(landlord.subscriptionPeriod);
-				const subscriptionQuote = calculateSubscriptionQuote({
-					tier: subscriptionType,
-					period: subscriptionPeriod,
-					standardRoomCount,
-					colivingRoomCount
-				});
-				const allInvoices = allRooms.flatMap((room) => room.invoices);
-				const unpaidInvoices = allInvoices.filter(
-					(invoice) => invoice.status !== 'paid' && invoice.status !== 'draft'
-				);
-				const paymentTransactions = landlord.paymentTransactions;
-				const payosTransactions = paymentTransactions.filter(
-					(payment) => payment.provider === 'payos'
-				);
-				const appliedPayments = payosTransactions.filter((payment) => payment.status === 'applied');
-				const unmatchedPayments = payosTransactions.filter(
-					(payment) => payment.status === 'unmatched' || payment.status === 'ignored'
-				);
-				const lastPaymentAt = payosTransactions.reduce<Date | null>((latest, payment) => {
-					if (!payment.receivedAt) return latest;
-					if (!latest || payment.receivedAt > latest) return payment.receivedAt;
-					return latest;
-				}, null);
-
-				return {
-					id: landlord.id,
-					userId: landlord.userId,
-					subscriptionType,
-					subscriptionPeriod,
-					subValidUntil: landlord.subValidUntil,
-					subscribedStandardRoomLimit: landlord.subscribedStandardRoomLimit,
-					subscribedColivingRoomLimit: landlord.subscribedColivingRoomLimit,
-					companyName: landlord.companyName,
-					enabledRentalTypes: normalizeRentalTypes(landlord.enabledRentalTypes),
-					user: landlord.user,
-					properties: landlord.properties.map((property) => ({
-						id: property.id,
-						name: property.name,
-						rentalType: property.rentalType,
-						operatingModel: property.operatingModel,
-						_count: { rooms: property.rooms.length }
-					})),
-					subscriptionQuote,
-					metrics: {
-						totalProperties: landlord.properties.length,
-						totalRooms: allRooms.length,
-						occupiedRooms: allRooms.filter((room) => room.tenantId || room.status !== 'empty')
-							.length,
-						debtRooms: allRooms.filter((room) => room.status === 'debt').length,
-						activeStaff: landlord.staffs.filter((staff) => staff.user?.isActive).length,
-						activeServices: landlord.services.filter((service) => service.isActive).length,
-						unpaidInvoices: unpaidInvoices.length,
-						overdueInvoices: unpaidInvoices.filter((invoice) => invoice.dueDate < today).length,
-						unpaidAmount: unpaidInvoices.reduce(
-							(sum, invoice) => sum + Math.max(invoice.totalAmount - invoice.paidAmount, 0),
-							0
-						),
-						collectedAmount: allInvoices.reduce((sum, invoice) => sum + invoice.paidAmount, 0),
-						currentMonthCollectedAmount: allInvoices
-							.filter((invoice) => invoice.month === currentMonth)
-							.reduce((sum, invoice) => sum + invoice.paidAmount, 0),
-						payosApplied: appliedPayments.length,
-						payosUnmatched: unmatchedPayments.length,
-						payosAppliedAmount: appliedPayments.reduce((sum, payment) => sum + payment.amount, 0),
-						queuedNotifications: landlord.notificationQueue.filter(
-							(notification) => notification.status === 'queued'
-						).length,
-						pendingSubscriptionRequests: landlord.subscriptionChangeRequests.filter(
-							(request) => request.status === 'pending'
-						).length,
-						lastPaymentAt
-					}
-				};
-			})
-			.sort((a, b) => a.user.name.localeCompare(b.user.name, 'vi'));
-
-		return json(result);
+		const rows = await listSuperAdminLandlordPlatformRows();
+		return json(toSuperAdminLandlordListDto(rows));
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
