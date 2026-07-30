@@ -270,24 +270,23 @@ if (skipReason) {
 				description: 'replay'
 			};
 			const body = buildPayosWebhookBody(data, LANDLORD_A_CHECKSUM);
-			const event = {
-				request: new Request('http://localhost/api/payment-webhook', {
-					method: 'POST',
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify(body)
-				}),
-				locals: { requestId: 'req-replay-1' }
-			};
+			const payload = JSON.stringify(body);
 
-			const first = await readJson(await callHandler(POST, event));
+			function webhookEvent(requestId: string) {
+				return {
+					request: new Request('http://localhost/api/payment-webhook', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: payload
+					}),
+					locals: { requestId }
+				};
+			}
+
+			const first = await readJson(await callHandler(POST, webhookEvent('req-replay-1')));
 			assert.equal(first.status, 200);
 
-			const second = await readJson(
-				await callHandler(POST, {
-					...event,
-					locals: { requestId: 'req-replay-2' }
-				})
-			);
+			const second = await readJson(await callHandler(POST, webhookEvent('req-replay-2')));
 			assert.equal(second.status, 200);
 			const secondBody = second.body as { message?: string };
 			assert.match(secondBody.message ?? '', /đã được xử lý/);
