@@ -33,8 +33,10 @@ const skipReason = getSecurityIntegrationSkipReason();
 type Auth013Extension = {
 	managedTenantANow: string;
 	managedTenantAOld: string;
+	managedTenantANowSecond: string;
 	tenancyANowActive: string;
 	tenancyAOldEnded: string;
+	tenancyANowSecondActive: string;
 	staffARequestsId: string;
 	staffARequestsUserId: string;
 };
@@ -48,8 +50,10 @@ async function seedAuth013Extensions(
 
 	const managedTenantANow = crypto.randomUUID();
 	const managedTenantAOld = crypto.randomUUID();
+	const managedTenantANowSecond = crypto.randomUUID();
 	const tenancyANowActive = crypto.randomUUID();
 	const tenancyAOldEnded = crypto.randomUUID();
+	const tenancyANowSecondActive = crypto.randomUUID();
 	const staffARequestsId = crypto.randomUUID();
 	const staffARequestsUserId = crypto.randomUUID();
 
@@ -68,6 +72,14 @@ async function seedAuth013Extensions(
 			displayName: 'AUTH-013 managed tenant old',
 			claimedByUserId: ids.tenantAOld.userId,
 			legacyTenantProfileId: ids.tenantAOld.tenantProfileId,
+			backfillSource: 'LEGACY_TENANT_PROFILE'
+		},
+		{
+			id: managedTenantANowSecond,
+			landlordId: ids.landlordA.landlordProfileId,
+			displayName: 'AUTH-013 second active claim same user',
+			claimedByUserId: ids.tenantANow.userId,
+			legacyTenantProfileId: ids.tenantA2Now.tenantProfileId,
 			backfillSource: 'LEGACY_TENANT_PROFILE'
 		}
 	]);
@@ -92,6 +104,16 @@ async function seedAuth013Extensions(
 			status: 'ENDED',
 			startDate: '2025-01-01',
 			endDate: '2025-12-31'
+		},
+		{
+			id: tenancyANowSecondActive,
+			landlordId: ids.landlordA.landlordProfileId,
+			propertyId: ids.propertyA2.propertyId,
+			roomId: ids.roomA2R1.roomId,
+			managedTenantId: managedTenantANowSecond,
+			status: 'ACTIVE',
+			startDate: '2026-01-01',
+			plannedEndDate: '2026-12-31'
 		}
 	]);
 
@@ -159,8 +181,10 @@ async function seedAuth013Extensions(
 	return {
 		managedTenantANow,
 		managedTenantAOld,
+		managedTenantANowSecond,
 		tenancyANowActive,
 		tenancyAOldEnded,
+		tenancyANowSecondActive,
 		staffARequestsId,
 		staffARequestsUserId
 	};
@@ -320,7 +344,8 @@ if (skipReason) {
 							body: JSON.stringify({
 								category: 'electrical',
 								title: 'Outlet spark',
-								description: 'Needs repair'
+								description: 'Needs repair',
+								tenancyId: ext.tenancyANowActive
 							})
 						}),
 						locals: { actor: tenantANow }
@@ -399,6 +424,25 @@ if (skipReason) {
 					})
 				);
 				assert.equal(result.status, 409);
+			});
+
+			await t.test('multi-active tenant POST maintenance without tenancyId returns 422', async () => {
+				const result = await readJson(
+					await callHandler(postRequests, {
+						request: new Request('http://localhost/api/requests', {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								category: 'plumbing',
+								title: 'Ambiguous tenancy',
+								description: 'Must disambiguate active claims'
+							})
+						}),
+						locals: { actor: tenantANow }
+					})
+				);
+				assert.equal(result.status, 422);
+				assert.match(String((result.body as { error?: string })?.error ?? ''), /tenancyId|roomId/);
 			});
 
 			await t.test('OCR parse requires roomId and serviceId before provider', async () => {
