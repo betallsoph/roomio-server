@@ -1,50 +1,48 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import crypto from 'crypto';
 import { errorMessage } from '$lib/server/api';
 import { db } from '$lib/server/db';
-import { tenantInvites } from '$lib/server/db/schema';
-import { requireLandlord, landlordOwnsTenant, forbidden } from '$lib/server/authz';
-import { getEnv } from '$lib/server/env';
+import { requireLandlordActor } from '$lib/server/authorization/actor';
+import {
+	authorizationErrorToResponse,
+	unauthenticatedError
+} from '$lib/server/authorization/errors';
+import { issueTenantInvite } from '$lib/server/tenant-invites/service';
+import { isTenantInviteServiceError, toInviteErrorBody } from '$lib/server/tenant-invites/state';
 
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 ngày
-
-function buildDeepLink(token: string): string | null {
-	const telegram = getEnv().telegram;
-	if (telegram.status !== 'CONFIGURED') return null;
-	return `https://t.me/${telegram.botUsername}/${telegram.miniappShortName}?startapp=${token}`;
-}
-
-// Chủ trọ sinh link mời Telegram cho 1 khách thuê. Token 1 lần, hết hạn sau 7 ngày.
+// Chủ trọ sinh link mời Telegram bound landlord + managed tenant + active tenancy.
+// Plaintext token chỉ trả đúng một lần; DB lưu hash.
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
+		if (!locals.actor) {
+			return authorizationErrorToResponse(unauthenticatedError());
+		}
+		const actorResult = requireLandlordActor(locals.actor);
+		if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
 
 		const body = await request.json().catch(() => null);
-		const tenantId = typeof body?.tenantId === 'string' ? body.tenantId : '';
-		if (!tenantId) return json({ error: 'Thiếu tenantId' }, { status: 400 });
+		const managedTenantId = typeof body?.managedTenantId === 'string' ? body.managedTenantId : '';
+		const tenancyId = typeof body?.tenancyId === 'string' ? body.tenancyId : '';
 
-		// Chỉ được mời khách thuê đang ở trong nhà trọ của chính mình
-		if (!(await landlordOwnsTenant(auth.value, tenantId))) {
-			return forbidden();
+		try {
+			const issued = await issueTenantInvite(
+				db,
+				actorResult.value,
+				{ managedTenantId, tenancyId },
+				{ requestId: locals.requestId }
+			);
+			return json({
+				token: issued.token,
+				link: issued.link,
+				expiresAt: issued.expiresAt,
+				inviteId: issued.inviteId
+			});
+		} catch (error) {
+			if (isTenantInviteServiceError(error)) {
+				return json(toInviteErrorBody(error, locals.requestId), { status: error.status });
+			}
+			throw error;
 		}
-
-		const token = crypto.randomBytes(24).toString('base64url');
-		const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
-
-		await db.insert(tenantInvites).values({
-			landlordId: auth.value,
-			tenantId,
-			token,
-			expiresAt
-		});
-
-		return json({
-			token,
-			link: buildDeepLink(token), // null nếu chưa cấu hình BOT_USERNAME/MINIAPP_SHORT_NAME
-			expiresAt: expiresAt.toISOString()
-		});
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}

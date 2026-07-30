@@ -163,6 +163,23 @@ if (skipReason) {
 
 	// --- Feature flag OFF -------------------------------------------------
 
+	test('flag off still allows managed tenant creation without roomId', async () => {
+		await resetBusinessRows();
+		setDualWriteFlag(false);
+
+		const usersBefore = await countUsers();
+		const { POST } = await import('../../../routes/api/tenants/+server.js');
+		const response = await POST(
+			requestEvent({ displayName: 'Flag-off managed tenant' }, landlordLocals())
+		);
+		const { status, body } = await readJson(response);
+
+		assert.equal(status, 201);
+		assert.ok(typeof body.id === 'string');
+		assert.equal(await countUsers(), usersBefore, 'managed tenant create must not create users');
+		assert.equal(await activeTenanciesForLandlordA(), 0);
+	});
+
 	test('flag off keeps the legacy check-in flow and writes no tenancy', async () => {
 		await resetBusinessRows();
 		setDualWriteFlag(false);

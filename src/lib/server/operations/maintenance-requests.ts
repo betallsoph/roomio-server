@@ -54,11 +54,11 @@ export type MaintenanceRequestListRow = {
 	roomId: string | null;
 	tenant: {
 		id: string;
-		user: { name: string; phone: string } | null;
+		user: { name: string; phone: string | null } | null;
 	} | null;
 	assignedTo: {
 		id: string;
-		user: { name: string; phone: string } | null;
+		user: { name: string; phone: string | null } | null;
 	} | null;
 };
 

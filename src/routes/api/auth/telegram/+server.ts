@@ -1,15 +1,35 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { tenantProfiles, tenantInvites } from '$lib/server/db/schema';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { tenantProfiles } from '$lib/server/db/schema';
+import { eq } from 'drizzle-orm';
 import { createSession } from '$lib/server/session';
 import { verifyInitData, telegramConfigured, TelegramAuthError } from '$lib/server/telegram';
 import { errorMessage } from '$lib/server/api';
+import { claimTenantInviteViaTelegram } from '$lib/server/tenant-invites/service';
+import { isTenantInviteServiceError, toInviteErrorBody } from '$lib/server/tenant-invites/state';
 
-// Đăng nhập khách thuê từ Telegram Mini App: verify initData → tìm hồ sơ theo telegramUserId.
-// Lần đầu chưa liên kết thì cần token mời (start_param) do chủ trọ sinh từ dashboard.
-export const POST: RequestHandler = async ({ request, cookies }) => {
+async function findTenantProfileByTelegramId(telegramUserId: string) {
+	return db.query.tenantProfiles.findFirst({
+		where: eq(tenantProfiles.telegramUserId, telegramUserId),
+		with: { user: true }
+	});
+}
+
+function tenantDisplayName(user: {
+	first_name?: string;
+	last_name?: string;
+	username?: string;
+}): string {
+	return (
+		[user.first_name, user.last_name].filter(Boolean).join(' ') ||
+		user.username ||
+		'Khách thuê Telegram'
+	);
+}
+
+// Đăng nhập khách thuê từ Telegram Mini App: verify initData → claim ManagedTenant qua invite.
+export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 	try {
 		if (!telegramConfigured()) {
 			return json({ error: 'Server chưa cấu hình BOT_TOKEN' }, { status: 503 });
@@ -27,65 +47,46 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		}
 
 		const tgId = String(verified.user.id);
-		const startParam =
-			(typeof body?.startParam === 'string' && body.startParam) || verified.startParam;
+		// AUTH-009: invite token MUST come from signed initData only — never from request body.
+		const startParam = verified.startParam;
 
-		// 1) Đã liên kết trước đó → đăng nhập thẳng
-		let tenant = await db.query.tenantProfiles.findFirst({
-			where: eq(tenantProfiles.telegramUserId, tgId),
-			with: { user: true }
-		});
+		let tenant = await findTenantProfileByTelegramId(tgId);
 
-		// 2) Chưa liên kết → bắt buộc có token mời còn hiệu lực
-		if (!tenant) {
-			if (!startParam) {
-				return json(
+		if (startParam) {
+			try {
+				const claimed = await claimTenantInviteViaTelegram(
+					db,
 					{
-						error: 'NEEDS_INVITE',
-						message: 'Tài khoản Telegram chưa được liên kết. Hãy mở bằng link mời từ chủ trọ.'
+						token: startParam,
+						telegramUserId: tgId,
+						displayName: tenantDisplayName(verified.user)
 					},
-					{ status: 403 }
+					{ requestId: locals.requestId }
 				);
+				tenant = await findTenantProfileByTelegramId(tgId);
+				if (!tenant) {
+					tenant = await db.query.tenantProfiles.findFirst({
+						where: eq(tenantProfiles.id, claimed.tenantProfileId),
+						with: { user: true }
+					});
+				}
+			} catch (error) {
+				if (isTenantInviteServiceError(error)) {
+					return json(toInviteErrorBody(error, locals.requestId), { status: error.status });
+				}
+				throw error;
 			}
-
-			const invite = await db.query.tenantInvites.findFirst({
-				where: and(
-					eq(tenantInvites.token, startParam),
-					isNull(tenantInvites.usedAt),
-					gt(tenantInvites.expiresAt, new Date())
-				)
-			});
-			if (!invite) {
-				return json({ error: 'Link mời không hợp lệ hoặc đã hết hạn' }, { status: 403 });
-			}
-
-			const target = await db.query.tenantProfiles.findFirst({
-				where: eq(tenantProfiles.id, invite.tenantId),
-				with: { user: true }
-			});
-			if (!target) {
-				return json({ error: 'Hồ sơ khách thuê không tồn tại' }, { status: 404 });
-			}
-			if (target.telegramUserId && target.telegramUserId !== tgId) {
-				return json(
-					{ error: 'Hồ sơ này đã được liên kết với một tài khoản Telegram khác' },
-					{ status: 409 }
-				);
-			}
-
-			await db
-				.update(tenantProfiles)
-				.set({ telegramUserId: tgId })
-				.where(eq(tenantProfiles.id, target.id));
-			await db
-				.update(tenantInvites)
-				.set({ usedAt: new Date() })
-				.where(eq(tenantInvites.id, invite.id));
-
-			tenant = target;
+		} else if (!tenant) {
+			return json(
+				{
+					error: 'NEEDS_INVITE',
+					message: 'Tài khoản Telegram chưa được liên kết. Hãy mở bằng link mời từ chủ trọ.'
+				},
+				{ status: 403 }
+			);
 		}
 
-		if (!tenant.user || !tenant.user.isActive) {
+		if (!tenant?.user || !tenant.user.isActive) {
 			return json({ error: 'Tài khoản đã bị tạm khóa' }, { status: 403 });
 		}
 

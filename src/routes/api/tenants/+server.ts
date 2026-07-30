@@ -27,6 +27,8 @@ import {
 } from '$lib/server/authorization/errors';
 import { isTenancyDualWriteEnabled } from '$lib/server/env';
 import { hasActiveTenancyForRoom, startTenancy } from '$lib/server/tenancies/service';
+import { createManagedTenant } from '$lib/server/managed-tenants/service';
+import { isManagedTenantServiceError } from '$lib/server/managed-tenants/state';
 import {
 	addYearsToCalendarDate,
 	isTenancyServiceError,
@@ -35,6 +37,7 @@ import {
 	type TenancyDto
 } from '$lib/server/tenancies/state';
 import { TENANT_DETAIL_WITH, toTenantSummaryDto } from '$lib/server/dto/tenants';
+import type { SessionData } from '$lib/server/session';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	try {
@@ -79,23 +82,28 @@ type CheckInResponse = {
  * `ManagedTenant` (endpoint quản lý hồ sơ thuộc AUTH-009).
  */
 async function checkInWithTenancyService(
-	request: Request,
+	body: unknown,
 	actor: LandlordActor,
 	requestId: string
 ): Promise<Response> {
-	const body = await request.json();
-	const {
-		roomId,
-		managedTenantId,
-		moveInDate,
-		deposit,
-		notes,
-		paymentAccountId,
-		initialElectricity,
-		initialWater,
-		contractEndDate,
-		plannedEndDate
-	} = body ?? {};
+	const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+	const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
+	const managedTenantId =
+		typeof payload.managedTenantId === 'string' ? payload.managedTenantId : '';
+	const moveInDate = payload.moveInDate;
+	const deposit = payload.deposit;
+	const notes = payload.notes;
+	const paymentAccountId =
+		typeof payload.paymentAccountId === 'string' ? payload.paymentAccountId : null;
+	const initialElectricity = payload.initialElectricity;
+	const initialWater = payload.initialWater;
+	const contractEndDate =
+		typeof payload.contractEndDate === 'string' ? payload.contractEndDate : undefined;
+	const plannedEndDate = typeof payload.plannedEndDate === 'string' ? payload.plannedEndDate : null;
+
+	if (!roomId.trim()) {
+		return json({ error: 'Thiếu roomId' }, { status: 400 });
+	}
 
 	if (typeof managedTenantId !== 'string' || managedTenantId.trim() === '') {
 		return json(
@@ -134,13 +142,13 @@ async function checkInWithTenancyService(
 					roomId,
 					managedTenantId,
 					startDate,
-					plannedEndDate: plannedEndDate ?? null,
-					depositRequired: deposit,
+					plannedEndDate,
+					depositRequired: deposit as number,
 					contract: {
 						// Mặc định hợp đồng 12 tháng như luồng cũ, tính trên lịch chứ không qua epoch.
 						endDate: contractEndDate || addYearsToCalendarDate(startDate, 1),
-						deposit,
-						notes: notes ?? null,
+						deposit: deposit as number,
+						notes: typeof notes === 'string' ? notes : null,
 						paymentAccountId: selectedPaymentAccountId
 					}
 				},
@@ -227,200 +235,233 @@ async function recordInitialMeterReadings(
 	}
 }
 
+async function legacyCheckIn(
+	body: unknown,
+	locals: { session: SessionData | null; requestId: string }
+) {
+	const auth = requireLandlord(locals.session);
+	if (!auth.ok) return auth.response;
+
+	const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+	const email = payload.email;
+	const phone = payload.phone;
+	const password = payload.password;
+	const name = payload.name;
+	const roomId = payload.roomId;
+	const idNumber = payload.idNumber;
+	const moveInDate = payload.moveInDate;
+	const deposit = payload.deposit;
+	const notes = payload.notes;
+	const initialElectricity = payload.initialElectricity;
+	const initialWater = payload.initialWater;
+	const paymentAccountId =
+		typeof payload.paymentAccountId === 'string' ? payload.paymentAccountId : null;
+
+	if (
+		typeof email !== 'string' ||
+		typeof phone !== 'string' ||
+		typeof password !== 'string' ||
+		typeof name !== 'string' ||
+		typeof roomId !== 'string' ||
+		typeof idNumber !== 'string' ||
+		typeof moveInDate !== 'string' ||
+		deposit === undefined
+	) {
+		return json({ error: 'Thiếu thông tin khách thuê bắt buộc' }, { status: 400 });
+	}
+	if (!(await landlordOwnsRoom(auth.value, roomId))) {
+		return forbidden();
+	}
+	if (await hasActiveTenancyForRoom(db, roomId)) {
+		return json(
+			{
+				error: 'Phòng đang có lần thuê hiệu lực',
+				code: 'ROOM_OCCUPIED',
+				requestId: locals.requestId
+			},
+			{ status: 409 }
+		);
+	}
+	const selectedPaymentAccount = await getPaymentAccountForLandlord(
+		auth.value,
+		paymentAccountId || null
+	);
+	if (!selectedPaymentAccount.isActive) {
+		return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
+	}
+
+	const existingUser = await db.query.users.findFirst({
+		where: or(eq(users.email, email), eq(users.phone, phone))
+	});
+
+	const newUserHash = existingUser ? null : await hashPassword(password);
+
+	const tenant = await db.transaction(async (tx) => {
+		const user =
+			existingUser ??
+			(
+				await tx
+					.insert(users)
+					.values({ email, phone, passwordHash: newUserHash!, name, role: 'TENANT' })
+					.returning()
+			)[0];
+
+		let tenantProfile = (
+			await tx.select().from(tenantProfiles).where(eq(tenantProfiles.userId, user.id))
+		)[0];
+
+		if (!tenantProfile) {
+			tenantProfile = (
+				await tx
+					.insert(tenantProfiles)
+					.values({
+						userId: user.id,
+						idNumber,
+						moveInDate,
+						deposit: Number(deposit),
+						notes: typeof notes === 'string' ? notes : null
+					})
+					.returning()
+			)[0];
+		} else {
+			tenantProfile = (
+				await tx
+					.update(tenantProfiles)
+					.set({
+						idNumber,
+						moveInDate,
+						deposit: Number(deposit),
+						notes: typeof notes === 'string' ? notes : null
+					})
+					.where(eq(tenantProfiles.id, tenantProfile.id))
+					.returning()
+			)[0];
+		}
+
+		const room = (
+			await tx
+				.update(rooms)
+				.set({
+					tenantId: tenantProfile.id,
+					status: 'paid',
+					debtAmount: 0,
+					paymentAccountId: selectedPaymentAccount.id
+				})
+				.where(eq(rooms.id, roomId))
+				.returning()
+		)[0];
+
+		const property = (
+			await tx
+				.select({ landlordId: properties.landlordId })
+				.from(properties)
+				.where(eq(properties.id, room.propertyId))
+		)[0];
+
+		const checkInMonth = moveInDate.slice(0, 7);
+		const today = new Date().toISOString().split('T')[0];
+
+		if (property) {
+			const electricityService = (
+				await tx
+					.select()
+					.from(services)
+					.where(and(eq(services.landlordId, property.landlordId), like(services.name, '%Điện%')))
+			)[0];
+			const waterService = (
+				await tx
+					.select()
+					.from(services)
+					.where(and(eq(services.landlordId, property.landlordId), like(services.name, '%Nước%')))
+			)[0];
+
+			if (electricityService && initialElectricity !== undefined) {
+				await tx.insert(meterReadings).values({
+					roomId: room.id,
+					serviceId: electricityService.id,
+					month: checkInMonth,
+					prevValue: Number(initialElectricity),
+					currValue: Number(initialElectricity),
+					recordedAt: today
+				});
+			}
+
+			if (waterService && initialWater !== undefined) {
+				await tx.insert(meterReadings).values({
+					roomId: room.id,
+					serviceId: waterService.id,
+					month: checkInMonth,
+					prevValue: Number(initialWater),
+					currValue: Number(initialWater),
+					recordedAt: today
+				});
+			}
+		}
+
+		const start = new Date(moveInDate);
+		const end = new Date(start.getFullYear() + 1, start.getMonth(), start.getDate());
+		await tx.insert(contracts).values({
+			tenantId: tenantProfile.id,
+			roomId: room.id,
+			startDate: moveInDate,
+			endDate: end.toISOString().split('T')[0],
+			monthlyRent: room.monthlyRent,
+			deposit: Number(deposit),
+			paymentAccountId: selectedPaymentAccount.id,
+			notes: typeof notes === 'string' ? notes : null,
+			status: 'active'
+		});
+
+		return tenantProfile;
+	});
+
+	const fullTenant = await db.query.tenantProfiles.findFirst({
+		where: eq(tenantProfiles.id, tenant.id),
+		with: TENANT_DETAIL_WITH
+	});
+
+	return json(fullTenant ? toTenantSummaryDto(fullTenant) : null);
+}
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		// AUTH-006 — khi flag bật, MỌI check-in mới đi qua service Tenancy duy nhất.
+		const body = await request.json().catch(() => ({}));
+		const hasRoomId = typeof body?.roomId === 'string' && body.roomId.trim() !== '';
+
+		if (!hasRoomId) {
+			if (!locals.actor) {
+				return authorizationErrorToResponse(unauthenticatedError());
+			}
+			const actorResult = requireLandlordActor(locals.actor);
+			if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
+
+			try {
+				const managedTenant = await createManagedTenant(db, actorResult.value, body, {
+					requestId: locals.requestId
+				});
+				return json(managedTenant, { status: 201 });
+			} catch (error) {
+				if (isManagedTenantServiceError(error)) {
+					return json(
+						{ error: error.message, code: error.code, requestId: locals.requestId },
+						{ status: error.status }
+					);
+				}
+				throw error;
+			}
+		}
+
 		if (isTenancyDualWriteEnabled()) {
 			if (!locals.actor) {
 				return authorizationErrorToResponse(unauthenticatedError());
 			}
 			const actorResult = requireLandlordActor(locals.actor);
 			if (!actorResult.ok) return authorizationErrorToResponse(actorResult.error);
-			return await checkInWithTenancyService(request, actorResult.value, locals.requestId);
+
+			return await checkInWithTenancyService(body, actorResult.value, locals.requestId);
 		}
 
-		// Luồng legacy (flag off) — giữ nguyên đến khi AUTH-009 thay identity/invite.
-		const auth = requireLandlord(locals.session);
-		if (!auth.ok) return auth.response;
-
-		const body = await request.json();
-		const {
-			email,
-			phone,
-			password,
-			name,
-			roomId,
-			idNumber,
-			moveInDate,
-			deposit,
-			notes,
-			initialElectricity,
-			initialWater,
-			paymentAccountId
-		} = body;
-
-		if (
-			!email ||
-			!phone ||
-			!password ||
-			!name ||
-			!roomId ||
-			!idNumber ||
-			!moveInDate ||
-			deposit === undefined
-		) {
-			return json({ error: 'Thiếu thông tin khách thuê bắt buộc' }, { status: 400 });
-		}
-		if (!(await landlordOwnsRoom(auth.value, roomId))) {
-			return forbidden();
-		}
-		// AUTH-006 — chống split-brain khi rollback flag: phòng đã có Tenancy ACTIVE thì
-		// luồng legacy KHÔNG được tạo thêm occupant/identity đè lên lần thuê canonical.
-		if (await hasActiveTenancyForRoom(db, roomId)) {
-			return json(
-				{
-					error: 'Phòng đang có lần thuê hiệu lực',
-					code: 'ROOM_OCCUPIED',
-					requestId: locals.requestId
-				},
-				{ status: 409 }
-			);
-		}
-		const selectedPaymentAccount = await getPaymentAccountForLandlord(
-			auth.value,
-			paymentAccountId || null
-		);
-		if (!selectedPaymentAccount.isActive) {
-			return json({ error: 'Tài khoản nhận tiền đã tắt' }, { status: 400 });
-		}
-
-		// 1. Check if user already exists
-		const existingUser = await db.query.users.findFirst({
-			where: or(eq(users.email, email), eq(users.phone, phone))
-		});
-
-		const newUserHash = existingUser ? null : await hashPassword(password);
-
-		const tenant = await db.transaction(async (tx) => {
-			const user =
-				existingUser ??
-				(
-					await tx
-						.insert(users)
-						.values({ email, phone, passwordHash: newUserHash!, name, role: 'TENANT' })
-						.returning()
-				)[0];
-
-			// 2. Check if TenantProfile exists
-			let tenantProfile = (
-				await tx.select().from(tenantProfiles).where(eq(tenantProfiles.userId, user.id))
-			)[0];
-
-			if (!tenantProfile) {
-				tenantProfile = (
-					await tx
-						.insert(tenantProfiles)
-						.values({ userId: user.id, idNumber, moveInDate, deposit: Number(deposit), notes })
-						.returning()
-				)[0];
-			} else {
-				// Update details if profile already exists
-				tenantProfile = (
-					await tx
-						.update(tenantProfiles)
-						.set({ idNumber, moveInDate, deposit: Number(deposit), notes })
-						.where(eq(tenantProfiles.id, tenantProfile.id))
-						.returning()
-				)[0];
-			}
-
-			// 3. Link room to tenant
-			const room = (
-				await tx
-					.update(rooms)
-					.set({
-						tenantId: tenantProfile.id,
-						status: 'paid', // Mark as active/paid initially
-						debtAmount: 0,
-						paymentAccountId: selectedPaymentAccount.id
-					})
-					.where(eq(rooms.id, roomId))
-					.returning()
-			)[0];
-
-			const property = (
-				await tx
-					.select({ landlordId: properties.landlordId })
-					.from(properties)
-					.where(eq(properties.id, room.propertyId))
-			)[0];
-
-			// 4. Record initial meters
-			const checkInMonth = moveInDate.slice(0, 7); // "YYYY-MM"
-			const today = new Date().toISOString().split('T')[0];
-
-			if (property) {
-				// Find electricity & water services for the landlord
-				const electricityService = (
-					await tx
-						.select()
-						.from(services)
-						.where(and(eq(services.landlordId, property.landlordId), like(services.name, '%Điện%')))
-				)[0];
-				const waterService = (
-					await tx
-						.select()
-						.from(services)
-						.where(and(eq(services.landlordId, property.landlordId), like(services.name, '%Nước%')))
-				)[0];
-
-				if (electricityService && initialElectricity !== undefined) {
-					await tx.insert(meterReadings).values({
-						roomId: room.id,
-						serviceId: electricityService.id,
-						month: checkInMonth,
-						prevValue: Number(initialElectricity),
-						currValue: Number(initialElectricity),
-						recordedAt: today
-					});
-				}
-
-				if (waterService && initialWater !== undefined) {
-					await tx.insert(meterReadings).values({
-						roomId: room.id,
-						serviceId: waterService.id,
-						month: checkInMonth,
-						prevValue: Number(initialWater),
-						currValue: Number(initialWater),
-						recordedAt: today
-					});
-				}
-			}
-
-			// 5. Create a 12-month rental contract by default
-			const start = new Date(moveInDate);
-			const end = new Date(start.getFullYear() + 1, start.getMonth(), start.getDate());
-			await tx.insert(contracts).values({
-				tenantId: tenantProfile.id,
-				roomId: room.id,
-				startDate: moveInDate,
-				endDate: end.toISOString().split('T')[0],
-				monthlyRent: room.monthlyRent,
-				deposit: Number(deposit),
-				paymentAccountId: selectedPaymentAccount.id,
-				notes: notes || null,
-				status: 'active'
-			});
-
-			return tenantProfile;
-		});
-
-		const fullTenant = await db.query.tenantProfiles.findFirst({
-			where: eq(tenantProfiles.id, tenant.id),
-			with: TENANT_DETAIL_WITH
-		});
-
-		return json(fullTenant ? toTenantSummaryDto(fullTenant) : null);
+		return await legacyCheckIn(body, locals);
 	} catch (error) {
 		return json({ error: errorMessage(error) }, { status: 500 });
 	}
